@@ -49,9 +49,18 @@ load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
+# overlay_prefix holds one or more prefixes. The first match wins. Full overlay names also work.
 for overlay_file in ${overlays}; do
-	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
-		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
+	setenv overlay_found "false"
+	for overlay_prefix_item in ${overlay_prefix}; do
+		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/allwinner/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+			setenv overlay_found "true"
+			echo "Applying kernel provided DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo"
+			fdt apply ${load_addr} || setenv overlay_error "true"
+		fi
+	done
+	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/allwinner/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_file}.dtbo; then
+		echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
@@ -61,6 +70,10 @@ for overlay_file in ${user_overlays}; do
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
+if test "${overlay_error}" = "true"; then
+	echo "Error applying DT overlays, restoring original DT"
+	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+fi
 
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 

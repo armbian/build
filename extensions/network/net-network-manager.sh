@@ -1,4 +1,4 @@
-# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn` and `netplan.io` (plus desktop, Ubuntu and VPN extras), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
+# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn`, and `netplan.io` (desktop packages, with the connectivity check, come from configng), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
 
 #
 # Extension to manage network interfaces with NetworkManager + Netplan
@@ -11,16 +11,6 @@ function extension_prepare_config__install_network_manager() {
 
 	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io" "info"
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
-
-	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		display_alert "Extension: ${EXTENSION}: Adding extra packages for desktop to image" "network-manager-gnome network-manager-ssh network-manager-vpnc" "info"
-		add_packages_to_image network-manager-gnome network-manager-ssh network-manager-vpnc
-	fi
-
-	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-		display_alert "Extension: ${EXTENSION}: Adding extra packages for Ubuntu to image" "network-manager-config-connectivity-ubuntu" "info"
-		add_packages_to_image network-manager-config-connectivity-ubuntu
-	fi
 }
 
 function pre_install_kernel_debs__configure_network_manager() {

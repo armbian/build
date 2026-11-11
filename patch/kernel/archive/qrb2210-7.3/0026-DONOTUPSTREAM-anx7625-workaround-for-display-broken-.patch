@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martino Facchin <mfacchin@qti.qualcomm.com>
+Date: Mon, 8 Jun 2026 14:57:11 +0200
+Subject: [DONOTUPSTREAM] anx7625: workaround for display broken on media
+ carrier
+
+Change-Id: I3f9a130d6709a71fa93a6ff2ff3a77847b16912b
+(cherry picked from commit 0a535021c0ae63239d1e280a3ad7690385b9d714)
+---
+ drivers/gpu/drm/bridge/analogix/anx7625.c | 47 ++++++++++
+ drivers/gpu/drm/bridge/analogix/anx7625.h |  2 +
+ 2 files changed, 49 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/analogix/anx7625.c b/drivers/gpu/drm/bridge/analogix/anx7625.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/analogix/anx7625.c
++++ b/drivers/gpu/drm/bridge/analogix/anx7625.c
+@@ -606,6 +606,16 @@ static int anx7625_api_dsi_config(struct anx7625_data *ctx)
+ 		return ret;
+ 	}
+ 
++	for (int i = 0; i < 5; i++) {
++			/* Set MIPI RX termination to 75ohm */
++			ret = anx7625_reg_write(ctx, ctx->i2c.rx_p1_client,
++									MIPI_ANALOG_CTRL_0 + i, 0xf8);
++			if (ret < 0) {
++					DRM_DEV_ERROR(dev, "IO error : set lane %d termination fail.\n", i);
++					return ret;
++			}
++	}
++
+ 	/* DSI clock settings */
+ 	val = (0 << MIPI_HS_PWD_CLK)		|
+ 		(0 << MIPI_HS_RT_CLK)		|
+@@ -1326,6 +1336,39 @@ static int anx7625_read_hpd_gpio_config_status(struct anx7625_data *ctx)
+ 	return anx7625_reg_read(ctx, ctx->i2c.rx_p0_client, GPIO_CTRL_2);
+ }
+ 
++static ssize_t mipi_check_sum_err_hs_show(struct device *dev,
++					  struct device_attribute *attr,
++					  char *buf)
++{
++	struct anx7625_data *ctx = dev_get_drvdata(dev);
++	int ret;
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0)
++		return ret;
++
++	mutex_lock(&ctx->lock);
++	ret = anx7625_reg_read(ctx, ctx->i2c.rx_p1_client, 0x19);
++	mutex_unlock(&ctx->lock);
++
++	pm_runtime_put_autosuspend(dev);
++
++	if (ret < 0)
++		return ret;
++
++	return sysfs_emit(buf, "%u\n", !!(ret & BIT(5)));
++}
++static DEVICE_ATTR_RO(mipi_check_sum_err_hs);
++
++static struct attribute *anx7625_attrs[] = {
++	&dev_attr_mipi_check_sum_err_hs.attr,
++	NULL,
++};
++
++static const struct attribute_group anx7625_attr_group = {
++	.attrs = anx7625_attrs,
++};
++
+ static void anx7625_disable_pd_protocol(struct anx7625_data *ctx)
+ {
+ 	struct device *dev = ctx->dev;
+@@ -2918,6 +2961,10 @@ static int anx7625_i2c_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto free_wq;
+ 
++	ret = devm_device_add_group(dev, &anx7625_attr_group);
++	if (ret)
++		goto free_wq;
++
+ 	/*
+ 	 * Populating the aux bus will retrigger deferred probe, so it needs to
+ 	 * be done after calls that might return EPROBE_DEFER, otherwise we can
+diff --git a/drivers/gpu/drm/bridge/analogix/anx7625.h b/drivers/gpu/drm/bridge/analogix/anx7625.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/analogix/anx7625.h
++++ b/drivers/gpu/drm/bridge/analogix/anx7625.h
+@@ -293,6 +293,8 @@
+ #define  MIPI_LANE_CTRL_0		0x05
+ #define  MIPI_TIME_HS_PRPR		0x08
+ 
++#define  MIPI_ANALOG_CTRL_0		0x10
++
+ /*
+  * After MIPI RX protocol layer received video frames,
+  * Protocol layer starts to reconstruct video stream from PHY
+-- 
+Armbian
+

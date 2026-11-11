@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Junhao Xie <bigfoot@radxa.com>
+Date: Sun, 2 Aug 2026 00:08:04 +0800
+Subject: media: iris: separate encoder frame size from buffer layout
+
+Keep visible encoder dimensions separate from aligned NV12 buffer
+dimensions. Use aligned dimensions for V4L2 allocation and visible
+dimensions for HFI resolution and selection, preventing padding from
+being encoded as picture content.
+
+Signed-off-by: Junhao Xie <bigfoot@radxa.com>
+(cherry picked from commit 08282c7c568efe15e811226b611932909fb4923b)
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c | 18 +++-
+ drivers/media/platform/qcom/iris/iris_venc.c             | 44 +++++-----
+ drivers/media/platform/qcom/iris/iris_vidc.c             |  4 +-
+ 3 files changed, 36 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -794,8 +794,13 @@ static int iris_hfi_gen1_set_resolution(struct iris_inst *inst, u32 plane)
+ 
+ 	if (!iris_drc_pending(inst) && !(inst->sub_state & IRIS_INST_SUB_FIRST_IPSC)) {
+ 		fs.buffer_type = HFI_BUFFER_INPUT;
+-		fs.width = inst->fmt_src->fmt.pix_mp.width;
+-		fs.height = inst->fmt_src->fmt.pix_mp.height;
++		if (inst->domain == ENCODER) {
++			fs.width = inst->enc_raw_width;
++			fs.height = inst->enc_raw_height;
++		} else {
++			fs.width = inst->fmt_src->fmt.pix_mp.width;
++			fs.height = inst->fmt_src->fmt.pix_mp.height;
++		}
+ 
+ 		ret = hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
+ 		if (ret)
+@@ -806,8 +811,13 @@ static int iris_hfi_gen1_set_resolution(struct iris_inst *inst, u32 plane)
+ 	else
+ 		fs.buffer_type = HFI_BUFFER_OUTPUT;
+ 
+-	fs.width = inst->fmt_dst->fmt.pix_mp.width;
+-	fs.height = inst->fmt_dst->fmt.pix_mp.height;
++	if (inst->domain == ENCODER) {
++		fs.width = inst->enc_scale_width;
++		fs.height = inst->enc_scale_height;
++	} else {
++		fs.width = inst->fmt_dst->fmt.pix_mp.width;
++		fs.height = inst->fmt_dst->fmt.pix_mp.height;
++	}
+ 
+ 	return hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
+ }
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -219,18 +219,10 @@ static int iris_venc_s_fmt_output(struct iris_inst *inst, struct v4l2_format *f)
+ 
+ 	fmt = inst->fmt_dst;
+ 	fmt->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+-	/*
+-	 * If output format size != input format size,
+-	 * it is considered a scaling case,
+-	 * and the scaled size needs to be saved.
+-	 */
+-	if (f->fmt.pix_mp.width != inst->fmt_src->fmt.pix_mp.width ||
+-	    f->fmt.pix_mp.height != inst->fmt_src->fmt.pix_mp.height) {
+-		inst->enc_scale_width = f->fmt.pix_mp.width;
+-		inst->enc_scale_height = f->fmt.pix_mp.height;
+-		fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
+-		fmt->fmt.pix_mp.height = ALIGN(f->fmt.pix_mp.height, codec_align);
+-	}
++	inst->enc_scale_width = f->fmt.pix_mp.width;
++	inst->enc_scale_height = f->fmt.pix_mp.height;
++	fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
++	fmt->fmt.pix_mp.height = ALIGN(f->fmt.pix_mp.height, codec_align);
+ 	fmt->fmt.pix_mp.num_planes = 1;
+ 	fmt->fmt.pix_mp.plane_fmt[0].bytesperline = 0;
+ 	fmt->fmt.pix_mp.plane_fmt[0].sizeimage = iris_get_buffer_size(inst, BUF_OUTPUT);
+@@ -255,12 +247,16 @@ static int iris_venc_s_fmt_output(struct iris_inst *inst, struct v4l2_format *f)
+ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ {
+ 	struct v4l2_format *fmt, *output_fmt;
++	u32 raw_width, raw_height;
+ 
+ 	iris_venc_try_fmt(inst, f);
+ 
+ 	if (!check_format(inst, f->fmt.pix_mp.pixelformat, f->type))
+ 		return -EINVAL;
+ 
++	raw_width = f->fmt.pix_mp.width;
++	raw_height = f->fmt.pix_mp.height;
++
+ 	fmt = inst->fmt_src;
+ 	fmt->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+ 	fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, 128);
+@@ -276,8 +272,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	fmt->fmt.pix_mp.quantization = f->fmt.pix_mp.quantization;
+ 
+ 	output_fmt = inst->fmt_dst;
+-	output_fmt->fmt.pix_mp.width = fmt->fmt.pix_mp.width;
+-	output_fmt->fmt.pix_mp.height = fmt->fmt.pix_mp.height;
++	output_fmt->fmt.pix_mp.width = raw_width;
++	output_fmt->fmt.pix_mp.height = raw_height;
+ 	output_fmt->fmt.pix_mp.colorspace = fmt->fmt.pix_mp.colorspace;
+ 	output_fmt->fmt.pix_mp.xfer_func = fmt->fmt.pix_mp.xfer_func;
+ 	output_fmt->fmt.pix_mp.ycbcr_enc = fmt->fmt.pix_mp.ycbcr_enc;
+@@ -286,21 +282,21 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	inst->buffers[BUF_INPUT].min_count = iris_vpu_buf_count(inst, BUF_INPUT);
+ 	inst->buffers[BUF_INPUT].size = fmt->fmt.pix_mp.plane_fmt[0].sizeimage;
+ 
+-	inst->enc_raw_width = f->fmt.pix_mp.width;
+-	inst->enc_raw_height = f->fmt.pix_mp.height;
+-	inst->enc_scale_width = f->fmt.pix_mp.width;
+-	inst->enc_scale_height = f->fmt.pix_mp.height;
++	inst->enc_raw_width = raw_width;
++	inst->enc_raw_height = raw_height;
++	inst->enc_scale_width = raw_width;
++	inst->enc_scale_height = raw_height;
+ 
+-	if (f->fmt.pix_mp.width != inst->crop.width ||
+-	    f->fmt.pix_mp.height != inst->crop.height) {
++	if (raw_width != inst->crop.width || raw_height != inst->crop.height) {
+ 		inst->crop.top = 0;
+ 		inst->crop.left = 0;
+-		inst->crop.width = fmt->fmt.pix_mp.width;
+-		inst->crop.height = fmt->fmt.pix_mp.height;
++		inst->crop.width = raw_width;
++		inst->crop.height = raw_height;
+ 
+ 		iris_venc_s_fmt_output(inst, output_fmt);
+ 	}
+ 
++	/* The negotiated height carries the Y-to-UV offset for contiguous NV12. */
+ 	memcpy(f, fmt, sizeof(struct v4l2_format));
+ 
+ 	return 0;
+@@ -359,8 +355,8 @@ int iris_venc_s_selection(struct iris_inst *inst, struct v4l2_selection *s)
+ 		s->r.left = 0;
+ 		s->r.top = 0;
+ 
+-		if (s->r.width > inst->fmt_src->fmt.pix_mp.width ||
+-		    s->r.height > inst->fmt_src->fmt.pix_mp.height)
++		if (s->r.width > inst->enc_raw_width ||
++		    s->r.height > inst->enc_raw_height)
+ 			return -EINVAL;
+ 
+ 		inst->crop.left = s->r.left;
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -504,8 +504,8 @@ static int iris_g_selection(struct file *filp, void *fh, struct v4l2_selection *
+ 		switch (s->target) {
+ 		case V4L2_SEL_TGT_CROP_BOUNDS:
+ 		case V4L2_SEL_TGT_CROP_DEFAULT:
+-			s->r.width = inst->fmt_src->fmt.pix_mp.width;
+-			s->r.height = inst->fmt_src->fmt.pix_mp.height;
++			s->r.width = inst->enc_raw_width;
++			s->r.height = inst->enc_raw_height;
+ 			break;
+ 		case V4L2_SEL_TGT_CROP:
+ 			s->r.width = inst->crop.width;
+-- 
+Armbian
+

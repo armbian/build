@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oleg Keri <okerixx@gmail.com>
+Date: Wed, 9 Sep 2026 17:14:42 +0200
+Subject: phy: qcom: qmp-combo: do not decrement init_count on a forced init
+ failure
+
+qmp_combo_com_init() only takes a reference when it is not forced:
+
+	if (!force && qmp->init_count++)
+		return 0;
+
+With force set, && short-circuits on !force and init_count++ is never
+evaluated.  The error path decrements unconditionally, so a forced init
+that fails drops a reference it never took and init_count goes negative.
+
+init_count is a plain int, so the damage persists for the rest of the
+boot.  qmp_combo_com_exit() then sees a non-zero value in
+
+	if (!force && --qmp->init_count)
+		return 0;
+
+and returns early every time, so the clocks, resets and regulators are
+never released; the runtime PM callbacks only bail on exactly zero, so
+they keep touching hardware that may already be off.
+
+Both callers that pass force are the typec_switch and typec_mux
+callbacks, which tear the common block down and bring it back up on an
+orientation or altmode change.
+
+Only decrement the count when it was actually taken.
+
+Fixes: 2851117f8f42 ("phy: qcom-qmp-combo: Introduce orientation switching")
+Signed-off-by: Oleg Keri <okerixx@gmail.com>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20260909151443.10276-2-okerixx@gmail.com]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -4117,7 +4117,8 @@ static int qmp_combo_com_init(struct qmp_combo *qmp, bool force)
+ err_disable_regulators:
+ 	regulator_bulk_disable(cfg->num_vregs, qmp->vregs);
+ err_decrement_count:
+-	qmp->init_count--;
++	if (!force)
++		qmp->init_count--;
+ 
+ 	return ret;
+ }
+-- 
+Armbian
+

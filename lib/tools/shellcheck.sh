@@ -51,7 +51,7 @@ if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
 	echo "MACHINE: ${MACHINE}"
 	echo "Down URL: ${DOWN_URL}"
 	echo "SHELLCHECK_BIN: ${SHELLCHECK_BIN}"
-	curl -fLo "${SHELLCHECK_BIN}.tar.xz" "${DOWN_URL}" || {
+	curl --retry 5 -fLo "${SHELLCHECK_BIN}.tar.xz" "${DOWN_URL}" || {
 		echo "download of shellcheck failed from ${DOWN_URL}"
 		rm -f "${SHELLCHECK_BIN}.tar.xz"
 		exit 1

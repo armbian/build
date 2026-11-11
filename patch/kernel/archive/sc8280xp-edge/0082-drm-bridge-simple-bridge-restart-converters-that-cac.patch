@@ -1,0 +1,355 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 4 Nov 2026 11:26:58 +0100
+Subject: drm/bridge: simple-bridge: restart converters that cache the EDID
+
+The CH7218A samples the EDID of its sink while its firmware boots and
+serves that copy until it is restarted. When a KVM switches the EDID it
+emulates, the converter drops to its own default EDID without raising
+hotplug, and right after a plug it can hand out that default before it
+has read the sink. It has no register interface and its reset reaches no
+line on the SoC, so cycling its supply is the only way to make it look
+again.
+
+Take detection and modes over from the source and compare the identity
+of each EDID read with the one sampled after the last restart. When it
+changes, report the output disconnected with no modes and cycle the
+supply from a work, once post_disable has seen the source stop the link
+if a stream was up. The rail drop reaches the source as a real unplug
+and replug, which brings the fresh EDID in. A sink that keeps changing
+across a few restarts in a row is accepted as it is rather than losing
+the display for good. A sink leaving an output that is being shown
+starts a new change and resets that count.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/bridge/simple-bridge.c | 230 +++++++++-
+ 1 file changed, 226 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/simple-bridge.c b/drivers/gpu/drm/bridge/simple-bridge.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/simple-bridge.c
++++ b/drivers/gpu/drm/bridge/simple-bridge.c
+@@ -8,10 +8,12 @@
+ 
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_graph.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/workqueue.h>
+ 
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+@@ -25,8 +27,13 @@ struct simple_bridge_info {
+ 	unsigned int connector_type;
+ 	/* the device only drives HPD while it is powered */
+ 	bool hpd_needs_power;
++	/* the device samples the downstream EDID while it boots */
++	bool edid_at_power_up;
+ };
+ 
++/* how many restarts in a row a changing sink is worth */
++#define SIMPLE_BRIDGE_EDID_RESTARTS	3
++
+ struct simple_bridge {
+ 	struct drm_bridge	bridge;
+ 	struct drm_connector	connector;
+@@ -35,7 +42,17 @@ struct simple_bridge {
+ 
+ 	struct regulator	*vdd;
+ 	struct gpio_desc	*enable;
++
++	/* protects the fields below */
++	struct mutex		lock;
+ 	bool			powered;
++	bool			stream_enabled;
++	bool			reset_pending;
++	bool			sink_left;
++	bool			edid_sampled;
++	struct drm_edid_product_id edid_id;
++	unsigned int		edid_restarts;
++	struct work_struct	reset_work;
+ };
+ 
+ static inline struct simple_bridge *
+@@ -109,6 +126,7 @@ static int simple_bridge_attach(struct drm_bridge *bridge,
+ 				enum drm_bridge_attach_flags flags)
+ {
+ 	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++	struct drm_bridge *prev __free(drm_bridge_put) = drm_bridge_get_prev_bridge(bridge);
+ 	int ret;
+ 
+ 	ret = drm_bridge_attach(encoder, sbridge->bridge.next_bridge, bridge,
+@@ -116,6 +134,12 @@ static int simple_bridge_attach(struct drm_bridge *bridge,
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/* Watch the sink through the source to catch a stale EDID copy */
++	if (sbridge->info->edid_at_power_up && sbridge->info->hpd_needs_power &&
++	    sbridge->vdd && prev && (prev->ops & DRM_BRIDGE_OP_DETECT) &&
++	    (prev->ops & DRM_BRIDGE_OP_EDID))
++		sbridge->bridge.ops |= DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_MODES;
++
+ 	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)
+ 		return 0;
+ 
+@@ -141,8 +165,9 @@ static void simple_bridge_enable(struct drm_bridge *bridge,
+ 	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
+ 	int ret;
+ 
+-	if (sbridge->powered)
+-		return;
++	scoped_guard(mutex, &sbridge->lock)
++		if (sbridge->powered)
++			return;
+ 
+ 	if (sbridge->vdd) {
+ 		ret = regulator_enable(sbridge->vdd);
+@@ -158,8 +183,9 @@ static void simple_bridge_disable(struct drm_bridge *bridge,
+ {
+ 	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
+ 
+-	if (sbridge->powered)
+-		return;
++	scoped_guard(mutex, &sbridge->lock)
++		if (sbridge->powered)
++			return;
+ 
+ 	gpiod_set_value_cansleep(sbridge->enable, 0);
+ 
+@@ -167,10 +193,194 @@ static void simple_bridge_disable(struct drm_bridge *bridge,
+ 		regulator_disable(sbridge->vdd);
+ }
+ 
++static void simple_bridge_pre_enable(struct drm_bridge *bridge,
++				     struct drm_atomic_commit *commit)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++
++	guard(mutex)(&sbridge->lock);
++	WRITE_ONCE(sbridge->stream_enabled, true);
++}
++
++static void simple_bridge_post_disable(struct drm_bridge *bridge,
++				       struct drm_atomic_commit *commit)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++
++	guard(mutex)(&sbridge->lock);
++	WRITE_ONCE(sbridge->stream_enabled, false);
++
++	/* The source has stopped the link, run the restart that waited for it */
++	if (sbridge->reset_pending)
++		schedule_work(&sbridge->reset_work);
++}
++
++static void simple_bridge_restart_locked(struct simple_bridge *sbridge)
++{
++	struct drm_device *dev = sbridge->bridge.dev;
++	int ret;
++
++	lockdep_assert_held(&sbridge->lock);
++
++	WRITE_ONCE(sbridge->reset_pending, false);
++	sbridge->edid_sampled = false;
++
++	if (!sbridge->powered)
++		return;
++
++	gpiod_set_value_cansleep(sbridge->enable, 0);
++
++	ret = regulator_disable(sbridge->vdd);
++	if (ret) {
++		drm_err(dev, "Failed to disable vdd regulator: %d\n", ret);
++		gpiod_set_value_cansleep(sbridge->enable, 1);
++		return;
++	}
++
++	/* the off time and the boot time are described by the supply */
++	ret = regulator_enable(sbridge->vdd);
++	if (ret) {
++		drm_err(dev, "Failed to enable vdd regulator: %d\n", ret);
++		sbridge->powered = false;
++		return;
++	}
++
++	gpiod_set_value_cansleep(sbridge->enable, 1);
++}
++
++static void simple_bridge_reset_work(struct work_struct *work)
++{
++	struct simple_bridge *sbridge =
++		container_of(work, struct simple_bridge, reset_work);
++
++	scoped_guard(mutex, &sbridge->lock) {
++		if (!sbridge->reset_pending)
++			return;
++
++		/* With a stream up, wait for post_disable to come back here */
++		if (!sbridge->stream_enabled)
++			simple_bridge_restart_locked(sbridge);
++	}
++
++	/* Clients drop the output now, or probe it again once restarted */
++	drm_kms_helper_hotplug_event(sbridge->bridge.dev);
++}
++
++/* Compare the sink with the one the device sampled when it last booted */
++static bool simple_bridge_edid_stale(struct simple_bridge *sbridge,
++				     const struct drm_edid *drm_edid)
++{
++	struct drm_edid_product_id id;
++
++	drm_edid_get_product_id(drm_edid, &id);
++
++	guard(mutex)(&sbridge->lock);
++
++	/* A sink that left a live output starts a new change, not a repeat */
++	if (READ_ONCE(sbridge->sink_left)) {
++		WRITE_ONCE(sbridge->sink_left, false);
++		sbridge->edid_restarts = 0;
++	}
++
++	if (!sbridge->edid_sampled) {
++		sbridge->edid_id = id;
++		sbridge->edid_sampled = true;
++		return false;
++	}
++
++	if (!memcmp(&id, &sbridge->edid_id, sizeof(id))) {
++		sbridge->edid_restarts = 0;
++		return false;
++	}
++
++	if (sbridge->edid_restarts >= SIMPLE_BRIDGE_EDID_RESTARTS) {
++		drm_dbg_kms(sbridge->bridge.dev,
++			    "sink still changing after %u restarts, keeping it\n",
++			    SIMPLE_BRIDGE_EDID_RESTARTS);
++		sbridge->edid_id = id;
++		return false;
++	}
++
++	sbridge->edid_restarts++;
++	WRITE_ONCE(sbridge->reset_pending, true);
++
++	return true;
++}
++
++static enum drm_connector_status
++simple_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++	struct drm_bridge *prev __free(drm_bridge_put) = drm_bridge_get_prev_bridge(bridge);
++
++	/* Keep the output down until the owed restart has run */
++	if (READ_ONCE(sbridge->reset_pending) || !prev)
++		return connector_status_disconnected;
++
++	return drm_bridge_detect(prev, connector);
++}
++
++static void simple_bridge_hpd_notify(struct drm_bridge *bridge,
++				     struct drm_connector *connector,
++				     enum drm_connector_status status)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++
++	/* Lockless, this can run in the source's HPD thread during a restart */
++	if (status == connector_status_disconnected &&
++	    READ_ONCE(sbridge->stream_enabled) &&
++	    !READ_ONCE(sbridge->reset_pending))
++		WRITE_ONCE(sbridge->sink_left, true);
++}
++
++static int simple_bridge_bridge_get_modes(struct drm_bridge *bridge,
++					  struct drm_connector *connector)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++	struct drm_bridge *prev __free(drm_bridge_put) = drm_bridge_get_prev_bridge(bridge);
++	const struct drm_edid *drm_edid;
++	int ret;
++
++	if (!prev)
++		return 0;
++
++	drm_edid = drm_bridge_edid_read(prev, connector);
++	if (!drm_edid_valid(drm_edid)) {
++		drm_edid_free(drm_edid);
++		drm_edid = NULL;
++	}
++
++	if (drm_edid && simple_bridge_edid_stale(sbridge, drm_edid)) {
++		drm_edid_free(drm_edid);
++		drm_edid_connector_update(connector, NULL);
++		/* A disconnected output gets no fallback modes invented for it */
++		connector->status = connector_status_disconnected;
++		schedule_work(&sbridge->reset_work);
++		return 0;
++	}
++
++	drm_edid_connector_update(connector, drm_edid);
++	ret = drm_edid_connector_add_modes(connector);
++	drm_edid_free(drm_edid);
++
++	return ret;
++}
++
++static void simple_bridge_detach(struct drm_bridge *bridge)
++{
++	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
++
++	cancel_work_sync(&sbridge->reset_work);
++}
++
+ static void simple_bridge_power_off(void *data)
+ {
+ 	struct simple_bridge *sbridge = data;
+ 
++	cancel_work_sync(&sbridge->reset_work);
++
++	guard(mutex)(&sbridge->lock);
++
+ 	if (!sbridge->powered)
+ 		return;
+ 
+@@ -187,8 +397,14 @@ static const struct drm_bridge_funcs simple_bridge_bridge_funcs = {
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+ 	.attach		= simple_bridge_attach,
++	.detach		= simple_bridge_detach,
++	.detect		= simple_bridge_detect,
++	.get_modes	= simple_bridge_bridge_get_modes,
++	.hpd_notify	= simple_bridge_hpd_notify,
++	.atomic_pre_enable = simple_bridge_pre_enable,
+ 	.atomic_enable = simple_bridge_enable,
+ 	.atomic_disable = simple_bridge_disable,
++	.atomic_post_disable = simple_bridge_post_disable,
+ };
+ 
+ static int simple_bridge_probe(struct platform_device *pdev)
+@@ -203,6 +419,11 @@ static int simple_bridge_probe(struct platform_device *pdev)
+ 		return PTR_ERR(sbridge);
+ 
+ 	sbridge->info = of_device_get_match_data(&pdev->dev);
++	INIT_WORK(&sbridge->reset_work, simple_bridge_reset_work);
++
++	ret = devm_mutex_init(&pdev->dev, &sbridge->lock);
++	if (ret)
++		return ret;
+ 
+ 	/* Get the next bridge in the pipeline. */
+ 	remote = of_graph_get_remote_node(pdev->dev.of_node, 1, -1);
+@@ -323,6 +544,7 @@ static const struct of_device_id simple_bridge_match[] = {
+ 		.data = &(const struct simple_bridge_info) {
+ 			.connector_type = DRM_MODE_CONNECTOR_HDMIA,
+ 			.hpd_needs_power = true,
++			.edid_at_power_up = true,
+ 		},
+ 	}, {
+ 		.compatible = "mstar,tsumu88adt3-lf-1",
+-- 
+Armbian
+

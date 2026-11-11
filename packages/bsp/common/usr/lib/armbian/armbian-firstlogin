@@ -593,30 +593,6 @@ set_timezone_and_locales() {
 	fi
 }
 
-add_profile_sync_settings() {
-	if [[ ! -f /usr/bin/psd ]]; then
-		return 0
-	fi
-
-	/usr/bin/psd > /dev/null 2>&1
-	config_file="${HOME}/.config/psd/psd.conf"
-	if [ -f "${config_file}" ]; then
-		# test for overlayfs
-		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
-		case $(/usr/bin/psd p 2> /dev/null | grep Overlayfs) in
-			*active*)
-				echo -e "\nConfigured profile sync daemon with overlayfs."
-				;;
-			*)
-				echo -e "\nConfigured profile sync daemon."
-				sed -i 's/USE_OVERLAYFS="yes"/#USE_OVERLAYFS="no"/' "${config_file}"
-				;;
-		esac
-	fi
-	systemctl --user enable psd.service > /dev/null 2>&1
-	systemctl --user start psd.service > /dev/null 2>&1
-}
-
 add_user() {
 	read -r -t 0 _
 	REPEATS=3
@@ -750,16 +726,20 @@ add_user() {
 			# it once FIRSTLOGIN_SUCCESS=1 is set after all config completes.
 			# set up profile sync daemon on desktop systems
 			if command -v psd > /dev/null 2>&1; then
+				# psd 6.x mounts its overlays through psd-overlay-helper as root.
+				# psd 7 and later use fuse-overlayfs, have no helper and need no sudo.
 				# Grant psd-overlay-helper NOPASSWD via a sudoers drop-in (atomic write).
 				# Using /etc/sudoers.d/ avoids touching /etc/sudoers directly: power-loss
 				# recovery is simply "no drop-in" → re-run recreates it, and there is no
 				# need to restore or validate any dist version of /etc/sudoers.
-				local _f="/etc/sudoers.d/armbian-firstlogin-psd"
-				if echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" > "${_f}.tmp"; then
-					atomic_write "${_f}.tmp" "${_f}" 440 || return 1
-				else
-					rm -f "${_f}.tmp"
-					return 1
+				if [[ -x /usr/bin/psd-overlay-helper ]]; then
+					local _f="/etc/sudoers.d/armbian-firstlogin-psd"
+					if echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" > "${_f}.tmp"; then
+						atomic_write "${_f}.tmp" "${_f}" 440 || return 1
+					else
+						rm -f "${_f}.tmp"
+						return 1
+					fi
 				fi
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
@@ -1226,10 +1206,26 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 			EOF
 		fi
 
+		# SDDM autologin needs a session. Themes without a user list (Omarchy)
+		# log in as the last user, so set it too. Prefer omarchy.desktop.
+		sddm_session=""
+		for s in /usr/share/wayland-sessions/omarchy.desktop /usr/share/wayland-sessions/*.desktop /usr/share/xsessions/*.desktop; do
+			if [[ -f "$s" ]]; then
+				sddm_session=$(basename "$s")
+				break
+			fi
+		done
+		if [[ ! -s /var/lib/sddm/state.conf ]]; then
+			mkdir -p /var/lib/sddm
+			printf '[Last]\nUser=%s\nSession=%s\n' "$RealUserName" "$sddm_session" > /var/lib/sddm/state.conf
+			chown sddm:sddm /var/lib/sddm/state.conf 2>/dev/null
+		fi
+
 		# 1st run goes without login
 		cat <<- EOF > /etc/sddm.conf.d/autologin.conf
 			[Autologin]
 			User=$RealUserName
+			Session=$sddm_session
 		EOF
 		echo -e "\n\e[1m\e[39mNow starting desktop environment via ${desktop_dm}...\x1B[0m\n"
 		systemctl enable sddm 2>/dev/null

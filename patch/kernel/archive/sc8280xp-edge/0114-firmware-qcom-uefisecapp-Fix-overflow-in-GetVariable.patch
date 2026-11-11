@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guanglei Zhu <zhugl3@xiaopeng.com>
+Date: Tue, 3 Nov 2026 16:41:57 +0800
+Subject: firmware: qcom: uefisecapp: Fix overflow in GetVariable response
+ check
+
+qsee_uefi_get_variable() validates the response written by the UEFI
+secure application before copying the variable data out of it:
+
+	if (rsp_data->data_offset + rsp_data->data_size > rsp_data->length)
+		return EFI_DEVICE_ERROR;
+
+All three fields are u32 and come straight from the response buffer, so
+the addition is performed modulo 2^32.  A response with
+data_offset = 0xFFFFFFF0 and data_size = 0x20 wraps around to 0x10 and
+passes the check as long as length is at least that.  The check on the
+caller buffer size further down only compares data_size against
+buffer_size, so a small data_size satisfies it too, and the memcpy then
+reads data_size bytes from rsp_data + data_offset.
+
+Since wrapping around requires data_offset itself to be huge, the source
+pointer ends up far outside the response buffer, typically in unmapped
+memory, and the fault takes the kernel down.  If the address happens to
+be mapped, kernel memory is copied into the caller's buffer instead.
+
+Reorder the check so that no addition is performed: reject data_offset
+larger than length first, which also makes the subtraction below safe,
+then compare data_size against the remaining room.
+
+Fixes: 759e7a2b62eb ("firmware: Add support for Qualcomm UEFI Secure Application")
+Cc: stable@vger.kernel.org
+Signed-off-by: Guanglei Zhu <zhugl3@xiaopeng.com>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261103084157.426838-1-zhugl3@xiaopeng.com]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/firmware/qcom/qcom_qseecom_uefisecapp.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/firmware/qcom/qcom_qseecom_uefisecapp.c b/drivers/firmware/qcom/qcom_qseecom_uefisecapp.c
+index 111111111111..222222222222 100644
+--- a/drivers/firmware/qcom/qcom_qseecom_uefisecapp.c
++++ b/drivers/firmware/qcom/qcom_qseecom_uefisecapp.c
+@@ -387,7 +387,8 @@ static efi_status_t qsee_uefi_get_variable(struct qcuefi_client *qcuefi, const e
+ 	if (rsp_data->length > rsp_size)
+ 		return EFI_DEVICE_ERROR;
+ 
+-	if (rsp_data->data_offset + rsp_data->data_size > rsp_data->length)
++	if (rsp_data->data_offset > rsp_data->length ||
++	    rsp_data->data_size > rsp_data->length - rsp_data->data_offset)
+ 		return EFI_DEVICE_ERROR;
+ 
+ 	/*
+-- 
+Armbian
+

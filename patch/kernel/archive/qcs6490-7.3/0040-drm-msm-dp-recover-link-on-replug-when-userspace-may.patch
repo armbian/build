@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiali Chen <chenjiali@radxa.com>
+Date: Thu, 4 Jun 2026 14:35:11 +0800
+Subject: drm/msm/dp: recover link on replug when userspace may skip modeset
+
+When a DP/HDMI sink is replugged while the stream is active, the HPD
+handler sets LINK_STATUS_BAD to request a userspace modeset. Some
+Wayland compositors do not respond to the link-status property,
+leaving the link broken and the screen blank.
+
+Schedule a delayed work from hpd_plug_handle that resets the link
+and restarts the video stream directly. The 500ms delay prevents
+racing with in-flight DPU commits, which would otherwise cause
+vblank timeouts and SError crashes on rapid plug/unplug.
+
+[SuperKali: rebased on Linux 7.3]
+Signed-off-by: Jiali Chen <chenjiali@radxa.com>
+(cherry picked from commit 0c14b47f916aa6b2caf811eb2c94006a8df83e55)
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 36 +++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -56,6 +56,8 @@ struct msm_dp_display_private {
+ 	struct mutex plugged_lock;
+ 	bool plugged;
+ 
++	struct delayed_work hpd_recovery_work;
++
+ 	struct drm_device *drm_dev;
+ 
+ 	struct drm_dp_aux *aux;
+@@ -232,6 +234,8 @@ static void msm_dp_display_unbind(struct device *dev, struct device *master,
+ 	struct msm_dp_display_private *dp = dev_get_dp_display_private(dev);
+ 	struct msm_drm_private *priv = dev_get_drvdata(master);
+ 
++	cancel_delayed_work_sync(&dp->hpd_recovery_work);
++
+ 	of_dp_aux_depopulate_bus(dp->aux);
+ 
+ 	msm_dp_aux_unregister(dp->aux);
+@@ -400,6 +404,26 @@ static int msm_dp_display_handle_irq_hpd(struct msm_dp_display_private *dp)
+ 	return 0;
+ }
+ 
++static void msm_dp_hpd_recovery_work(struct work_struct *work)
++{
++	struct delayed_work *dw = to_delayed_work(work);
++	struct msm_dp_display_private *dp =
++		container_of(dw, struct msm_dp_display_private, hpd_recovery_work);
++
++	if (!dp->msm_dp_display.power_on || !dp->plugged)
++		return;
++
++	msm_dp_ctrl_off_pixel_clk(dp->ctrl);
++	msm_dp_ctrl_off_link(dp->ctrl, dp->panel);
++	msm_dp_ctrl_reinit_phy(dp->ctrl);
++	msm_dp_ctrl_on_link(dp->ctrl, dp->panel);
++	msm_dp_ctrl_prepare_stream_on(dp->ctrl, dp->panel, false);
++	msm_dp_ctrl_on_stream(dp->ctrl, dp->panel);
++
++	drm_connector_set_link_status_property(dp->msm_dp_display.connector,
++					       DRM_MODE_LINK_STATUS_GOOD);
++}
++
+ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ {
+ 	int ret;
+@@ -425,10 +449,19 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ 	ret = msm_dp_display_process_hpd_high(dp);
+ 
+-	if (!ret && dp->msm_dp_display.power_on && !was_plugged)
++	if (!ret && dp->msm_dp_display.power_on && !was_plugged) {
++		/*
++		 * The sink was replugged while the DP stream is active.
++		 * Userspace may not perform a modeset in response to
++		 * LINK_STATUS_BAD on Wayland compositors. Schedule deferred
++		 * link recovery to avoid racing with DPU commits.
++		 */
+ 		drm_connector_set_link_status_property(dp->msm_dp_display.connector,
+ 						       DRM_MODE_LINK_STATUS_BAD);
+ 
++		schedule_delayed_work(&dp->hpd_recovery_work, msecs_to_jiffies(500));
++	}
++
+ 	drm_dbg_dp(dp->drm_dev, "After, type=%d sink_count=%d\n",
+ 			dp->msm_dp_display.connector_type,
+ 			dp->link->sink_count);
+@@ -1281,6 +1314,7 @@ static int msm_dp_display_probe(struct platform_device *pdev)
+ 	dp->hpd_isr_status = 0;
+ 
+ 	mutex_init(&dp->plugged_lock);
++	INIT_DELAYED_WORK(&dp->hpd_recovery_work, msm_dp_hpd_recovery_work);
+ 
+ 	rc = msm_dp_display_get_io(dp);
+ 	if (rc)
+-- 
+Armbian
+

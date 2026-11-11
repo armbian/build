@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Junhao Xie <bigfoot@radxa.com>
+Date: Tue, 4 Aug 2026 16:03:22 +0800
+Subject: media: iris: harden failed session buffer cleanup
+
+Reject HFI commands for deinitialized or failed instances.
+Return buffers to the queued state when stream start fails and ignore
+late completions for failed, non-streaming queues.
+
+Signed-off-by: Junhao Xie <bigfoot@radxa.com>
+(cherry picked from commit d5cdbbdaa958a6d6fa11e8598fb981e813bd8891)
+---
+ drivers/media/platform/qcom/iris/iris_buffer.c | 5 +++++
+ drivers/media/platform/qcom/iris/iris_state.c  | 3 +++
+ drivers/media/platform/qcom/iris/iris_vb2.c    | 5 ++++-
+ 3 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -893,6 +893,11 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
+ 		return -EINVAL;
+ 
+ 	vb2 = &vbuf->vb2_buf;
++	/* Failed start_streaming() must return driver-owned buffers as queued. */
++	if (!vb2->vb2_queue->streaming && inst->state == IRIS_INST_ERROR) {
++		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_QUEUED);
++		return 0;
++	}
+ 
+ 	vbuf->flags |= buf->flags;
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_state.c b/drivers/media/platform/qcom/iris/iris_state.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_state.c
++++ b/drivers/media/platform/qcom/iris/iris_state.c
+@@ -263,6 +263,9 @@ bool iris_allow_cmd(struct iris_inst *inst, u32 cmd)
+ 	struct vb2_queue *src_q = v4l2_m2m_get_src_vq(inst->m2m_ctx);
+ 	struct vb2_queue *dst_q = v4l2_m2m_get_dst_vq(inst->m2m_ctx);
+ 
++	if (inst->state == IRIS_INST_DEINIT || inst->state == IRIS_INST_ERROR)
++		return false;
++
+ 	if (cmd == V4L2_DEC_CMD_START || cmd == V4L2_ENC_CMD_START) {
+ 		if (vb2_is_streaming(src_q) || vb2_is_streaming(dst_q))
+ 			if (iris_drc_pending(inst) || iris_drain_pending(inst))
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -289,6 +289,7 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
+ 	static const struct v4l2_event eos = { .type = V4L2_EVENT_EOS };
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb2);
+ 	struct v4l2_m2m_ctx *m2m_ctx;
++	enum vb2_buffer_state state;
+ 	struct iris_inst *inst;
+ 	int ret = 0;
+ 
+@@ -339,7 +340,9 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
+ exit:
+ 	if (ret) {
+ 		iris_inst_change_state(inst, IRIS_INST_ERROR);
+-		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
++		state = vb2->vb2_queue->start_streaming_called ?
++			VB2_BUF_STATE_ERROR : VB2_BUF_STATE_QUEUED;
++		v4l2_m2m_buf_done(vbuf, state);
+ 	}
+ 	mutex_unlock(&inst->lock);
+ }
+-- 
+Armbian
+

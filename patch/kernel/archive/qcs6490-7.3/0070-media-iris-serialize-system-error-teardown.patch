@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Junhao Xie <bigfoot@radxa.com>
+Date: Wed, 12 Aug 2026 11:43:50 +0800
+Subject: media: iris: serialize system error teardown
+
+Coordinate a single core teardown and signal completion after cleanup.
+
+Signed-off-by: Junhao Xie <bigfoot@radxa.com>
+(cherry picked from commit 4e94efbb5b43f80297423e17f07e9f73d9bb64d7)
+---
+ drivers/media/platform/qcom/iris/iris_core.c              | 35 ++++++++++
+ drivers/media/platform/qcom/iris/iris_core.h              |  4 ++
+ drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c | 11 +--
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c | 13 +---
+ drivers/media/platform/qcom/iris/iris_probe.c             |  4 +-
+ 5 files changed, 46 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_core.c b/drivers/media/platform/qcom/iris/iris_core.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.c
++++ b/drivers/media/platform/qcom/iris/iris_core.c
+@@ -8,6 +8,7 @@
+ 
+ #include "iris_core.h"
+ #include "iris_firmware.h"
++#include "iris_instance.h"
+ #include "iris_state.h"
+ #include "iris_vpu_common.h"
+ 
+@@ -39,6 +40,40 @@ void iris_core_deinit(struct iris_core *core)
+ 		pm_runtime_put_sync(core->dev);
+ }
+ 
++bool iris_core_prepare_deinit(struct iris_core *core)
++{
++	struct iris_inst *instance;
++	bool prepare = false;
++
++	mutex_lock(&core->lock);
++	if (core->state == IRIS_CORE_INIT) {
++		reinit_completion(&core->sys_error_done);
++		core->state = IRIS_CORE_ERROR;
++		list_for_each_entry(instance, &core->instances, list)
++			iris_inst_change_state(instance, IRIS_INST_ERROR);
++		prepare = true;
++	}
++	mutex_unlock(&core->lock);
++
++	return prepare;
++}
++
++void iris_core_deinit_on_error(struct iris_core *core)
++{
++	if (!iris_core_prepare_deinit(core)) {
++		iris_wait_for_sys_error(core);
++		return;
++	}
++
++	iris_core_deinit(core);
++	complete_all(&core->sys_error_done);
++}
++
++void iris_wait_for_sys_error(struct iris_core *core)
++{
++	wait_for_completion(&core->sys_error_done);
++}
++
+ static int iris_wait_for_system_response(struct iris_core *core)
+ {
+ 	int ret;
+diff --git a/drivers/media/platform/qcom/iris/iris_core.h b/drivers/media/platform/qcom/iris/iris_core.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.h
++++ b/drivers/media/platform/qcom/iris/iris_core.h
+@@ -117,6 +117,7 @@ struct iris_core {
+ 	struct iris_core_power			power;
+ 	const struct iris_hfi_sys_ops		*hfi_sys_ops;
+ 	struct completion			core_init_done;
++	struct completion			sys_error_done;
+ 	u32					intr_status;
+ 	struct delayed_work			sys_error_handler;
+ 	struct list_head			instances;
+@@ -127,5 +128,8 @@ struct iris_core {
+ 
+ int iris_core_init(struct iris_core *core);
+ void iris_core_deinit(struct iris_core *core);
++bool iris_core_prepare_deinit(struct iris_core *core);
++void iris_core_deinit_on_error(struct iris_core *core);
++void iris_wait_for_sys_error(struct iris_core *core);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -218,7 +218,6 @@ static void
+ iris_hfi_gen1_sys_event_notify(struct iris_core *core, void *packet)
+ {
+ 	struct hfi_msg_event_notify_pkt *pkt = packet;
+-	struct iris_inst *instance;
+ 
+ 	if (pkt->event_id == HFI_EVENT_SYS_ERROR) {
+ 		dev_err(core->dev, "sys error (type: %x, session id:%x, data1:%x, data2:%x)\n",
+@@ -228,14 +227,8 @@ iris_hfi_gen1_sys_event_notify(struct iris_core *core, void *packet)
+ 		iris_hfi_sfr_print(core);
+ 	}
+ 
+-	core->state = IRIS_CORE_ERROR;
+-
+-	mutex_lock(&core->lock);
+-	list_for_each_entry(instance, &core->instances, list)
+-		iris_inst_change_state(instance, IRIS_INST_ERROR);
+-	mutex_unlock(&core->lock);
+-
+-	schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
++	if (iris_core_prepare_deinit(core))
++		schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
+ }
+ 
+ static void
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -275,21 +275,13 @@ static int iris_hfi_gen2_handle_session_error(struct iris_inst *inst,
+ static int iris_hfi_gen2_handle_system_error(struct iris_core *core,
+ 					     struct iris_hfi_packet *pkt)
+ {
+-	struct iris_inst *instance;
+-
+ 	if (pkt)
+ 		dev_err(core->dev, "received system error of type %#x\n", pkt->type);
+ 
+ 	iris_hfi_sfr_print(core);
+ 
+-	core->state = IRIS_CORE_ERROR;
+-
+-	mutex_lock(&core->lock);
+-	list_for_each_entry(instance, &core->instances, list)
+-		iris_inst_change_state(instance, IRIS_INST_ERROR);
+-	mutex_unlock(&core->lock);
+-
+-	schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
++	if (iris_core_prepare_deinit(core))
++		schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
+ 
+ 	return 0;
+ }
+@@ -1020,7 +1012,6 @@ void iris_hfi_gen2_response_handler(struct iris_core *core)
+ 		struct iris_hfi_packet pkt = {.type = HFI_SYS_ERROR_WD_TIMEOUT};
+ 
+ 		dev_err(core->dev, "cpu watchdog error received\n");
+-		core->state = IRIS_CORE_ERROR;
+ 		iris_hfi_gen2_handle_system_error(core, &pkt);
+ 
+ 		return;
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -216,7 +216,7 @@ static void iris_sys_error_handler(struct work_struct *work)
+ 			container_of(work, struct iris_core, sys_error_handler.work);
+ 
+ 	iris_core_deinit(core);
+-	iris_core_init(core);
++	complete_all(&core->sys_error_done);
+ }
+ 
+ static int iris_probe(struct platform_device *pdev)
+@@ -234,6 +234,8 @@ static int iris_probe(struct platform_device *pdev)
+ 	core->state = IRIS_CORE_DEINIT;
+ 	mutex_init(&core->lock);
+ 	init_completion(&core->core_init_done);
++	init_completion(&core->sys_error_done);
++	complete_all(&core->sys_error_done);
+ 
+ 	core->response_packet = devm_kzalloc(core->dev, IFACEQ_CORE_PKT_SIZE, GFP_KERNEL);
+ 	if (!core->response_packet)
+-- 
+Armbian
+

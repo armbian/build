@@ -13,6 +13,7 @@ setenv bootlogo "false"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "off"
+setenv serialcon "ttyS2"
 
 test -n "${distro_bootpart}" || distro_bootpart=1
 
@@ -31,7 +32,7 @@ fi
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"; fi
+if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=${serialcon},1500000 ${consoleargs}"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"

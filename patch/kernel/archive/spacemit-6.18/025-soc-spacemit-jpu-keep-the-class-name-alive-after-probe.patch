@@ -1,0 +1,87 @@
+From: Frédéric Mahé <frederic.mahe@cirad.fr>
+Subject: [PATCH] soc: spacemit: jpu: keep the class name alive after probe
+
+class_create() keeps the name pointer, but jpu_probe() passed a stack
+buffer. jpu0 uevents then carry stack garbage as SUBSYSTEM=, udevd drops
+the coldplug event and initramfs-tools waits 3 minutes in udevadm settle.
+Keep the name in the devm-allocated struct jpu_device, and unwind the
+class and device on probe failure so they never outlive it.
+
+Signed-off-by: Frédéric Mahé <frederic.mahe@cirad.fr>
+---
+diff --git a/drivers/soc/spacemit/jpu/jpu.c b/drivers/soc/spacemit/jpu/jpu.c
+--- a/drivers/soc/spacemit/jpu/jpu.c
++++ b/drivers/soc/spacemit/jpu/jpu.c
+@@ -74,6 +74,8 @@
+ 	struct device *jpu_device;
+ 	struct cdev s_jpu_cdev;
+ 	struct class *jpu_class;
++	/* class_create() keeps this pointer: it must live as long as the class */
++	char cdev_name[32];
+ 	dev_t s_jpu_major;
+ 
+ 	jpudrv_buffer_t s_instance_pool;
+@@ -1494,7 +1496,6 @@
+ 	struct resource *res;
+ 	const struct of_device_id *of_id;
+ 	uint32_t device_id = 0;
+-	char cdev_name[32] = { 0 };
+ 	int err, i;
+ 	struct cpumask mask = { CPU_BITS_NONE };
+ 	int cpuid = 0;
+@@ -1649,9 +1650,9 @@
+ 		return -ENXIO;
+ 	}
+ 
+-	snprintf(cdev_name, sizeof(cdev_name), "%s%d", "jpu", device_id);
+-	JLOG(jdev->jdev, "cdev name %s\n", cdev_name);
+-	if ((alloc_chrdev_region(&jdev->s_jpu_major, 0, 1, cdev_name)) < 0) {
++	snprintf(jdev->cdev_name, sizeof(jdev->cdev_name), "%s%d", "jpu", device_id);
++	JLOG(jdev->jdev, "cdev name %s\n", jdev->cdev_name);
++	if ((alloc_chrdev_region(&jdev->s_jpu_major, 0, 1, jdev->cdev_name)) < 0) {
+ 		dev_err(jdev->jdev, "could not allocate major number\n");
+ 		return -EBUSY;
+ 	}
+@@ -1670,15 +1671,22 @@
+ 	     MINOR(jdev->s_jpu_major));
+ 
+ 	/* Create class for device driver. */
+-	jdev->jpu_class = class_create(cdev_name);
++	jdev->jpu_class = class_create(jdev->cdev_name);
++	if (IS_ERR(jdev->jpu_class)) {
++		err = PTR_ERR(jdev->jpu_class);
++		goto err_cdev;
++	}
+ 
+ 	/* Create a device node. */
+-	jdev->jpu_device = device_create(jdev->jpu_class, NULL, jdev->s_jpu_major, NULL, cdev_name);
++	jdev->jpu_device = device_create(jdev->jpu_class, NULL, jdev->s_jpu_major, NULL, jdev->cdev_name);
++	if (IS_ERR(jdev->jpu_device)) {
++		err = PTR_ERR(jdev->jpu_device);
++		goto err_class;
++	}
+ 
+ 	err = sysfs_create_groups(&pdev->dev.kobj, jpu_frequency_group);
+-	if (err < 0) {
+-		return err;
+-	}
++	if (err < 0)
++		goto err_device;
+ 	pm_runtime_set_active(&pdev->dev);
+ 	pm_runtime_enable(&pdev->dev);
+ #if defined (CONFIG_PM) && defined (DDR_QOS_ENABLE)
+@@ -1697,6 +1705,14 @@
+ 	irq_set_affinity(jdev->s_jpu_irq, &mask);
+ 	dev_dbg(jdev->jdev, "driver probe successfully\n");
+ 	return 0;
++err_device:
++	device_destroy(jdev->jpu_class, jdev->s_jpu_major);
++err_class:
++	class_destroy(jdev->jpu_class);
++err_cdev:
++	cdev_del(&jdev->s_jpu_cdev);
++	unregister_chrdev_region(jdev->s_jpu_major, 1);
++	return err;
+ err0:
+ 	return -1;
+ }

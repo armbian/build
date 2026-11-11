@@ -160,10 +160,12 @@ function cli_json_info_run() {
 			display_alert "Generating targets inventory" "targets-compositor" "info"
 			export TARGETS_BETA="${BETA}"                             # Read by the Python script, and injected into every target as "BETA=" param.
 			export TARGETS_REVISION="${REVISION}"                     # Read by the Python script, and injected into every target as "REVISION=" param.
+			export TARGETS_KERNEL_CVE_PATCHES="${KERNEL_CVE_PATCHES:-}" # Read by the Python script, and injected into every target as "KERNEL_CVE_PATCHES=" param, if set.
 			export TARGETS_FILTER_INCLUDE="${TARGETS_FILTER_INCLUDE}" # Read by the Python script; used to "only include" targets that match the given string.
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "${ALL_USERSPACE_INVENTORY_FILE}" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
 			unset TARGETS_BETA
 			unset TARGETS_REVISION
+			unset TARGETS_KERNEL_CVE_PATCHES
 			unset TARGETS_FILTER_INCLUDE
 		fi
 

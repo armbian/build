@@ -23,18 +23,10 @@ BOARD_FIRMWARE_INSTALL="-full"
 # The R1 has a soldered AP6256.
 # The R1+ routes the same wiring to the M.2 E-key slot.
 # PCIe cards in that slot leave the SDIO wiring unused.
-# Use overlays=disable-pcie when both M.2 slots are empty.
+# Use overlays=dshanpi-r1-disable-pcie when both M.2 slots are empty.
 # The overlay also disables any card in the E-key slot.
 # An unused mainline PCIe PHY draws about 0.6 W.
 # The overlay exists on current and edge kernels only.
-
-function post_family_config__dshanpi-r1_overlay_prefix() {
-	# The rk35xx family config sets OVERLAY_PREFIX to rk35xx.
-	# The board prefix hides the overlays of other RK3568 boards.
-	if [[ $BRANCH == current || $BRANCH == edge ]]; then
-		declare -g OVERLAY_PREFIX="rockchip-rk3568-dshanpi-r1"
-	fi
-}
 
 # Put the serial console after HDMI tty1.
 # /dev/console then stays on the debug UART.
@@ -42,13 +34,16 @@ function dshanpi_r1_serial_console_last() {
 	# SRC_EXTLINUX=yes ships no boot.cmd.
 	[[ $SRC_EXTLINUX == yes ]] && return 0
 	local boot_cmd="$1"
-	local serial_console="ttyS2,1500000"
-	[[ $BRANCH == vendor ]] && serial_console="ttyFIQ0,1500000"
-	display_alert "$BOARD" "Putting console=${serial_console%%,*} last in ${boot_cmd}" "info"
-	if ! grep -qF 'setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"' "${boot_cmd}"; then
+	local serialcon="ttyS2"
+	[[ $BRANCH == vendor ]] && serialcon="ttyFIQ0"
+	display_alert "$BOARD" "Putting console=${serialcon} last in ${boot_cmd}" "info"
+	if ! grep -qxF 'setenv serialcon "ttyS2"' "${boot_cmd}" ||
+		! grep -qF 'setenv consoleargs "console=${serialcon},1500000 ${consoleargs}"' "${boot_cmd}"; then
 		exit_with_error "dshanpi-r1: boot.cmd console template changed; update the sed in dshanpi_r1_serial_console_last"
 	fi
-	sed -i "s/setenv consoleargs \"console=ttyS2,1500000 \${consoleargs}\"/setenv consoleargs \"\${consoleargs} console=${serial_console}\"/" \
+	sed -i \
+		-e "s/^setenv serialcon \"ttyS2\"$/setenv serialcon \"${serialcon}\"/" \
+		-e 's/setenv consoleargs "console=${serialcon},1500000 ${consoleargs}"/setenv consoleargs "${consoleargs} console=${serialcon},1500000"/' \
 		"${boot_cmd}"
 }
 

@@ -1,0 +1,186 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/3] ata: dwc_ahci: fall back to the PHY in the sata-port
+ subnode
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 09 Nov 2026 03:57:58 +0100
+Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-1-e54ca8e68f18@pardini.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+dwc_ahci_probe() only looks for a "sata-phy" PHY on the controller node.
+The RK3588 device tree, as synced from Linux, describes the PHY in the
+sata-port@0 subnode instead (the binding allows per-port PHYs, which is
+how Linux's libahci_platform consumes them), so probing every RK3588
+on-board SATA controller fails:
+
+  => scsi scan
+  scanning bus for devices...
+  can't get the phy from DT
+
+RK3566/RK3568 sata1 and sata2 have been affected the same way since the
+v7.1 DT sync (d0a838bdc62), which brought in the Linux change "arm64:
+dts: rockchip: Add port subnodes to RK356x SATA controllers" (linked
+below). Only RK3568 sata0 still has the PHY on the controller node.
+
+If the controller node has no "sata-phy" in phy-names, use the first PHY
+of the first enabled subnode. A "sata-phy" that is declared but cannot
+be resolved still fails the probe. Only one PHY is brought up, as
+before; the RK3588 and RK356x controllers have a single port
+(ports-implemented = <0x1>).
+
+Only tested on RK3588.
+
+Link: https://patch.msgid.link/20260201191804.41421-2-heiko@sntech.de
+Cc: Jonas Karlman <jonas@kwiboo.se>
+Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-1-e54ca8e68f18@pardini.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/ata/dwc_ahci.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/ata/dwc_ahci.c b/drivers/ata/dwc_ahci.c
+index 0431d370716..8192d2f5f34 100644
+--- a/drivers/ata/dwc_ahci.c
++++ b/drivers/ata/dwc_ahci.c
+@@ -57,6 +57,19 @@ static int dwc_ahci_probe(struct udevice *dev)
+ 	struct phy phy;
+ 
+ 	ret = generic_phy_get_by_name(dev, "sata-phy", &phy);
++	if (ret && dev_read_stringlist_search(dev, "phy-names",
++					      "sata-phy") < 0) {
++		ofnode node;
++
++		/* e.g. RK35xx: the phy is in the sata-port@N subnode */
++		dev_for_each_subnode(node, dev) {
++			if (!ofnode_is_enabled(node))
++				continue;
++			ret = generic_phy_get_by_index_nodev(node, 0, &phy);
++			if (!ret)
++				break;
++		}
++	}
+ 	if (ret) {
+ 		pr_err("can't get the phy from DT\n");
+ 		return ret;
+
+-- 
+2.47.3
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/3] ata: ahci: return the last LBA from emulated READ
+ CAPACITY
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 09 Nov 2026 03:57:59 +0100
+Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-2-e54ca8e68f18@pardini.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+SCSI READ CAPACITY returns the address of the last block, and since
+commit 5f7c06bdc3c6 ("scsi: fix disk capacity too small by one sector")
+scsi_read_capacity() adds one to get the block count. The AHCI emulation
+returns the sector count instead, so AHCI disks are now reported one
+sector too large.
+
+Reading that non-existent sector ends in a 10 s AHCI timeout. With
+"ums 0 scsi 0" this happens as soon as the host looks for the backup
+GPT, and UMS exits.
+
+Return n_sectors - 1 from both handlers, keeping the READ CAPACITY (10)
+clamp.
+
+Fixes: 5f7c06bdc3c6 ("scsi: fix disk capacity too small by one sector")
+Cc: Julius Lehmann <lehmanju@devpi.de>
+Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-2-e54ca8e68f18@pardini.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/ata/ahci.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 38e953ee79c..c806ee55d70 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -759,8 +759,9 @@ static int ata_scsiop_read_capacity10(struct ahci_uc_priv *uc_priv,
+ 		return -EPERM;
+ 	}
+ 
+-	cap64 = ata_id_n_sectors(uc_priv->ataid[pccb->target]);
+-	if (cap64 > 0x100000000ULL)
++	/* READ CAPACITY returns the address of the last block */
++	cap64 = ata_id_n_sectors(uc_priv->ataid[pccb->target]) - 1;
++	if (cap64 > 0xffffffffULL)
+ 		cap64 = 0xffffffff;
+ 
+ 	cap = cpu_to_be32(cap64);
+@@ -788,7 +789,8 @@ static int ata_scsiop_read_capacity16(struct ahci_uc_priv *uc_priv,
+ 		return -EPERM;
+ 	}
+ 
+-	cap = ata_id_n_sectors(uc_priv->ataid[pccb->target]);
++	/* READ CAPACITY returns the address of the last block */
++	cap = ata_id_n_sectors(uc_priv->ataid[pccb->target]) - 1;
+ 	cap = cpu_to_be64(cap);
+ 	memcpy(pccb->pdata, &cap, sizeof(cap));
+ 
+
+-- 
+2.47.3
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 3/3] phy: rockchip: naneng-combphy: fix RK3588 SATA
+ pipe_con1 register offset
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 09 Nov 2026 03:58:00 +0100
+Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-3-e54ca8e68f18@pardini.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+On RK3588, the sata2 PHY speed is selected by sata2_phy_spdmode in
+PHP_GRF_PHP_CON1[1:0] (offset 0x0004), with sata2_phy_rx_err in bit 2.
+rk3588_combphy_grfcfgs has pipe_con1_for_sata at offset 0x0000 though,
+so the value 0x2 (6.0 Gb/s, rx_err cleared) ends up in PHP_GRF_PHP_CON0
+and CON1 is never written.
+
+This leaves sata2 at its 1.5 Gb/s reset value, so the link only trains
+at 1.5 Gb/s, even with a 6 Gb/s capable disk. sata0 and sata1 are not
+affected: their speed fields are in PHP_GRF_PHP_CON0 and are set by
+pipe_con0_for_sata.
+
+The register layout is described in the RK3588 TRM V1.0 Part1, section
+6.17 "PHP_GRF Register Description". Rockchip fixed this in their BSP
+kernel in 2022 by moving pipe_con1_for_sata to offset 0x0004; the same
+fix was sent for Linux.
+
+Tested with an mSATA SSD on sata2 (combphy2_psu): PxSSTS (0xfe230128)
+reads 0x113 (1.5 Gb/s) before and 0x133 (6.0 Gb/s) after.
+
+Fixes: c5b4a012bca8 ("phy: rockchip: naneng-combphy: Support rk3588")
+Link: https://github.com/rockchip-linux/kernel/commit/2f5fe2c0bbd4fa95102aadd60da1100989103aa0
+Link: https://patch.msgid.link/20261109-rk3588-combphy-sata2-6g-v1-1-e9135c91de6a@pardini.net
+Cc: Yifeng Zhao <yifeng.zhao@rock-chips.com>
+Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-3-e54ca8e68f18@pardini.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-naneng-combphy.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c b/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
+index 82353ae7678..675401e085f 100644
+--- a/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
++++ b/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
+@@ -727,7 +727,7 @@ static const struct rockchip_combphy_grfcfg rk3588_combphy_grfcfgs = {
+ 	.con3_for_sata		= { 0x000c, 15, 0, 0x00, 0x0407 },
+ 	/* pipe-grf */
+ 	.pipe_con0_for_sata	= { 0x0000, 11, 5, 0x00, 0x22 },
+-	.pipe_con1_for_sata	= { 0x0000, 2, 0, 0x00, 0x2 },
++	.pipe_con1_for_sata	= { 0x0004, 2, 0, 0x00, 0x2 },
+ 	.pipe_pcie1l0_sel	= { 0x0100, 0, 0, 0x01, 0x0 },
+ 	.pipe_pcie1l1_sel	= { 0x0100, 1, 1, 0x01, 0x0 },
+ };
+
+-- 
+2.47.3
+

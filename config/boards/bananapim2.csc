@@ -1,0 +1,12 @@
+# A31s quad core 1Gb SoC Wifi
+BOARD_NAME="Banana Pi M2"
+BOARD_VENDOR="sinovoip"
+BOARDFAMILY="sun6i"
+BOARD_MAINTAINER=""
+INTRODUCED="2015"
+BOOTCONFIG="Sinovoip_BPI_M2_defconfig"
+BOOTBRANCH="tag:v2026.10"
+BOOTPATCHDIR="v2026.10-sunxi"
+OVERLAY_PREFIX="sun6i-a31s"
+KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current"

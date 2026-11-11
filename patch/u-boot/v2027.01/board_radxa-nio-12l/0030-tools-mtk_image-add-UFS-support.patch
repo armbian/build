@@ -1,0 +1,218 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 7 Nov 2026 21:27:58 +0100
+Subject: [PATCH] tools: mtk_image: add UFS support
+
+Add support for generating (and verifying) BootROM images that boot
+from UFS storage on MediaTek SoCs, eg. the MT8195/MT8395 (Genio 1200)
+with "-n media=ufs".
+
+UFS uses a larger (4 KiB) device header than NOR/SD/eMMC, and the size
+recorded in its generic boot header is the one of the whole device
+header.
+
+Generated images are byte-identical to the ones from MediaTek's vendor
+U-Boot mkimage.
+
+Based on MediaTek vendor U-Boot commits:
+5dfb54cd19b4 ("tools: mtk_image: add UFS support")
+3e023ba22230 ("tools: mtk_image: Fix UFS image header checking failure")
+
+Co-developed-by: Fabien Parent <fparent@baylibre.com>
+Co-developed-by: Ramax Lo <ramax.lo@mediatek.com>
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ tools/mtk_image.c | 88 +++++++++++++++++++++++++++++++++++++++++++++++
+ tools/mtk_image.h | 16 +++++++--
+ 2 files changed, 102 insertions(+), 2 deletions(-)
+
+diff --git a/tools/mtk_image.c b/tools/mtk_image.c
+index 1b1aed59924..2749e3fcb1e 100644
+--- a/tools/mtk_image.c
++++ b/tools/mtk_image.c
+@@ -36,6 +36,9 @@ static const struct brom_img_type {
+ 	}, {
+ 		.name = "spim-nand",
+ 		.type = BRLYT_TYPE_SNAND
++	}, {
++		.name = "ufs",
++		.type = BRLYT_TYPE_UFS
+ 	}
+ };
+ 
+@@ -262,6 +265,8 @@ static int mtk_image_vrec_header(struct image_tool_params *params,
+ 
+ 	if (hdr_media == BRLYT_TYPE_NAND || hdr_media == BRLYT_TYPE_SNAND)
+ 		tparams->header_size = hdr_nand_size;
++	else if (hdr_media == BRLYT_TYPE_UFS)
++		tparams->header_size = sizeof(struct ufs_device_header);
+ 	else
+ 		tparams->header_size = sizeof(struct gen_device_header);
+ 
+@@ -357,6 +362,56 @@ static int mtk_image_verify_gen_header(const uint8_t *ptr, int print)
+ 	return mtk_image_verify_gfh(gfh, GFH_FLASH_TYPE_GEN, print);
+ }
+ 
++static int mtk_image_verify_ufs_header(const uint8_t *ptr, int print)
++{
++	union gen_boot_header *gbh = (union gen_boot_header *)ptr;
++	uint32_t gfh_offset, total_size, devh_size;
++	struct brom_layout_header *bh;
++	struct gfh_header *gfh;
++
++	if (strcmp(gbh->name, UFS_BOOT_NAME))
++		return -1;
++
++	if (print)
++		printf("Boot Media:   UFS\n");
++
++	devh_size = sizeof(struct ufs_device_header);
++
++	/* Unlike NOR/SD/eMMC, the size is the one of the whole device header */
++	if (le32_to_cpu(gbh->version) != 1 ||
++	    le32_to_cpu(gbh->size) != devh_size)
++		return -1;
++
++	bh = (struct brom_layout_header *)(ptr + sizeof(union gen_boot_header));
++
++	if (strcmp(bh->name, BRLYT_NAME))
++		return -1;
++
++	if (le32_to_cpu(bh->magic) != BRLYT_MAGIC ||
++	    le32_to_cpu(bh->type) != BRLYT_TYPE_UFS)
++		return -1;
++
++	if (img_gen) {
++		gfh_offset = devh_size;
++	} else {
++		gfh_offset = le32_to_cpu(bh->header_size);
++
++		if (gfh_offset + sizeof(struct gfh_header) > img_size) {
++			/* See mtk_image_verify_gen_header() */
++			total_size = le32_to_cpu(bh->total_size);
++
++			if (total_size - gfh_offset > img_size - devh_size)
++				return -1;
++
++			gfh_offset = devh_size;
++		}
++	}
++
++	gfh = (struct gfh_header *)(ptr + gfh_offset);
++
++	return mtk_image_verify_gfh(gfh, GFH_FLASH_TYPE_GEN, print);
++}
++
+ static int mtk_image_verify_nand_header(const uint8_t *ptr, int print)
+ {
+ 	struct brom_layout_header *bh;
+@@ -504,6 +559,8 @@ static int mtk_image_verify_header(unsigned char *ptr, int image_size,
+ 
+ 	if (is_mtk_nand_header(ptr))
+ 		return mtk_image_verify_nand_header(ptr, 0);
++	else if (!strcmp((char *)ptr, UFS_BOOT_NAME))
++		return mtk_image_verify_ufs_header(ptr, 0);
+ 	else
+ 		return mtk_image_verify_gen_header(ptr, 0);
+ 
+@@ -530,6 +587,8 @@ static void mtk_image_print_header(const void *ptr, struct image_tool_params *pa
+ 
+ 	if (is_mtk_nand_header(ptr))
+ 		mtk_image_verify_nand_header(ptr, 1);
++	else if (!strcmp((char *)ptr, UFS_BOOT_NAME))
++		mtk_image_verify_ufs_header(ptr, 1);
+ 	else
+ 		mtk_image_verify_gen_header(ptr, 1);
+ }
+@@ -658,6 +717,33 @@ static void mtk_image_set_gen_header(void *ptr, off_t filesize,
+ 		 filesize - sizeof(struct gen_device_header) - SHA256_SUM_LEN);
+ }
+ 
++static void mtk_image_set_ufs_header(void *ptr, off_t filesize,
++				     uint32_t loadaddr)
++{
++	struct ufs_device_header *hdr = (struct ufs_device_header *)ptr;
++	struct gfh_header *gfh;
++
++	/* Generic device header; size is the one of the whole device header */
++	snprintf(hdr->boot.name, sizeof(hdr->boot.name), "%s", UFS_BOOT_NAME);
++	hdr->boot.version = cpu_to_le32(1);
++	hdr->boot.size = cpu_to_le32(sizeof(*hdr));
++
++	/* BRLYT header */
++	put_brom_layout_header(&hdr->brlyt, hdr_media);
++	hdr->brlyt.header_size = cpu_to_le32(hdr_offset + sizeof(*hdr));
++	hdr->brlyt.total_size = cpu_to_le32(hdr_offset + filesize);
++	hdr->brlyt.header_size_2 = hdr->brlyt.header_size;
++	hdr->brlyt.total_size_2 = hdr->brlyt.total_size;
++
++	/* GFH header */
++	gfh = (struct gfh_header *)(ptr + sizeof(*hdr));
++	put_ghf_header(gfh, filesize, sizeof(*hdr), loadaddr,
++		       GFH_FLASH_TYPE_GEN);
++
++	/* Generate SHA256 hash */
++	put_hash((uint8_t *)gfh, filesize - sizeof(*hdr) - SHA256_SUM_LEN);
++}
++
+ static void mtk_image_set_nand_header(void *ptr, off_t filesize,
+ 				      uint32_t loadaddr)
+ {
+@@ -754,6 +840,8 @@ static void mtk_image_set_header(void *ptr, struct stat *sbuf, int ifd,
+ 
+ 	if (hdr_media == BRLYT_TYPE_NAND || hdr_media == BRLYT_TYPE_SNAND)
+ 		mtk_image_set_nand_header(ptr, sbuf->st_size, params->addr);
++	else if (hdr_media == BRLYT_TYPE_UFS)
++		mtk_image_set_ufs_header(ptr, sbuf->st_size, params->addr);
+ 	else
+ 		mtk_image_set_gen_header(ptr, sbuf->st_size, params->addr);
+ }
+diff --git a/tools/mtk_image.h b/tools/mtk_image.h
+index 54a838de863..5be7c91b403 100644
+--- a/tools/mtk_image.h
++++ b/tools/mtk_image.h
+@@ -11,7 +11,7 @@
+ 
+ /* Device header definitions, all fields are little-endian */
+ 
+-/* Header for NOR/SD/eMMC */
++/* Header for NOR/SD/eMMC/UFS */
+ union gen_boot_header {
+ 	struct {
+ 		char name[12];
+@@ -25,6 +25,7 @@ union gen_boot_header {
+ #define EMMC_BOOT_NAME		"EMMC_BOOT"
+ #define SF_BOOT_NAME		"SF_BOOT"
+ #define SDMMC_BOOT_NAME		"SDMMC_BOOT"
++#define UFS_BOOT_NAME		"UFS_BOOT"
+ 
+ /* BootROM layout header */
+ struct brom_layout_header {
+@@ -48,7 +49,8 @@ enum brlyt_img_type {
+ 	BRLYT_TYPE_EMMC = 0x10005,
+ 	BRLYT_TYPE_NOR = 0x10007,
+ 	BRLYT_TYPE_SDMMC = 0x10008,
+-	BRLYT_TYPE_SNAND = 0x10009
++	BRLYT_TYPE_SNAND = 0x10009,
++	BRLYT_TYPE_UFS = 0x1000c
+ };
+ 
+ /* Combined device header for NOR/SD/eMMC */
+@@ -61,6 +63,16 @@ struct gen_device_header {
+ 	};
+ };
+ 
++/* Device header for UFS */
++struct ufs_device_header {
++	union gen_boot_header boot;
++
++	union {
++		struct brom_layout_header brlyt;
++		uint8_t brlyt_pad[0xe00];
++	};
++};
++
+ /* BootROM header definitions */
+ struct gfh_common_header {
+ 	uint32_t magic_version;

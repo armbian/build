@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 7 Nov 2026 21:13:40 +0100
+Subject: [PATCH] arm: mediatek: mt8195: get DRAM size from TF-A boot argument
+
+Genio 1200 boards (eg. Radxa NIO-12L) come in several DRAM sizes
+(4/8/16 GiB) while sharing a single devicetree. The (vendor) TF-A BL2,
+after libdram initializes the memory, stores the actual size in a small
+boot argument structure at a fixed DRAM location (0x40000100).
+
+Use it when present, falling back to the devicetree memory node
+otherwise. Also make the DDR mem_map entry follow the detected size, so
+16 GiB boards are fully mapped (the Kconfig default covers 8 GiB) and
+smaller boards don't map nonexistent memory.
+
+The kernel devicetree memory node is already fixed up from gd->dram[]
+by arch_fixup_fdt(), so the OS gets the correct size too.
+
+Based on work by Bartosz Bilas <b.bilas@grinn-global.com> for mt8188.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ arch/arm/include/asm/arch-mediatek/misc.h | 21 +++++++++++++++++++
+ arch/arm/mach-mediatek/mt8195/init.c      | 25 ++++++++++++++++++++++-
+ 2 files changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/include/asm/arch-mediatek/misc.h b/arch/arm/include/asm/arch-mediatek/misc.h
+index 2530e78a5f1..c8d456f80af 100644
+--- a/arch/arm/include/asm/arch-mediatek/misc.h
++++ b/arch/arm/include/asm/arch-mediatek/misc.h
+@@ -14,4 +14,25 @@
+ #define APHW_VER		0x08
+ #define APSW_VER		0x0c
+ 
++/*
++ * Boot argument passed by (vendor) TF-A BL2 to BL33, at a fixed location in
++ * DRAM, after libdram has initialized and sized the memory. This is not the
++ * legacy preloader boot argument (see mt7623/preloader.h); only the magic
++ * value happens to be the same.
++ */
++#define MTK_TFA_BOOT_ARG_LOCATION	0x40000100
++#define MTK_TFA_BOOT_ARG_MAGIC		0x504c504c
++
++#ifndef __ASSEMBLY__
++#include <linux/types.h>
++
++struct mtk_tfa_boot_arg {
++	u32 magic_number;
++	u64 dram_size;
++};
++
++#define MTK_TFA_BOOT_ARG \
++	((struct mtk_tfa_boot_arg *)MTK_TFA_BOOT_ARG_LOCATION)
++#endif
++
+ #endif /* __MEDIATEK_MISC_H_ */
+diff --git a/arch/arm/mach-mediatek/mt8195/init.c b/arch/arm/mach-mediatek/mt8195/init.c
+index 6afb7330b4e..6f4cdb2c05a 100644
+--- a/arch/arm/mach-mediatek/mt8195/init.c
++++ b/arch/arm/mach-mediatek/mt8195/init.c
+@@ -6,6 +6,7 @@
+  *         Chris-QJ Chen <chris-qj.chen@mediatek.com>
+  */
+ 
++#include <asm/arch/misc.h>
+ #include <asm/armv8/mmu.h>
+ #include <asm/system.h>
+ #include <dm/uclass.h>
+@@ -17,7 +18,29 @@ DECLARE_GLOBAL_DATA_PTR;
+ 
+ int dram_init(void)
+ {
+-	return fdtdec_setup_mem_size_base();
++	struct mtk_tfa_boot_arg *arg = MTK_TFA_BOOT_ARG;
++	int ret;
++
++	/*
++	 * The DRAM size depends on the board variant (eg 4/8/16 GiB); TF-A BL2
++	 * (with libdram) knows the actual size and passes it in a boot
++	 * argument. Fall back to the devicetree if it is not there.
++	 */
++	if (arg->magic_number == MTK_TFA_BOOT_ARG_MAGIC && arg->dram_size) {
++		gd->ram_base = CONFIG_MTK_MEM_MAP_DDR_BASE_PHY;
++		gd->ram_size = arg->dram_size;
++	} else {
++		ret = fdtdec_setup_mem_size_base();
++		if (ret)
++			return ret;
++	}
++
++	/* Map exactly the available DRAM, which might exceed the Kconfig default */
++	mem_map[0].virt = gd->ram_base;
++	mem_map[0].phys = gd->ram_base;
++	mem_map[0].size = gd->ram_size;
++
++	return 0;
+ }
+ 
+ phys_addr_t board_get_usable_ram_top(phys_size_t total_size)

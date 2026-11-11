@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 5 Nov 2026 12:54:32 +0100
+Subject: soc: qcom: apr: fix service lifetime races
+
+The GLINK SMEM transport calls apr_callback() from hard IRQ and
+apr_find_svc() takes svcs_lock there, so take it with irqsave
+everywhere, including the idr_remove() calls on the apr_add_device()
+error paths. Drop the stale IDR entry when device_register() fails,
+queue the RX work while still holding the service lock so a concurrent
+remove cannot free the service in between, and free static services
+from the kref release so an RX callback holding a reference never sees
+freed memory.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/soc/qcom/apr.c | 29 ++++++----
+ 1 file changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/soc/qcom/apr.c b/drivers/soc/qcom/apr.c
+index 111111111111..222222222222 100644
+--- a/drivers/soc/qcom/apr.c
++++ b/drivers/soc/qcom/apr.c
+@@ -79,6 +79,8 @@ static void apr_svc_release(struct kref *ref)
+ 
+ 	if (svc->dynamic_svc)
+ 		kfree(svc);
++	else
++		kfree(container_of(svc, struct apr_device, svc));
+ }
+ 
+ static void apr_svc_get(struct pkt_router_svc *svc)
+@@ -158,8 +160,8 @@ static void apr_dev_release(struct device *dev)
+ 
+ 	cancel_work_sync(&adev->svc.rx_work);
+ 	apr_svc_purge_rx(&adev->svc);
++	/* The last reference frees adev, an RX callback may still hold one */
+ 	apr_svc_put(&adev->svc);
+-	kfree(adev);
+ }
+ 
+ static struct pkt_router_svc *apr_find_svc(struct packet_router *apr, void *buf)
+@@ -243,9 +245,9 @@ static int apr_callback(struct rpmsg_device *rpdev, void *buf,
+ 	}
+ 
+ 	list_add_tail(&abuf->node, &svc->rx_list);
+-	spin_unlock_irqrestore(&svc->lock, flags);
+-
++	/* Queue under the lock so remove cannot free the service in between */
+ 	queue_work(apr->rxwq, &svc->rx_work);
++	spin_unlock_irqrestore(&svc->lock, flags);
+ 
+ 	return 0;
+ }
+@@ -398,6 +400,7 @@ gpr_port_t *gpr_alloc_port(struct apr_device *gdev, struct device *dev,
+ 	struct packet_router *pr = dev_get_drvdata(gdev->dev.parent);
+ 	gpr_port_t *port;
+ 	struct pkt_router_svc *svc;
++	unsigned long flags;
+ 	int id;
+ 
+ 	port = kzalloc_obj(*port);
+@@ -417,18 +420,18 @@ gpr_port_t *gpr_alloc_port(struct apr_device *gdev, struct device *dev,
+ 	INIT_LIST_HEAD(&svc->rx_list);
+ 	kref_init(&svc->refcount);
+ 
+-	spin_lock(&pr->svcs_lock);
++	spin_lock_irqsave(&pr->svcs_lock, flags);
+ 	id = idr_alloc_cyclic(&pr->svcs_idr, svc, GPR_DYNAMIC_PORT_START,
+ 			      GPR_DYNAMIC_PORT_END, GFP_ATOMIC);
+ 	if (id < 0) {
+ 		dev_err(dev, "Unable to allocate dynamic GPR src port\n");
+ 		kfree(port);
+-		spin_unlock(&pr->svcs_lock);
++		spin_unlock_irqrestore(&pr->svcs_lock, flags);
+ 		return ERR_PTR(id);
+ 	}
+ 
+ 	svc->id = id;
+-	spin_unlock(&pr->svcs_lock);
++	spin_unlock_irqrestore(&pr->svcs_lock, flags);
+ 
+ 	return port;
+ }
+@@ -483,9 +486,9 @@ static void apr_device_remove(struct device *dev)
+ 
+ 	if (adrv->remove)
+ 		adrv->remove(adev);
+-	spin_lock(&apr->svcs_lock);
++	spin_lock_irqsave(&apr->svcs_lock, flags);
+ 	idr_remove(&apr->svcs_idr, adev->svc.id);
+-	spin_unlock(&apr->svcs_lock);
++	spin_unlock_irqrestore(&apr->svcs_lock, flags);
+ }
+ 
+ static int apr_uevent(const struct device *dev, struct kobj_uevent_env *env)
+@@ -515,6 +518,7 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 	struct packet_router *apr = dev_get_drvdata(dev);
+ 	struct apr_device *adev = NULL;
+ 	struct pkt_router_svc *svc;
++	unsigned long flags;
+ 	int ret;
+ 
+ 	adev = kzalloc_obj(*adev);
+@@ -560,9 +564,9 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 	adev->dev.release = apr_dev_release;
+ 	adev->dev.driver = NULL;
+ 
+-	spin_lock(&apr->svcs_lock);
++	spin_lock_irqsave(&apr->svcs_lock, flags);
+ 	ret = idr_alloc(&apr->svcs_idr, svc, svc_id, svc_id + 1, GFP_ATOMIC);
+-	spin_unlock(&apr->svcs_lock);
++	spin_unlock_irqrestore(&apr->svcs_lock, flags);
+ 	if (ret < 0) {
+ 		dev_err(dev, "idr_alloc failed: %d\n", ret);
+ 		goto out;
+@@ -573,7 +577,9 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 					    1, &adev->service_path);
+ 	if (ret < 0 && ret != -EINVAL) {
+ 		dev_err(dev, "Failed to read second value of qcom,protection-domain\n");
++		spin_lock_irqsave(&apr->svcs_lock, flags);
+ 		idr_remove(&apr->svcs_idr, svc_id);
++		spin_unlock_irqrestore(&apr->svcs_lock, flags);
+ 		goto out;
+ 	}
+ 
+@@ -582,6 +588,9 @@ static int apr_add_device(struct device *dev, struct device_node *np,
+ 	ret = device_register(&adev->dev);
+ 	if (ret) {
+ 		dev_err(dev, "device_register failed: %d\n", ret);
++		spin_lock_irqsave(&apr->svcs_lock, flags);
++		idr_remove(&apr->svcs_idr, svc_id);
++		spin_unlock_irqrestore(&apr->svcs_lock, flags);
+ 		put_device(&adev->dev);
+ 	}
+ out:
+-- 
+Armbian
+

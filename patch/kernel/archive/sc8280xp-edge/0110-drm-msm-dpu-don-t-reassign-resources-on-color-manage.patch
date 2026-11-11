@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Beat M. Liechti" <beat@softbase.tech>
+Date: Sun, 1 Nov 2026 13:26:57 +0100
+Subject: drm/msm/dpu: don't reassign resources on color management changes
+
+Since commit 39a750ff5fc9 ("drm/msm/dpu: Add DSPP GC driver to provide
+GAMMA_LUT DRM property"), dpu_crtc_atomic_check() releases and reserves
+the hardware blocks of a CRTC whenever color_mgmt_changed is set, not
+only on a modeset. A commit that merely replaces the GAMMA_LUT or CTM
+blob of an active CRTC can therefore move that CRTC to a different
+CTL/LM pair without disabling and re-enabling the pipeline, and the
+hardware keeps scanning out through blocks the driver no longer
+considers in use.
+
+This is easy to hit with GNOME/mutter on a laptop driving an external
+display: closing the lid disables the eDP CRTC, and in the same atomic
+commit mutter sets new color blobs on the still active HDMI CRTC. With
+drm.debug enabled, dpu_rm_reserve() moves the HDMI CRTC from CTL_1 to
+the just released CTL_0 while its encoder is neither disabled nor
+re-enabled. A few seconds later the display SMMU reports context faults
+at the refresh rate and the external screen fills with garbage. Opening
+the lid again leads to a stream of "vblank timeout" and "frame done
+timeout" errors and the machine has to be power cycled.
+
+Color management affects the topology in only one way: DSPP blocks are
+requested when either CTM or GAMMA_LUT is set. Handle that case in
+dpu_crtc_check_mode_changed() by requiring a full modeset when the
+presence of CTM/GAMMA_LUT changes, and stop reallocating resources on a
+bare color_mgmt_changed. Don't set allow_modeset here: if userspace
+did not allow a modeset, the atomic core rejects the commit instead of
+the CRTC being silently moved to other blocks.
+
+Fixes: 39a750ff5fc9 ("drm/msm/dpu: Add DSPP GC driver to provide GAMMA_LUT DRM property")
+Cc: stable@vger.kernel.org
+Assisted-by: LLM
+Signed-off-by: Beat M. Liechti <beat@softbase.tech>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261101122943.8155-2-beat@softbase.tech]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 25 ++++++++--
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1516,6 +1516,19 @@ int dpu_crtc_check_mode_changed(struct drm_crtc_state *old_crtc_state,
+ 	    (!clone_mode_requested && clone_mode_enabled))
+ 		new_crtc_state->mode_changed = true;
+ 
++	/*
++	 * DSPP blocks are reserved only when CTM or GAMMA_LUT is set (see
++	 * dpu_crtc_get_topology()), so enabling or disabling color management
++	 * changes the hardware topology. Changing resources on an active CRTC
++	 * requires a full modeset; otherwise the CTL/LM blocks get swapped
++	 * underneath a running pipeline. If userspace did not allow a modeset,
++	 * drm_atomic_check_only() rejects the commit.
++	 */
++	if (new_crtc_state->enable &&
++	    (!!(old_crtc_state->ctm || old_crtc_state->gamma_lut) !=
++	     !!(new_crtc_state->ctm || new_crtc_state->gamma_lut)))
++		new_crtc_state->mode_changed = true;
++
+ 	return 0;
+ }
+ 
+@@ -1534,9 +1547,15 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 
+ 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
+ 
+-	/* don't reallocate resources if only ACTIVE has beeen changed */
+-	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+-	    crtc_state->color_mgmt_changed) {
++	/*
++	 * Don't reallocate resources if only ACTIVE or color management
++	 * values have changed. A change in DSPP requirements is turned into a
++	 * modeset by dpu_crtc_check_mode_changed(). Reallocating on a plain
++	 * color_mgmt_changed would move an active CRTC to different CTL/LM
++	 * blocks without a modeset, leaving the hardware scanning out through
++	 * stale CTL/LM state (SMMU faults, corrupted output, vblank timeouts).
++	 */
++	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
+ 		rc = dpu_crtc_assign_resources(crtc, crtc_state);
+ 		if (rc < 0)
+ 			return rc;
+-- 
+Armbian
+

@@ -45,9 +45,18 @@ load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
+# overlay_prefix holds one or more prefixes. The first match wins. Full overlay names also work.
 for overlay_file in ${overlays}; do
-	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/sophgo/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
-		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
+	setenv overlay_found "false"
+	for overlay_prefix_item in ${overlay_prefix}; do
+		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/sophgo/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/sophgo/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+			setenv overlay_found "true"
+			echo "Applying kernel provided DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo"
+			fdt apply ${load_addr} || setenv overlay_error "true"
+		fi
+	done
+	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/sophgo/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/sophgo/overlay/${overlay_file}.dtbo; then
+		echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
@@ -60,6 +69,25 @@ done
 if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+fi
+
+# The vendor U-Boot sets no serial#. Use the SoC efuse serial (FTSN) instead.
+# booti copies serial# into the DT root serial-number property.
+# The Wi-Fi driver derives a stable MAC address from serial-number.
+if env exists serial#; then
+	echo "serial# already set"
+else
+	setexpr.l sn0 *0x03050104
+	setexpr.l sn1 *0x03050108
+	setexpr.l sn2 *0x0305010c
+	setexpr.l sn3 *0x03050110
+	if test "${sn0}${sn1}${sn2}${sn3}" != "0000"; then
+		setenv serial# "${sn0}-${sn1}-${sn2}-${sn3}"
+	fi
+	setenv sn0
+	setenv sn1
+	setenv sn2
+	setenv sn3
 fi
 
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
