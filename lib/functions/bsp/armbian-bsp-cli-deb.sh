@@ -486,7 +486,9 @@ function board_side_bsp_cli_postinst_base() {
 	# ARMBIAN_PRETTY_NAME is now set in armbian-base-files.
 
 	# Force ramlog to be enabled if it exists. @TODO: why?
-	[[ -f /etc/lib/systemd/system/armbian-ramlog.service ]] && systemctl --no-reload enable armbian-ramlog.service
+	[[ -f /lib/systemd/system/armbian-ramlog.service ]] && systemctl --no-reload enable armbian-ramlog.service
+	# The armbian-live-patch extension ships this unit. postrm disables it on a BSP swap.
+	[[ -f /etc/systemd/system/armbian-live-patch.service ]] && systemctl --no-reload enable armbian-live-patch.service
 
 	# check if it was disabled in config and disable in new service
 	if [[ -n "$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]]; then
