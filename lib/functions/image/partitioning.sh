@@ -163,10 +163,15 @@ function prepare_partitions() {
 		[[ -n $biospart ]] && needed=$((needed + BIOSSIZE))
 		[[ $ROOTFS_TYPE != nfs ]] && needed=$((needed + BOOTSIZE))
 		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs ]]; then
-			# The files of a separate /boot partition are not on root.
-			local root_size=$rootfs_size
+			# The files of the /boot and EFI partitions are not on root.
+			local root_size=$rootfs_size off_root=""
 			if [[ -n $bootpart || ${UEFI_MOUNT_POINT:-} == /boot ]]; then
-				root_size=$((rootfs_size - $(du --apparent-size -sm "${SDCARD}"/boot | cut -f1)))
+				off_root=/boot
+			elif [[ -n $uefipart && -n ${UEFI_MOUNT_POINT:-} ]]; then
+				off_root=$UEFI_MOUNT_POINT # for example /boot/firmware on Raspberry Pi
+			fi
+			if [[ -n $off_root && -d "${SDCARD}${off_root}" ]]; then
+				root_size=$((rootfs_size - $(du --apparent-size -sm "${SDCARD}${off_root}" | cut -f1)))
 			fi
 			needed=$((needed + root_size))
 		fi
