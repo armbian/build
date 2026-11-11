@@ -4,8 +4,11 @@
 # the contributor fork and never enters git; the primary download source follows the
 # framework's ${GITHUB_SOURCE} mirror (with two hardcoded fallbacks for proxy-less builders)
 # and the sha256 is pinned. Guards: dpkg status present, glibc >= 2.38 and libva >= 2.21
-# (the pack calls vaMapBuffer2, so noble with libva 2.20 is skipped),
-# Ubuntu "resolute" skipped (x264 ABI rename). Failure semantics (per PR #10915
+# (the pack calls vaMapBuffer2, so noble with libva 2.20 is skipped). Ubuntu resolute,
+# Debian forky and sid ship libx264-165 only (ABI 164 -> 165) while the pack links
+# libx264.so.164, so they also install the Debian trixie libx264-164 package (same soname,
+# libc6-only deps).
+# Failure semantics (per PR #10915
 # discussion): configuration-class conditions (unsupported release, missing or old glibc,
 # foreign binaries in /usr/local/bin, already installed) warn and skip; download, checksum,
 # extract, copy and verify failures abort the build via exit_with_error after rolling back
@@ -19,6 +22,12 @@
 # bin/{ffmpeg,ffprobe}, scripts/*, src/kwiboo-ffmpeg-v4l2-request-n8.1.tgz)
 ffmpeg_v4l2_request_pack_sha256="1e90cf41ed99f1425dff8b70fa5119f35e1ac2a8efa807d1573c0b763511586b"
 ffmpeg_v4l2_request_pack_rel="Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
+
+# Ubuntu resolute, Debian forky and sid ship only libx264-165, but the prebuilt links libx264.so.164.
+# Debian trixie's libx264-164 provides that soname and depends on libc6 only, so it
+# installs cleanly next to 165 (different package, different soname, no file clash).
+ffmpeg_v4l2_request_libx264_compat_rel="pool/main/x/x264/libx264-164_0.164.3108+git31e19f9-2+b1_arm64.deb"
+ffmpeg_v4l2_request_libx264_compat_sha256="e062e2ed96d60fdc3ebba5714957e4bfc76e1c87ff6cfa7c022cea3052573f94"
 
 # Remove anything this installer may have put into the image, so a failed run leaves
 # the image exactly as it was and a later run can retry from scratch. Only symlinks
@@ -52,8 +61,8 @@ function ffmpeg_v4l2_request_is_complete() {
 # libc/libm/libz/libudev come from the minimal baseline (libc6, zlib1g, systemd);
 # the entries below are the ones a minimal image does not get for free.
 # Package names verified against packages.ubuntu.com / packages.debian.org:
-# - Ubuntu resolute renamed the ABI to libx264-165 (no -164); the install hook
-#   skips that release entirely (the prebuilt links libx264.so.164)
+# - Ubuntu resolute, Debian forky and sid moved to libx264-165 (no -164 package);
+#   the install hook installs Debian trixie's libx264-164 instead (see below)
 # Debian bookworm/trixie and Ubuntu noble all provide libx264-164 and keep it.
 declare -gA ffmpeg_v4l2_request_runtime_pkgs=(
 	[libdrm.so.2]="libdrm2"
@@ -71,21 +80,91 @@ function ffmpeg_v4l2_request_runtime_packages() {
 	done | sort
 }
 
+# Releases without a libx264-164 package. The install hook supplies the 164
+# soname from Debian trixie.
+function ffmpeg_v4l2_request_needs_libx264_compat() {
+	[[ "${RELEASE}" == resolute || "${RELEASE}" == forky || "${RELEASE}" == sid ]]
+}
+
+# Config-phase hook: declare every runtime library the prebuilt needs so image
+# builds install them together. Where libx264-164 is missing, the 164 soname
+# comes from the Debian compat package installed by the hook below.
 function extension_prepare_config__ffmpeg_v4l2_request() {
 	if [[ "${SKIP_FFMPEG_V4L2:-}" == "yes" ]]; then
 		display_alert "${EXTENSION}" "SKIP_FFMPEG_V4L2=yes — not adding ffmpeg runtime packages" "info"
 		return 0
 	fi
-	if [[ "${RELEASE}" != "resolute" ]]; then
-		# PACKAGE_LIST_BOARD is published read-only by config_source_board_file()
-		# before extension_prepare_config() runs, so appending to it aborts the
-		# build during configuration. add_packages_to_image() is the supported
-		# path for extension/family-injected image packages.
-		local -a ffmpeg_v4l2_request_pkgs=()
-		mapfile -t ffmpeg_v4l2_request_pkgs < <(ffmpeg_v4l2_request_runtime_packages)
-		add_packages_to_image "${ffmpeg_v4l2_request_pkgs[@]}"
+	# PACKAGE_LIST_BOARD is published read-only by config_source_board_file()
+	# before extension_prepare_config() runs, so appending to it aborts the
+	# build during configuration. add_packages_to_image() is the supported
+	# path for extension/family-injected image packages.
+	local -a ffmpeg_v4l2_request_pkgs=()
+	mapfile -t ffmpeg_v4l2_request_pkgs < <(ffmpeg_v4l2_request_runtime_packages)
+	if ffmpeg_v4l2_request_needs_libx264_compat; then
+		# No libx264-164 package: the install hook supplies the 164 soname
+		# from Debian. The other runtime libs come from the release archive.
+		local -a filtered_pkgs=() pkg=""
+		for pkg in "${ffmpeg_v4l2_request_pkgs[@]}"; do
+			[[ "${pkg}" == "libx264-164" ]] && continue
+			filtered_pkgs+=("${pkg}")
+		done
+		ffmpeg_v4l2_request_pkgs=("${filtered_pkgs[@]}")
 	fi
+	add_packages_to_image "${ffmpeg_v4l2_request_pkgs[@]}"
 	display_alert "${EXTENSION}" "ffmpeg-v4l2-request configured for RELEASE=${RELEASE}" "debug"
+}
+
+# Ubuntu resolute, Debian forky and sid ship libx264-165 (new soname) while the prebuilt pack links
+# libx264.so.164. Install Debian trixie's libx264-164 into the image; it is a
+# separate package with a separate soname, so both can coexist. Returns non-zero
+# only through exit_with_error (a missing runtime is a hard build failure).
+function ffmpeg_v4l2_request_install_libx264_compat() {
+	if ! ffmpeg_v4l2_request_needs_libx264_compat; then
+		return 0
+	fi
+
+	if [[ -e "${SDCARD}/usr/lib/aarch64-linux-gnu/libx264.so.164" ]]; then
+		display_alert "ffmpeg-v4l2" "libx264.so.164 already present" "debug"
+		return 0
+	fi
+
+	local -a compat_urls=(
+		"https://deb.debian.org/debian/${ffmpeg_v4l2_request_libx264_compat_rel}"
+		"https://mirrors.tuna.tsinghua.edu.cn/debian/${ffmpeg_v4l2_request_libx264_compat_rel}"
+		"https://mirrors.aliyun.com/debian/${ffmpeg_v4l2_request_libx264_compat_rel}"
+	)
+	local tmp_deb="" url="" got_sha=""
+	tmp_deb="$(mktemp --suffix=.deb)" || exit_with_error "ffmpeg-v4l2: mktemp failed for libx264-164"
+
+	for url in "${compat_urls[@]}"; do
+		if ! curl -fsSL --connect-timeout 15 --max-time 300 -o "${tmp_deb}" "${url}"; then
+			display_alert "ffmpeg-v4l2" "libx264-164 download failed, trying next source" "warn"
+			continue
+		fi
+		got_sha="$(sha256sum "${tmp_deb}" | cut -d ' ' -f 1)" || got_sha=""
+		if [[ "${got_sha}" == "${ffmpeg_v4l2_request_libx264_compat_sha256}" ]]; then
+			break
+		fi
+		display_alert "ffmpeg-v4l2" "libx264-164 sha256 mismatch, trying next source" "warn"
+	done
+
+	if [[ "${got_sha}" != "${ffmpeg_v4l2_request_libx264_compat_sha256}" ]]; then
+		rm -f "${tmp_deb}" || true
+		exit_with_error "ffmpeg-v4l2: could not obtain libx264-164, required by the prebuilt on ${RELEASE}"
+	fi
+
+	install -m 0644 "${tmp_deb}" "${SDCARD}/tmp/libx264-164.deb" || {
+		rm -f "${tmp_deb}" || true
+		exit_with_error "ffmpeg-v4l2: staging libx264-164 into the image failed"
+	}
+	if ! chroot_sdcard dpkg -i /tmp/libx264-164.deb; then
+		rm -f "${tmp_deb}" || true
+		exit_with_error "ffmpeg-v4l2: libx264-164 install failed"
+	fi
+	chroot_sdcard rm -f /tmp/libx264-164.deb
+	chroot_sdcard ldconfig
+	rm -f "${tmp_deb}" || true
+	return 0
 }
 
 # Install phase (same stage as post_family_tweaks board hooks): configuration-class
@@ -94,10 +173,6 @@ function extension_prepare_config__ffmpeg_v4l2_request() {
 function post_family_tweaks__ffmpeg_v4l2_request() {
 	if [[ "${SKIP_FFMPEG_V4L2:-}" == "yes" ]]; then
 		display_alert "${EXTENSION}" "SKIP_FFMPEG_V4L2=yes — skipping prebuilt FFmpeg install" "info"
-		return 0
-	fi
-	if [[ "${RELEASE}" == "resolute" ]]; then
-		display_alert "${EXTENSION}" "Skipping prebuilt FFmpeg v4l2-request on ${RELEASE} (x264 ABI rename)" "warn"
 		return 0
 	fi
 	display_alert "${EXTENSION}" "Installing prebuilt FFmpeg v4l2-request" "info"
@@ -136,11 +211,6 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 		return 0
 	fi
 
-	if ffmpeg_v4l2_request_is_complete; then
-		display_alert "ffmpeg-v4l2" "already present in image" "info"
-		return 0
-	fi
-
 	# ---- never clobber somebody else's binaries: if /usr/local/bin/{ffmpeg,ffprobe}
 	# ---- exists and is not one of our own symlinks, it belongs to another
 	# ---- installation — skip (a later rollback could not restore it) ----
@@ -154,6 +224,18 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 			fi
 		fi
 	done
+
+	# resolute, forky and sid moved to libx264-165; the prebuilt still links libx264.so.164.
+	# Install it before the completeness check: is_complete() only verifies the
+	# binaries and their symlinks (it does not run ldd), so it can return true for
+	# an image that already has our ffmpeg but lacks the 164 soname. Repairing the
+	# soname here keeps that case from being skipped, without reinstalling the pack.
+	ffmpeg_v4l2_request_install_libx264_compat
+
+	if ffmpeg_v4l2_request_is_complete; then
+		display_alert "ffmpeg-v4l2" "already present in image" "info"
+		return 0
+	fi
 
 	# ---- download + checksum: primary source follows the framework's ${GITHUB_SOURCE}
 	# ---- github mirror (GITPROXY/GHPROXY, same pattern as lib/tools/shellcheck.sh);
