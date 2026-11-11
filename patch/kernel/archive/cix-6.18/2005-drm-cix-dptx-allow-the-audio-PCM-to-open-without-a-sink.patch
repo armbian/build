@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Sun, 1 Nov 2026 09:37:24 +0100
+Subject: [PATCH] drm/cix: dptx: allow the audio PCM to open without a sink
+
+get_eld returned -ENODEV for a port without a sink. hdmi_codec_startup
+then failed with -ENODEV. PipeWire probes all ports of the card, and
+one failed open drops the card: only "Dummy Output" remains.
+
+Return an empty ELD instead. The jack control still reports the port
+as unplugged. Record the running state and stream parameters before
+the plugin check, so a sink connected later gets audio.
+
+Do not clear AUDIO_ENABLE on shutdown, as the vendor driver does not.
+Clearing it left the audio FIFO not ready, and only the first stream
+after boot played.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c | 39 +++++++++++---------
+ 1 file changed, 21 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+index fc40b0e..f0f0948 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+@@ -123,14 +123,15 @@ static int dptx_audio_get_eld(struct device *dev, void *data,
+ {
+ 	struct trilin_dp *dp = data;
+ 
+-	/* Only copy the ELD if the sink is connected AND the ELD has
+-	 * been populated from EDID (baseline_eld_len > 0).  At boot
+-	 * the plugged callback fires before EDID is read, so the
+-	 * connector ELD is still all-zeros ��� returning that causes
+-	 * noisy "Unknown ELD version 0" warnings from snd_parse_eld.
++	/* Copy the ELD only when the sink is connected and the ELD is
++	 * populated from EDID. Otherwise return an empty ELD, not an error:
++	 * an error fails the PCM open, and PipeWire then drops the whole
++	 * card. With an empty ELD, hdmi-codec allows stereo at 32-48 kHz.
+ 	 */
+-	if (!dp->plugin || !dp->connector.base.eld[DRM_ELD_BASELINE_ELD_LEN])
+-		return -ENODEV;
++	if (!dp->plugin || !dp->connector.base.eld[DRM_ELD_BASELINE_ELD_LEN]) {
++		memset(buf, 0, len);
++		return 0;
++	}
+ 
+ 	memcpy(buf, dp->connector.base.eld,
+ 	       min(sizeof(dp->connector.base.eld), len));
+@@ -143,13 +144,16 @@ static int dptx_audio_startup(struct device *dev, void *data)
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
++	/* The stream can open without a sink. Mark it running, so that a
++	 * sink connected later gets audio from dptx_audio_reconfig_and_enable().
++	 */
++	dp_audio->running = true;
++
+ 	if (!dp->plugin)
+ 		return 0;
+ 
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 1);
+ 
+-	dp_audio->running = true;
+-
+ 	return 0;
+ }
+ 
+@@ -158,13 +162,11 @@ static void dptx_audio_shutdown(struct device *dev, void *data)
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
+-	dp_audio->running = false;
+-
+-	/* Disable audio packets in hardware.  If the sink was already
+-	 * unplugged, core_off has powered down the PHY but this write
+-	 * is still safe (MMIO register block remains accessible).
++	/* Keep AUDIO_ENABLE set, as the vendor driver does. Clearing it here
++	 * leaves the audio FIFO not ready (SEC0_AUDIO_FIFO_READY = 0), and
++	 * every later stream plays silence. core_off clears it on unplug.
+ 	 */
+-	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 0);
++	dp_audio->running = false;
+ }
+ 
+ static int dptx_audio_hw_params(struct device *dev, void *data,
+@@ -174,14 +176,15 @@ static int dptx_audio_hw_params(struct device *dev, void *data,
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
+-	if (!dp->plugin)
+-		return 0;
+-
++	/* Keep the parameters for a sink connected later */
+ 	dp_audio->params.sample_width = params->sample_width;
+ 	dp_audio->params.sample_rate = params->sample_rate;
+ 	dp_audio->params.channels = params->channels;
+ 	dp_audio->params.cea = params->cea;
+ 
++	if (!dp->plugin)
++		return 0;
++
+ 	dev_dbg(dev,
+ 		"%s, daifmt fmt:%d, bit_clk_inv:%d, frame_clk_inv:%d, bit_clk_master:%d, frame_clk_master:%d, params sample_rate:%d, sample_width:%d, channels:%d, ca:%d\n",
+ 		__func__, daifmt->fmt, daifmt->bit_clk_inv,
