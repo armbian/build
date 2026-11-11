@@ -30,7 +30,7 @@ function common_config_for_automated_patching() {
 	declare -g GIT_ARCHEOLOGY=yes            # do archeology
 	declare -g FAST_ARCHEOLOGY=yes           # do archeology, but only for the exact path we need.
 	declare -g KERNEL_CONFIGURE=no           # no menuconfig
-	declare -g RELEASE="${RELEASE:-"jammy"}" # or whatever, not relevant, just fool the configuration
+	declare -g RELEASE="${RELEASE:-"noble"}" # or whatever, not relevant, just fool the configuration
 	declare -g BUILD_DESKTOP="no"            # config would ask for this otherwise, just fool the configuration
 
 	# initialize the config # @TODO: rpardini: switch this to prep_conf_main_minimal_ni()

@@ -16,7 +16,6 @@ declare -g BOOTIMG_CMDLINE_EXTRA="udmabuf.size_limit_mb=256 quiet"
 declare -g BOARD_FIRMWARE_INSTALL="-full"
 
 function xiaomi-sheng_is_userspace_supported() {
-	[[ "${RELEASE}" == "jammy" ]] && return 0
 	[[ "${RELEASE}" == "trixie" ]] && return 0
 	[[ "${RELEASE}" == "noble" ]] && return 0
 	[[ "${RELEASE}" == "resolute" ]] && return 0

@@ -15,7 +15,7 @@ function extension_prepare_config__prepare_cryptroot() {
 
 	# Unlocks other /etc/crypttab entries at boot. Older releases have it in systemd.
 	case "${RELEASE}" in
-		buster | bullseye | bookworm | focal | jammy | noble) ;;
+		bookworm | noble) ;;
 		*) add_packages_to_image systemd-cryptsetup ;;
 	esac
 

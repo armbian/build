@@ -866,7 +866,7 @@ Usage: $0 [ -short | --long ]
 -i --input [input folder]     input folder with packages
 -o --output [output folder]   output folder for repository
 -p --password [GPG password]  GPG password for signing
--r --repository [jammy,sid,trixie,...]  comma-separated list of releases
+-r --repository [noble,sid,trixie,...]  comma-separated list of releases
 -l --list [\"Name (% linux*)|armbian-config\"]  list of packages
 -c --command                  command to execute
 
