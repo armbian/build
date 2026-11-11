@@ -354,11 +354,8 @@ function prepare_partitions() {
 				echo "UMASK=0077" > "${SDCARD}/etc/initramfs-tools/conf.d/key-umask.conf"
 				echo "" >> "${SDCARD}/etc/cryptsetup-initramfs/conf-hook"
 				echo "KEYFILE_PATTERN=${luks_key_file}" >> "${SDCARD}/etc/cryptsetup-initramfs/conf-hook"
-				# All copies of the image share this key. On first boot, give each its own.
-				if [[ -f "${SDCARD}/lib/systemd/system/armbian-luks-rekey.service" ]]; then
-					mkdir -p "${SDCARD}/etc/systemd/system/multi-user.target.wants"
-					ln -sf /lib/systemd/system/armbian-luks-rekey.service "${SDCARD}/etc/systemd/system/multi-user.target.wants/armbian-luks-rekey.service"
-				fi
+				# All copies of the image share this key. The user makes new keys
+				# with armbian-config (armbian-luks-rekey). It is not automatic.
 			fi
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
 			physical_root_part_uuid="$(blkid -s UUID -o value "$physical_rootdevice")"
