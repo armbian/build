@@ -163,16 +163,19 @@ function prepare_partitions() {
 		[[ -n $biospart ]] && needed=$((needed + BIOSSIZE))
 		[[ $ROOTFS_TYPE != nfs ]] && needed=$((needed + BOOTSIZE))
 		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs ]]; then
-			# The files of the /boot and EFI partitions are not on root.
-			local root_size=$rootfs_size off_root=""
-			if [[ -n $bootpart || ${UEFI_MOUNT_POINT:-} == /boot ]]; then
-				off_root=/boot
-			elif [[ -n $uefipart && -n ${UEFI_MOUNT_POINT:-} ]]; then
-				off_root=$UEFI_MOUNT_POINT # for example /boot/firmware on Raspberry Pi
+			# The files of the EFI and /boot partitions are not on root. Each must fit its partition.
+			local efi_files=0 boot_files=0 efi_dir="${UEFI_MOUNT_POINT:-}"
+			if [[ -n $uefipart && -n $efi_dir && -d "${SDCARD}${efi_dir}" ]]; then
+				efi_files=$(du --apparent-size -sm "${SDCARD}${efi_dir}" | cut -f1)
+				((efi_files <= UEFISIZE)) || exit_with_error "EFI partition is too small" "${efi_dir}: ${efi_files} MiB of files, UEFISIZE=${UEFISIZE} MiB"
 			fi
-			if [[ -n $off_root && -d "${SDCARD}${off_root}" ]]; then
-				root_size=$((rootfs_size - $(du --apparent-size -sm "${SDCARD}${off_root}" | cut -f1)))
+			if [[ -n $bootpart && -d "${SDCARD}/boot" ]]; then
+				boot_files=$(du --apparent-size -sm "${SDCARD}/boot" | cut -f1)
+				# An EFI partition inside /boot (/boot/efi) is counted once.
+				[[ $efi_dir == /boot/* ]] && boot_files=$((boot_files - efi_files))
+				((boot_files <= BOOTSIZE)) || exit_with_error "/boot partition is too small" "${boot_files} MiB of files, BOOTSIZE=${BOOTSIZE} MiB"
 			fi
+			local root_size=$((rootfs_size - efi_files - boot_files))
 			needed=$((needed + root_size))
 		fi
 		if [[ $sdsize -lt $needed ]]; then
