@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Fri, 6 Nov 2026 00:30:49 +0000
+Subject: ASoC: sunxi_v2: mach: bind a DAI without streams as an aux device
+
+The audio hub's DAM component (snd_sunxi_ahub_dam.c) registers the DAI
+"ahub_dam" with no playback and no capture stream: it only carries the
+hub's "Src Select" routing and mixing controls. The vendor machine driver
+(sunxi-snd-mach, the ahub_dam_mach node, card "ahubdam") puts it into a
+DAI link with the dummy codec. The vendor kernel (5.4) created an empty
+PCM device for that link; current ASoC refuses it in soc_new_pcm():
+
+  ahub_dam-snd-soc-dummy-dai: ASoC error (-22): substream
+    ahub_dam-snd-soc-dummy-dai has no playback, no capture
+  sunxi-snd-mach soc:ahub_dam_mach: probe with driver sunxi-snd-mach
+    failed with error -22
+
+so the card never appears and the DAM controls are unreachable on the
+boards that enable the ahub_dam_mach node.
+
+Look the CPU DAI up after parsing the link. When it supports neither
+direction, bind its component as the card's aux device and register the
+card without DAI links: it then carries the component's controls and no
+PCM device, which is what the vendor card was meant to be. A DAI that is
+not registered yet defers the probe, as the card bind did before. The
+device node reference moves from the link to the aux device and is
+released with the link references.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+
+diff --git a/sound/soc/sunxi_v2/snd_sunxi_mach.c b/sound/soc/sunxi_v2/snd_sunxi_mach.c
+index 5892fe20a..33b5d6d83 100644
+--- a/sound/soc/sunxi_v2/snd_sunxi_mach.c
++++ b/sound/soc/sunxi_v2/snd_sunxi_mach.c
+@@ -380,6 +380,45 @@ static int simple_parse_of(struct asoc_simple_priv *priv)
+ 	return ret;
+ }
+ 
++/*
++ * A CPU DAI without playback or capture streams, such as the audio hub's
++ * DAM (snd_sunxi_ahub_dam.c, "ahub_dam": only the hub's "Src Select"
++ * routing and mixing controls), cannot form a PCM link: soc_new_pcm()
++ * refuses a link that has neither direction ("has no playback, no
++ * capture") and the card does not probe. The vendor kernel created an
++ * empty PCM device for it. Bind such a component as an aux device of the
++ * card instead: the card then carries its controls and no PCM device.
++ */
++static int simple_controls_only_of(struct asoc_simple_priv *priv)
++{
++	struct snd_soc_card *card = simple_priv_to_card(priv);
++	struct snd_soc_dai_link *dai_link = simple_priv_to_link(priv, 0);
++	struct snd_soc_aux_dev *aux;
++	struct snd_soc_dai *dai;
++
++	dai = snd_soc_find_dai_with_mutex(dai_link->cpus);
++	if (!dai)
++		return -EPROBE_DEFER;
++	if (snd_soc_dai_stream_valid(dai, SNDRV_PCM_STREAM_PLAYBACK) ||
++	    snd_soc_dai_stream_valid(dai, SNDRV_PCM_STREAM_CAPTURE))
++		return 0;
++
++	aux = devm_kzalloc(card->dev, sizeof(*aux), GFP_KERNEL);
++	if (!aux)
++		return -ENOMEM;
++	/* the node reference moves from the link to the aux device */
++	aux->dlc.of_node = dai_link->cpus->of_node;
++	dai_link->cpus->of_node = NULL;
++	of_node_put(dai_link->codecs->of_node);
++	dai_link->codecs->of_node = NULL;
++	card->aux_dev = aux;
++	card->num_aux_devs = 1;
++	card->num_links = 0;
++	SND_LOG_DEBUG(HLOG, "%s has no streams: controls-only card\n", dai->name);
++
++	return 0;
++}
++
+ static int simple_soc_probe(struct snd_soc_card *card)
+ {
+ 	return 0;
+@@ -414,6 +453,9 @@ static int asoc_simple_probe(struct platform_device *pdev)
+ 				SND_LOG_ERR(HLOG, "parse error %d\n", ret);
+ 			goto err;
+ 		}
++		ret = simple_controls_only_of(priv);
++		if (ret < 0)
++			goto err;
+ 	} else {
+ 		SND_LOG_ERR(HLOG, "simple card dts available\n");
+ 	}
+diff --git a/sound/soc/sunxi_v2/snd_sunxi_mach_utils.c b/sound/soc/sunxi_v2/snd_sunxi_mach_utils.c
+index 15f474e5c..5b86a505f 100644
+--- a/sound/soc/sunxi_v2/snd_sunxi_mach_utils.c
++++ b/sound/soc/sunxi_v2/snd_sunxi_mach_utils.c
+@@ -24,12 +24,15 @@
+ int asoc_simple_clean_reference(struct snd_soc_card *card)
+ {
+        struct snd_soc_dai_link *dai_link;
++       struct snd_soc_aux_dev *aux;
+        int i;
+ 
+        for_each_card_prelinks(card, i, dai_link) {
+                of_node_put(dai_link->cpus->of_node);
+                of_node_put(dai_link->codecs->of_node);
+        }
++       for_each_card_pre_auxs(card, i, aux)
++               of_node_put(aux->dlc.of_node);
+        return 0;
+ }
+ 
+-- 
+Armbian
+
