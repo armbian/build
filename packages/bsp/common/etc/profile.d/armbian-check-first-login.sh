@@ -8,5 +8,10 @@
 
 # First login as root?
 if [ -w /root/ -a -f /root/.not_logged_in_yet ]; then
-	bash /usr/lib/armbian/armbian-firstlogin
+	# The graphical wizard (armbian-firstrun-gui) runs on the screen: do not start a second setup.
+	if systemctl -q is-active armbian-firstrun-gui.service 2> /dev/null; then
+		echo "The first-run setup runs on the screen. Log in again when it is complete."
+	else
+		bash /usr/lib/armbian/armbian-firstlogin
+	fi
 fi
