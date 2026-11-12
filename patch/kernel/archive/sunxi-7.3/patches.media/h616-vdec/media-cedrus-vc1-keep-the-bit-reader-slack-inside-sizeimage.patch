@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 12 Nov 2026 12:00:00 +0000
+Subject: media: cedrus: vc1: keep the bit reader slack inside sizeimage
+
+The 16 KiB of slack the VC-1 bit reader needs past the end of a frame
+was added to sizeimage each time the OUTPUT format was prepared, so
+TRY_FMT and S_FMT with the format G_FMT returned grew it by 16 KiB
+again, and negotiating the format did not converge.
+
+Make the slack part of sizeimage instead of an addition to it: a VC-1
+OUTPUT format is at least 1 KiB plus the slack and a larger size is
+kept as it is, so preparing a format twice gives the same result. The
+buffers of REQBUFS have sizeimage bytes and VIDIOC_CREATE_BUFS uses the
+size it is given unchanged, as the V4L2 API asks.
+
+As userspace now decides how large the buffer is, refuse a frame that
+does not leave the slack free at the end of its buffer.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h       |  5 +++++
+ drivers/staging/media/sunxi/cedrus/cedrus_vc1.c   | 10 +++++++++-
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 10 ++++++----
+ 3 files changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index ec81dc10a..6fa169df2 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -39,6 +39,11 @@
+ #define CEDRUS_CAPABILITY_MPEG4_DEC	BIT(8)
+ 
+ #define CEDRUS_VC1_MIN_WIDTH		128
++/*
++ * Room the VC-1 bit reader needs in an OUTPUT buffer after the end of the
++ * frame. It is part of sizeimage and not available to the bitstream.
++ */
++#define CEDRUS_VC1_SRC_SLACK		SZ_16K
+ 
+ /* The engine counts macroblock columns in 8 bits. */
+ #define CEDRUS_MPEG4_MAX_WIDTH		4080
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+index 4025c57c1..1962c2047 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+@@ -556,6 +556,15 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	    picture->data_bit_offset > payload_bits - sc_offset)
+ 		return -EINVAL;
+ 
++	/*
++	 * The bit reader over-reads past the end of the frame: the frame must
++	 * leave the slack that sizeimage includes free at the end of the buffer.
++	 */
++	buf_size = vb2_plane_size(src_buf, 0);
++	if (buf_size < CEDRUS_VC1_SRC_SLACK ||
++	    vb2_get_plane_payload(src_buf, 0) > buf_size - CEDRUS_VC1_SRC_SLACK)
++		return -EINVAL;
++
+ 	/* Decoded bitplanes must fit in the bitplanes control. */
+ 	if (picture->bitplane_flags &&
+ 	    cedrus_vc1_bitplane_size(ctx, run) > V4L2_VC1_BITPLANE_SIZE)
+@@ -611,7 +620,6 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	 * Keep BITS_END_ADDR at the page-rounded allocation boundary as
+ 	 * a safety net against runaway DMA (watchdog timeout).
+ 	 */
+-	buf_size = vb2_plane_size(src_buf, 0);
+ 	/*
+ 	 * Start the bit reader after the start code of an Advanced profile
+ 	 * buffer: with start-code detection enabled, reading over a start code
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 0e87f24f6..54a89d1ca 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -230,12 +230,14 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt,
+ 		sizeimage = max_t(u32, SZ_1K, sizeimage);
+ 		/*
+ 		 * VC-1 over-reads the bitstream a little past the end of a frame
+-		 * on the last macroblock; pad the source allocation so the bit
+-		 * reader has slack and the DMA does not stall (see
+-		 * cedrus_vc1_setup()).
++		 * on the last macroblock, so the source buffer needs slack for
++		 * the bit reader or the DMA stalls (see cedrus_vc1_setup()). The
++		 * slack is part of sizeimage, as a minimum: a format that is
++		 * read back and set again must not grow.
+ 		 */
+ 		if (pix_fmt->pixelformat == V4L2_PIX_FMT_VC1_SLICE)
+-			sizeimage += SZ_16K;
++			sizeimage = max_t(u32, SZ_1K + CEDRUS_VC1_SRC_SLACK,
++					  sizeimage);
+ 		/* The VP9 bitstream end address has a 1 KiB granularity. */
+ 		if (pix_fmt->pixelformat == V4L2_PIX_FMT_VP9_FRAME)
+ 			sizeimage = ALIGN(sizeimage, SZ_1K);
+-- 
+Armbian
+
