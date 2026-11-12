@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 12 Nov 2026 12:00:00 +0000
+Subject: net: stmmac: dwmac-sun8i: make the phy-io regulator optional
+
+The "phy-io" PHY I/O regulator (megous patch 0028, added for the
+Orange Pi 3) is requested with devm_regulator_get(), so every board
+that powers its PHY from a single rail gets a dummy regulator and logs
+at boot:
+
+  dwmac-sun8i 5020000.ethernet: supply phy-io not found, using dummy regulator
+
+Request it with devm_regulator_get_optional() and skip enable/disable
+when it is not described. Boards that describe phy-io-supply behave as
+before.
+
+Kept as a separate patch on top of megous 0028 so it carries over when
+the megous series is refreshed.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c | 33 ++++++++++++++++++++++-----------
+ 1 file changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+@@ -615,10 +615,12 @@ static int sun8i_dwmac_init(struct device *dev, void *priv)
+ 	struct sunxi_priv_data *gmac = priv;
+ 	int ret;
+ 
+-	ret = regulator_enable(gmac->regulator_phy_io);
+-	if (ret) {
+-		dev_err(dev, "Fail to enable PHY I/O regulator\n");
+-		return ret;
++	if (gmac->regulator_phy_io) {
++		ret = regulator_enable(gmac->regulator_phy_io);
++		if (ret) {
++			dev_err(dev, "Fail to enable PHY I/O regulator\n");
++			return ret;
++		}
+ 	}
+ 
+ 	ret = regulator_enable(gmac->regulator_phy);
+@@ -638,7 +640,8 @@ static int sun8i_dwmac_init(struct device *dev, void *priv)
+ err_disable_regulator:
+ 	regulator_disable(gmac->regulator_phy);
+ err_disable_regulator_phy_io:
+-	regulator_disable(gmac->regulator_phy_io);
++	if (gmac->regulator_phy_io)
++		regulator_disable(gmac->regulator_phy_io);
+ 
+ 	return ret;
+ }
+@@ -1058,7 +1061,8 @@ static void sun8i_dwmac_exit(struct device *dev, void *priv)
+ 		sun8i_dwmac_unpower_internal_phy(gmac);
+ 
+ 	regulator_disable(gmac->regulator_phy);
+-	regulator_disable(gmac->regulator_phy_io);
++	if (gmac->regulator_phy_io)
++		regulator_disable(gmac->regulator_phy_io);
+ }
+ 
+ static void sun8i_dwmac_set_mac_loopback(void __iomem *ioaddr, bool enable)
+@@ -1180,11 +1184,18 @@ static int sun8i_dwmac_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(gmac->regulator_phy),
+ 				     "Failed to get PHY regulator\n");
+ 
+-	/* Optional regulator for PHY I/O pins */
+-	gmac->regulator_phy_io = devm_regulator_get(dev, "phy-io");
+-	if (IS_ERR(gmac->regulator_phy_io))
+-		return dev_err_probe(dev, PTR_ERR(gmac->regulator_phy_io),
+-				     "Failed to get PHY I/O regulator\n");
++	/*
++	 * Optional regulator for PHY I/O pins. Most boards power the PHY
++	 * from a single rail, so do not substitute a dummy regulator (and
++	 * do not warn about it) when the supply is simply not described.
++	 */
++	gmac->regulator_phy_io = devm_regulator_get_optional(dev, "phy-io");
++	if (IS_ERR(gmac->regulator_phy_io)) {
++		if (PTR_ERR(gmac->regulator_phy_io) != -ENODEV)
++			return dev_err_probe(dev, PTR_ERR(gmac->regulator_phy_io),
++					     "Failed to get PHY I/O regulator\n");
++		gmac->regulator_phy_io = NULL;
++	}
+ 
+ 	/* The "GMAC clock control" register might be located in the
+ 	 * CCU address range (on the R40), or the system control address
+-- 
+Armbian
+
