@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason-JH Lin <jason-jh.lin@mediatek.com>
+Date: Fri, 29 Aug 2025 17:16:00 +0800
+Subject: media: platform: mtk-mdp3: Add pm_runtime support for GCE power
+ control
+
+Call pm_runtime_resume_and_get() before accessing GCE hardware in
+mbox_send_message(), and invoke pm_runtime_put_autosuspend() in the
+cmdq callback to release the PM reference and start autosuspend for
+GCE. This ensures correct power management for the GCE device.
+
+Fixes: 8afe816b0c99 ("mailbox: mtk-cmdq-mailbox: Implement Runtime PM with autosuspend")
+Signed-off-by: Jason-JH Lin <jason-jh.lin@mediatek.com>
+Link: https://patch.msgid.link/20250829091727.3745415-4-jason-jh.lin@mediatek.com
+[rpardini: take the GCE PM references of all pipes before the first
+ submission, and drop them again when a packet is not submitted]
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/media/platform/mediatek/mdp3/mtk-mdp3-cmdq.c | 21 +++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/mediatek/mdp3/mtk-mdp3-cmdq.c b/drivers/media/platform/mediatek/mdp3/mtk-mdp3-cmdq.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/mediatek/mdp3/mtk-mdp3-cmdq.c
++++ b/drivers/media/platform/mediatek/mdp3/mtk-mdp3-cmdq.c
+@@ -6,6 +6,7 @@
+ 
+ #include <linux/mailbox_controller.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include "mtk-mdp3-cfg.h"
+ #include "mtk-mdp3-cmdq.h"
+ #include "mtk-mdp3-comp.h"
+@@ -521,6 +522,9 @@ static void mdp_handle_cmdq_callback(struct mbox_client *cl, void *mssg)
+ 	mdp = cmd->mdp;
+ 	dev = &mdp->pdev->dev;
+ 
++	pm_runtime_mark_last_busy(mdp->cmdq_clt[cmd->pp_idx]->chan->mbox->dev);
++	pm_runtime_put_autosuspend(mdp->cmdq_clt[cmd->pp_idx]->chan->mbox->dev);
++
+ 	INIT_WORK(&cmd->auto_release_work, mdp_auto_release_work);
+ 	if (!queue_work(mdp->clock_wq, &cmd->auto_release_work)) {
+ 		struct mtk_mutex *mutex;
+@@ -674,7 +678,7 @@ int mdp_cmdq_send(struct mdp_dev *mdp, struct mdp_cmdq_param *param)
+ {
+ 	struct mdp_cmdq_cmd *cmd[MDP_PP_MAX] = {NULL};
+ 	struct device *dev = &mdp->pdev->dev;
+-	int i, ret;
++	int i, j, ret;
+ 	u8 pp_used = __get_pp_num(param->param->type);
+ 
+ 	refcount_set(&mdp->job_count, pp_used);
+@@ -697,6 +701,18 @@ int mdp_cmdq_send(struct mdp_dev *mdp, struct mdp_cmdq_param *param)
+ 			goto err_clock_off;
+ 	}
+ 
++	/* Power up the GCE of every pipe before the first submission */
++	for (i = 0; i < pp_used; i++) {
++		ret = pm_runtime_resume_and_get(mdp->cmdq_clt[i]->chan->mbox->dev);
++		if (ret < 0) {
++			dev_err(dev, "pm_runtime_resume_and_get fail: %d!\n", ret);
++			while (--i >= 0)
++				pm_runtime_put_autosuspend(mdp->cmdq_clt[i]->chan->mbox->dev);
++			i = pp_used;
++			goto err_clock_off;
++		}
++	}
++
+ 	for (i = 0; i < pp_used; i++) {
+ 		dma_sync_single_for_device(mdp->cmdq_clt[i]->chan->mbox->dev,
+ 					   cmd[i]->pkt.pa_base, cmd[i]->pkt.cmd_buf_size,
+@@ -705,6 +721,9 @@ int mdp_cmdq_send(struct mdp_dev *mdp, struct mdp_cmdq_param *param)
+ 		ret = mbox_send_message(mdp->cmdq_clt[i]->chan, &cmd[i]->pkt);
+ 		if (ret < 0) {
+ 			dev_err(dev, "mbox send message fail %d!\n", ret);
++			/* No callback will drop the references of unsent packets */
++			for (j = i; j < pp_used; j++)
++				pm_runtime_put_autosuspend(mdp->cmdq_clt[j]->chan->mbox->dev);
+ 			i = pp_used;
+ 			goto err_clock_off;
+ 		}
+-- 
+Armbian
+
