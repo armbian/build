@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 12 Nov 2026 06:55:17 +0000
+Subject: media: cedrus: vc1: refuse decoded bitplanes larger than the control
+
+The bitplanes control holds V4L2_VC1_BITPLANE_SIZE bytes (one bit per
+macroblock, 16384 macroblocks) per bitplane, which covers every VC-1
+level. A larger picture with decoded bitplanes was accepted, and the
+bitplanes were silently cut at the control size, so the picture decoded
+wrong. Refuse it instead.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ .../staging/media/sunxi/cedrus/cedrus_vc1.c   | 30 ++++++++++++++-----
+ 1 file changed, 22 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+index 31977543e..4025c57c1 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+@@ -365,22 +365,31 @@ static void cedrus_vc1_coded_size(struct cedrus_ctx *ctx,
+ 		*height /= 2;
+ }
+ 
+-static void cedrus_vc1_bitplanes_setup(struct cedrus_ctx *ctx,
+-				       struct cedrus_run *run)
++/* Bytes of each bitplane: one bit per macroblock of the picture or field. */
++static unsigned int cedrus_vc1_bitplane_size(struct cedrus_ctx *ctx,
++					     struct cedrus_run *run)
+ {
+ 	const struct v4l2_ctrl_vc1_picture_layer *picture = run->vc1.picture;
+-	const u8 *planes = (const u8 *)run->vc1.bitplanes;
+-	unsigned int mb_width, mb_height, size, first, i, width, height;
+-	u8 *buf = ctx->codec.vc1.bitplanes_buf;
++	unsigned int mb_width, mb_height, width, height;
+ 
+-	/* One bit per macroblock of the picture, or of the field. */
+ 	cedrus_vc1_coded_size(ctx, run, &width, &height);
+ 	mb_width = DIV_ROUND_UP(width, 16);
+ 	mb_height = DIV_ROUND_UP(height, 16);
+ 	if (picture->fcm == V4L2_VC1_FCM_FIELD_INTERLACE)
+ 		mb_height = DIV_ROUND_UP(mb_height, 2);
+-	size = min_t(unsigned int, DIV_ROUND_UP(mb_width * mb_height, 8),
+-		     V4L2_VC1_BITPLANE_SIZE);
++
++	return DIV_ROUND_UP(mb_width * mb_height, 8);
++}
++
++static void cedrus_vc1_bitplanes_setup(struct cedrus_ctx *ctx,
++				       struct cedrus_run *run)
++{
++	const struct v4l2_ctrl_vc1_picture_layer *picture = run->vc1.picture;
++	const u8 *planes = (const u8 *)run->vc1.bitplanes;
++	unsigned int size, first, i;
++	u8 *buf = ctx->codec.vc1.bitplanes_buf;
++
++	size = cedrus_vc1_bitplane_size(ctx, run);
+ 	first = min_t(unsigned int, size, VC1_BITPLANE_HALF_SIZE);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(cedrus_vc1_bitplanes); i++) {
+@@ -547,6 +556,11 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	    picture->data_bit_offset > payload_bits - sc_offset)
+ 		return -EINVAL;
+ 
++	/* Decoded bitplanes must fit in the bitplanes control. */
++	if (picture->bitplane_flags &&
++	    cedrus_vc1_bitplane_size(ctx, run) > V4L2_VC1_BITPLANE_SIZE)
++		return -EINVAL;
++
+ 	cedrus_engine_enable(ctx);
+ 
+ 	/*
