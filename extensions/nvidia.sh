@@ -91,6 +91,8 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 			| sort -nr | head -1 || true")
 		if chroot_sdcard "apt-cache pkgnames nvidia-open 2>/dev/null | grep -qx nvidia-open"; then
 			# One package pulls the driver and the open kernel module.
+			# Turing and newer only. Older GPUs are not supported: the user
+			# installs a legacy driver (board-instructions/uefi-x86.md).
 			nvidia_dkms_pkg="nvidia-open"
 			display_alert "Using nvidia-open from the Armbian repository" "${DISTRIBUTION}/${RELEASE}" "info"
 		elif [[ -n "$latest" ]]; then
