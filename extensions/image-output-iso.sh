@@ -204,7 +204,9 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		serial --unit=0 --speed=115200
 		terminal_input console serial
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
-		    insmod all_video
+		    # UEFI only: all_video would add video_bochs. It sets the QEMU standard VGA
+		    # behind the firmware, and a kernel with only the EFI framebuffer shows garbage.
+		    insmod efi_gop
 		    insmod gfxterm
 		    insmod png
 		    set gfxmode=auto
