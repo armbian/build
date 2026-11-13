@@ -166,7 +166,8 @@ function install_armbian_nvidia_autodetect_helper() {
 		#!/bin/sh
 		# armbian-nvidia-autodetect: installed by build/extensions/nvidia.sh.
 		# start: NVIDIA GPU (PCI vendor 10de) present: enable the driver.
-		#        Else blacklist the driver and mark its packages for removal.
+		#        Else blacklist the driver, remove it from DKMS and mark its
+		#        packages for removal.
 		# stop:  at shutdown, remove the marked packages.
 
 		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
@@ -214,6 +215,13 @@ function install_armbian_nvidia_autodetect_helper() {
 				if [ -n "$(installed)" ]; then
 					mkdir -p "${MARK%/*}"
 					: > "$MARK"
+					# Kernel upgrades before the shutdown then do not rebuild the driver.
+					for src in /var/lib/dkms/nvidia*/*/source; do
+						[ -e "$src" ] || continue
+						ver=${src%/source}
+						mod=${ver%/*}
+						dkms remove "${mod##*/}/${ver##*/}" --all > /dev/null 2>&1 || true
+					done
 				fi
 				;;
 			stop)
