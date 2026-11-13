@@ -29,15 +29,17 @@ goodix_res() {
 	echo $(( $1 | ($2 << 8) ))x$(( $3 | ($4 << 8) ))
 }
 
-want=""
-if res=$(goodix_res); then
-	case "$res" in
-		1200x1920) want=dsi-1200x1920-10-1inch ;;
-		*)         want=dsi-c41409463 ;;
-	esac
-elif i2ctransfer -f -y $BUS r1@0x38 > /dev/null 2>&1; then
-	want=dsi-c42388916
-fi
+detect() {
+	want=""
+	if res=$(goodix_res); then
+		case "$res" in
+			1200x1920) want=dsi-1200x1920-10-1inch ;;
+			*)         want=dsi-c41409463 ;;
+		esac
+	elif i2ctransfer -f -y $BUS r1@0x38 > /dev/null 2>&1; then
+		want=dsi-c42388916
+	fi
+}
 
 cur=$(sed -n 's/^overlays=//p' "$ENV" | tail -n1)
 others=""
@@ -48,6 +50,18 @@ for o in $cur; do
 		*) others="$others $o" ;;
 	esac
 done
+
+# Finding nothing removes a configured overlay, and with it a working
+# display. One failed I2C transfer early in boot must not be enough for
+# that, so ask again before believing it.
+detect
+if [ -z "$want" ] && [ -n "$have" ]; then
+	for try in 1 2 3; do
+		sleep 1
+		detect
+		[ -n "$want" ] && break
+	done
+fi
 echo "lckfb-tspi-3m-screen: detected '${want:-none}', configured '${have:-none}'"
 [ "$want" = "$have" ] && { rm -f "$STATE"; exit 0; }
 
@@ -59,10 +73,16 @@ if [ -f "$STATE" ] && [ "$(cat "$STATE")" = "$want" ]; then
 fi
 
 new=$(echo "$others ${want}" | xargs)
+# Record the decision only once the file really says so. Otherwise a failed
+# write would be remembered as "already tried" and never attempted again.
 if grep -q '^overlays=' "$ENV"; then
 	sed -i "s/^overlays=.*/overlays=$new/" "$ENV"
 else
 	echo "overlays=$new" >> "$ENV"
+fi
+if [ "$(sed -n 's/^overlays=//p' "$ENV" | tail -n1)" != "$new" ]; then
+	echo "lckfb-tspi-3m-screen: could not update $ENV, not rebooting"
+	exit 1
 fi
 mkdir -p "$(dirname "$STATE")"
 echo "$want" > "$STATE"

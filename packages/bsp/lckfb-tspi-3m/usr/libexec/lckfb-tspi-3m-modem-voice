@@ -16,7 +16,7 @@
 # before the module has registered: sent early (seconds after boot) it
 # answers OK and reads back 1,2, but every call in that boot is digital
 # silence, and sending it again later does not help.
-import os, select, sys, syslog, termios, time
+import os, re, select, sys, syslog, termios, time
 
 def at(fd, cmd, wait=3.0):
     try:
@@ -90,12 +90,18 @@ def early(fd):
             at(fd, 'AT+CFUN=1', 5.0)
     syslog.syslog('SIM still not ready: %s' % r.strip())
 
+def registered(r):
+    # +CREG: <n>,<stat>[,<lac>,<ci>[,<act>]]; stat 1 is home, 5 is roaming.
+    # With <n> set to 2 the location fields follow, so look at the second
+    # field and not at the end of the line.
+    return any(m.group(1) in ('1', '5')
+               for m in re.finditer(r'\+CE?REG:\s*\d+\s*,\s*(\d+)', r))
+
 def late(fd):
     # Wait for registration; this can take as long as the user needs to
     # enter the SIM PIN. The loop ends when the module goes away.
     while True:
-        r = at(fd, 'AT+CEREG?') + at(fd, 'AT+CREG?')
-        if any(x in r for x in (',1\r', ',5\r')):
+        if registered(at(fd, 'AT+CEREG?') + at(fd, 'AT+CREG?')):
             break
         time.sleep(3)
     # IMS (VoLTE) registration follows the LTE attach; give it time.
@@ -104,7 +110,13 @@ def late(fd):
             break
         time.sleep(2)
     time.sleep(10)
-    r = at(fd, 'AT+QPCMV=1,2')
+    # Nothing runs this again until the module re-enumerates, so do not give
+    # up on one ERROR or one unanswered command.
+    for _ in range(3):
+        r = at(fd, 'AT+QPCMV=1,2')
+        if 'OK' in r:
+            break
+        time.sleep(2)
     syslog.syslog('voice over USB audio: ' + ('ok' if 'OK' in r else 'failed: ' + r.strip()))
 
 if __name__ == '__main__':
