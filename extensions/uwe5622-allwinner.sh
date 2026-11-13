@@ -1,4 +1,4 @@
-# @description Enables the Spreadtrum UWE5622 (AW859A) WiFi/Bluetooth combo on Allwinner boards. Adds the `sprdbt_tty` module and `bluez`/`rfkill` packages, installs the `aw859a-wifi` and `aw859a-bluetooth` systemd services, disables WLAN power save, and deploys the `hciattach_opi` blob for BT attach. Enable on sunxi boards carrying this chip.
+# @description Enables the Spreadtrum UWE5622 (AW859A) WiFi/Bluetooth combo on Allwinner boards. Adds the `sprdbt_tty` module and `bluez`/`rfkill` packages, installs the `aw859a-wifi` and `aw859a-bluetooth` systemd services, disables WLAN power save, and installs `aw859a-bt-attach` (BlueZ `btattach`, or the `hciattach_opi` blob with `sprdbt_tty vendor_init=0`). Enable on sunxi boards carrying this chip.
 
 #
 # SPDX-License-Identifier: GPL-2.0
@@ -21,6 +21,8 @@ function post_family_tweaks_bsp__add_uwe5622_services() {
 	run_host_command_logged mkdir -p "${destination}/lib/systemd/system/"
 	run_host_command_logged cp "${SRC}/packages/bsp/sunxi/aw859a-bluetooth.service" "${destination}/lib/systemd/system/"
 	run_host_command_logged cp "${SRC}/packages/bsp/sunxi/aw859a-wifi.service" "${destination}/lib/systemd/system/"
+	run_host_command_logged install -m 755 "${SRC}/packages/bsp/sunxi/aw859a-bt-attach" "${destination}/usr/sbin/aw859a-bt-attach"
+	# Fallback for vendor_init=0. Remove when btattach works on all boards.
 	run_host_command_logged install -m 755 "${SRC}/packages/blobs/bt/hciattach/hciattach_opi_${ARCH}" "${destination}/usr/bin/hciattach_opi"
 
 	# Firmware power save drops frames and delays the first connection (armbian/uwe5622#28).
