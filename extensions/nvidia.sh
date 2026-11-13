@@ -50,14 +50,16 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	EOF
 
 	# Resolve which nvidia-dkms / nvidia-driver package(s) to install.
-	# Three cases:
+	# Four cases:
 	#   1. Operator pinned NVIDIA_DRIVER_VERSION (env/config) → trust it.
-	#   2. Auto-detect: highest `nvidia-dkms-<N>` in the chroot's apt
+	#   2. `nvidia-open`: the latest driver from the NVIDIA repository,
+	#      mirrored into the Armbian repository (armbian/external).
+	#   3. Auto-detect: highest `nvidia-dkms-<N>` in the chroot's apt
 	#      index. This is the common Ubuntu shape — 535, 550, 560,
 	#      580, … depending on release and snapshot.
-	#   3. Fall through to Debian `nvidia-kernel-dkms` when no numeric
+	#   4. Fall through to Debian `nvidia-kernel-dkms` when no numeric
 	#      variants exist.
-	# If none of the three resolve, skip with a warning rather than
+	# If none of them resolve, skip with a warning rather than
 	# blowing the build up with an opaque "package not found".
 	local nvidia_dkms_pkg nvidia_driver_pkg
 	if [[ -n "${NVIDIA_DRIVER_VERSION:-}" ]]; then
@@ -81,13 +83,17 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		# no numbered nvidia-dkms-N packages (Debian / fall-through
 		# case). Under the framework's outer set -e the substitution
 		# would abort the build before we get to test $latest, making
-		# case-3 below unreachable. `|| true` keeps the substitution
+		# the cases below unreachable. `|| true` keeps the substitution
 		# successful with $latest empty so the fall-through fires.
 		latest=$(chroot_sdcard "apt-cache pkgnames 'nvidia-dkms-' 2>/dev/null \
 			| grep -E '^nvidia-dkms-[0-9]+\$' \
 			| sed 's/nvidia-dkms-//' \
 			| sort -nr | head -1 || true")
-		if [[ -n "$latest" ]]; then
+		if chroot_sdcard "apt-cache pkgnames nvidia-open 2>/dev/null | grep -qx nvidia-open"; then
+			# One package pulls the driver and the open kernel module.
+			nvidia_dkms_pkg="nvidia-open"
+			display_alert "Using nvidia-open from the Armbian repository" "${DISTRIBUTION}/${RELEASE}" "info"
+		elif [[ -n "$latest" ]]; then
 			NVIDIA_DRIVER_VERSION="$latest"
 			nvidia_dkms_pkg="nvidia-dkms-${NVIDIA_DRIVER_VERSION}"
 			nvidia_driver_pkg="nvidia-driver-${NVIDIA_DRIVER_VERSION}"
@@ -125,7 +131,7 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	# chroot_sdcard_apt_get_install() -> chroot_sdcard_apt_get() -> chroot_sdcard() -> run_host_command_logged_raw()
 	# it handles bash-specific quoting issues, apt proxies, logging, and errors.
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
-	chroot_sdcard_apt_get_install "${nvidia_dkms_pkg}" "${nvidia_driver_pkg}"
+	chroot_sdcard_apt_get_install "${nvidia_dkms_pkg}" ${nvidia_driver_pkg:+"${nvidia_driver_pkg}"}
 }
 
 # Hook docs (lib/functions/rootfs/distro-agnostic.sh): post_install_kernel_debs
@@ -160,18 +166,21 @@ function install_armbian_nvidia_autodetect_helper() {
 		# stop:  at shutdown, remove the marked packages.
 
 		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
-		MARK=/run/armbian-nvidia-remove
+		# Kept until the removal completes, so a failed removal runs again.
+		MARK=/var/lib/armbian/nvidia-remove
 
 		log() {
 			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
 		}
 
-		# Installed driver packages: Ubuntu numbered and Debian names.
+		# Driver packages with files on the system, also partly removed ones:
+		# NVIDIA repository, Ubuntu numbered and Debian names.
 		installed() {
 			dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' \
 				'nvidia-dkms-*' 'nvidia-driver-*' nvidia-driver nvidia-kernel-dkms \
-				nvidia-open-kernel-dkms nvidia-settings nvidia-common 2> /dev/null |
-				awk '$1 ~ /^[ir]/ {print $2}' | tr '\n' ' '
+				nvidia-open-kernel-dkms nvidia-open nvidia-kernel-open-dkms \
+				nvidia-settings nvidia-common 2> /dev/null |
+				awk 'substr($1, 2, 1) != "n" {print $2}' | tr '\n' ' '
 		}
 
 		case "${1:-start}" in
@@ -184,6 +193,7 @@ function install_armbian_nvidia_autodetect_helper() {
 						rm -f "$BLACKLIST"
 						log "NVIDIA hardware found; driver enabled"
 					fi
+					rm -f "$MARK"
 					modprobe nvidia_drm modeset=1 2> /dev/null || true
 					exit 0
 				fi
@@ -197,18 +207,22 @@ function install_armbian_nvidia_autodetect_helper() {
 					blacklist nvidia_uvm
 				EOF
 				grep -qw 'boot=live' /proc/cmdline && exit 0
-				[ -n "$(installed)" ] && : > "$MARK"
+				if [ -n "$(installed)" ]; then
+					mkdir -p "${MARK%/*}"
+					: > "$MARK"
+				fi
 				;;
 			stop)
 				[ -f "$MARK" ] || exit 0
 				pkgs=$(installed)
-				[ -n "$pkgs" ] || exit 0
-				log "no NVIDIA hardware; removing $pkgs"
+				log "no NVIDIA hardware; removing ${pkgs:-the remaining dependencies}"
 				# A power cut during an earlier removal leaves dpkg interrupted.
 				dpkg --configure -a > /dev/null 2>&1 || true
+				# The purge can be done already: autoremove then cleans up.
 				# shellcheck disable=SC2086 # word splitting is intended
-				if DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o DPkg::Lock::Timeout=60 purge $pkgs > /dev/null 2>&1 &&
+				if { [ -z "$pkgs" ] || DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o DPkg::Lock::Timeout=60 purge $pkgs > /dev/null 2>&1; } &&
 					DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o DPkg::Lock::Timeout=60 autoremove --purge > /dev/null 2>&1; then
+					rm -f "$MARK"
 					log "removed"
 				else
 					log "removal failed; it runs again at the next shutdown"
