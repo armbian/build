@@ -1,5 +1,5 @@
 # Rockchip RK3576 octa core GbE eMMC USB3 SATA WiFi BT
-BOARD_NAME="LCKFB Taishan Pi 3M"
+BOARD_NAME="Taishan Pi 3M"
 BOARD_VENDOR="lckfb"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER="gahingwoo"
