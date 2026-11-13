@@ -161,10 +161,14 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	# themselves: they are mount points the live rootfs needs. Excluding the
 	# directories outright leaves the live system with no /proc,/sys,/dev,/run, so
 	# init cannot mount them and panics ("Attempted to kill init").
+	# No grub.cfg: the ISO boots from its embedded config. Without the file, the
+	# kernel postinst skips update-grub, which fails on the overlay root.
+	# armbian-install writes a new grub.cfg to the target.
 	display_alert "Creating rootfs squashfs (${ISO_COMP})" "${EXTENSION}" "info"
 	cmd=(mksquashfs "${MOUNT}" "${stage_dir}/live/filesystem.squashfs"
 		-noappend -comp "${ISO_COMP}" -no-progress -wildcards
-		-e "proc/*" "sys/*" "dev/*" "run/*" "tmp/*" "var/tmp/*" "var/cache/apt/archives/*")
+		-e "proc/*" "sys/*" "dev/*" "run/*" "tmp/*" "var/tmp/*" "var/cache/apt/archives/*"
+		"boot/grub/grub.cfg")
 	# Capture the result instead of letting a failure abort here, so the mounted
 	# image state is ALWAYS restored below (a kept .img is never left with the
 	# live-only fstab stub / masked services). Fail after restoring.
