@@ -13,8 +13,9 @@ BOOT_FDT_FILE="rockchip/rk3576-lckfb-tspi-3m.dtb"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 OVERLAY_PREFIX_BOARD="lckfb-tspi-3m"
-# screen autodetect probes I2C; the optional EC20 4G module needs ModemManager
-PACKAGE_LIST_BOARD="i2c-tools modemmanager alsa-ucm-conf"
+# screen autodetect probes I2C; the optional EC20 4G module needs ModemManager;
+# bluez has hciattach, which the vendor Bluetooth service below runs
+PACKAGE_LIST_BOARD="i2c-tools modemmanager alsa-ucm-conf bluez"
 
 # Mainline U-Boot for both branches; the board is not in the vendor U-Boot
 function post_family_config__lckfb_taishanpi_3m_use_mainline_uboot() {
