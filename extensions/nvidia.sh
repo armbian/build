@@ -29,7 +29,9 @@ function extension_finish_config__build_nvidia_kernel_module() {
 	display_alert "Forcing INSTALL_HEADERS=yes" "${EXTENSION}" "debug"
 }
 
-function post_install_kernel_debs__build_nvidia_kernel_module() {
+# Runs after the build enables the Armbian repository (image-late): nvidia-open
+# comes from it. Earlier hooks see only the distribution repositories.
+function post_repo_customize_image__build_nvidia_kernel_module() {
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 
 	# Pre-ship the modprobe blacklist BEFORE installing nvidia packages.
