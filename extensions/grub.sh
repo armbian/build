@@ -379,8 +379,15 @@ configure_grub() {
 	fi
 
 	if [[ "a${UEFI_GRUB_TERMINAL}" != "a" ]]; then
+		# GRUB_TERMINAL also sets the input terminal. gfxterm and vga_text are output only:
+		# as input, GRUB shows "terminal `gfxterm' isn't found" at each boot.
+		declare grub_terminal_input="" grub_terminal
+		for grub_terminal in ${UEFI_GRUB_TERMINAL}; do
+			[[ "${grub_terminal}" == "gfxterm" || "${grub_terminal}" == "vga_text" ]] || grub_terminal_input+="${grub_terminal_input:+ }${grub_terminal}"
+		done
 		cat <<- grubCfgFragTerminal >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
-			GRUB_TERMINAL="${UEFI_GRUB_TERMINAL}"
+			GRUB_TERMINAL_OUTPUT="${UEFI_GRUB_TERMINAL}"
+			GRUB_TERMINAL_INPUT="${grub_terminal_input:-console}"
 		grubCfgFragTerminal
 	fi
 
