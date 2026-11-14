@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sat, 17 Oct 2026 21:58:43 +0200
+Subject: soc: sunxi: mbus: restore the DMA offset when a driver
+ binds again
+
+The MBUS notifier gives the MBUS masters their DMA offset (bus address
+= physical address - PHYS_OFFSET) once, when the platform device is
+added. The driver core frees dev->dma_range_map in
+device_unbind_cleanup(), which runs when a driver unbinds and when a
+probe fails or is deferred, and nothing sets the offset again. From
+then on the device is handed CPU physical addresses.
+
+On boards with 1 GiB of DRAM this goes unnoticed: the DRAM controller
+decodes 30 address bits and the PHYS_OFFSET bit wraps away. On 2 GiB
+boards such as the Cubietruck (A20) every access lands 1 GiB away from
+the buffer. Reloading the cedrus module and encoding one frame was
+enough to corrupt user memory (processes segfaulting, sshd killed);
+lima would be hit the same way after a rebind.
+
+Also handle BUS_NOTIFY_BIND_DRIVER. It is sent from driver_sysfs_add()
+after dma_configure() and before the driver's probe, so the offset is
+back in place before the driver allocates its first buffer. Skip
+devices that already have a range map.
+
+Tested on a Cubietruck (A20, 2 GiB): after rmmod/modprobe of
+sunxi-cedrus the VE gets bus addresses again, and a lima unbind/bind
+(used to recover from a GPU hang) brings the desktop back. Runs on a
+Rikomagic MK802 (A10, 1 GiB) in the same kernel series, where the bug
+cannot show.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/soc/sunxi/sunxi_mbus.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soc/sunxi/sunxi_mbus.c b/drivers/soc/sunxi/sunxi_mbus.c
+index 111111111111..222222222222 100644
+--- a/drivers/soc/sunxi/sunxi_mbus.c
++++ b/drivers/soc/sunxi/sunxi_mbus.c
+@@ -65,7 +65,13 @@ static int sunxi_mbus_notifier(struct notifier_block *nb,
+ 	struct device *dev = __dev;
+ 	int ret;
+ 
+-	if (event != BUS_NOTIFY_ADD_DEVICE)
++	/*
++	 * The driver core frees dev->dma_range_map when a driver unbinds
++	 * and when a probe fails or is deferred, so the offset set when the
++	 * device was added does not survive a module reload or a deferred
++	 * probe. Set it again right before every bind.
++	 */
++	if (event != BUS_NOTIFY_ADD_DEVICE && event != BUS_NOTIFY_BIND_DRIVER)
+ 		return NOTIFY_DONE;
+ 
+ 	/*
+@@ -87,6 +93,9 @@ static int sunxi_mbus_notifier(struct notifier_block *nb,
+ 	if (of_property_present(dev->of_node, "interconnects"))
+ 		return NOTIFY_DONE;
+ 
++	if (dev->dma_range_map)
++		return NOTIFY_DONE;
++
+ 	ret = dma_direct_set_offset(dev, PHYS_OFFSET, 0, SZ_4G);
+ 	if (ret)
+ 		dev_err(dev, "Couldn't setup our DMA offset: %d\n", ret);
+-- 
+Armbian
+
