@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Tue, 6 Oct 2026 22:49:43 +0200
+Subject: media: cedrus: mpeg2: fix field pictures
+
+Decode field pictures like the vendor library does:
+ - The coded and boundary heights are the ones of a field.
+ - The backward reference of I and P fields is the current frame, so
+   that the second field can predict from the first one.
+ - A missing reference falls back to the current frame instead of
+   address 0.
+
+The hardware also tells the first field of a frame from the second one
+with V4L2_MPEG2_PIC_FLAG_TOP_FIELD_FIRST, but top_field_first is always
+0 in field pictures, so FFmpeg and GStreamer pass it cleared, and every
+top field first pair predicted its second field from the wrong
+reference. Detect the second field in the driver instead: it has the
+opposite parity of the previous field and is decoded into the same
+capture buffer. This is the rule the Amlogic stateless driver uses too,
+and it works with unmodified userspace.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |  5 ++
+ .../staging/media/sunxi/cedrus/cedrus_mpeg2.c | 72 ++++++++++++++++---
+ 2 files changed, 67 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -144,6 +144,11 @@ struct cedrus_ctx {
+ 			void		*entry_points_buf;
+ 			dma_addr_t	entry_points_buf_addr;
+ 		} h265;
++		struct {
++			bool		pair_pending;
++			unsigned int	pair_dst;
++			u8		pair_structure;
++		} mpeg2;
+ 		struct {
+ 			unsigned int	last_frame_p_type;
+ 			unsigned int	last_filter_type;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c
+@@ -50,6 +50,8 @@ static void cedrus_mpeg2_irq_disable(struct cedrus_ctx *ctx)
+ 
+ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ {
++	struct vb2_buffer *fwd, *bwd;
++	bool field, tff;
+ 	const struct v4l2_ctrl_mpeg2_sequence *seq;
+ 	const struct v4l2_ctrl_mpeg2_picture *pic;
+ 	const struct v4l2_ctrl_mpeg2_quantisation *quantisation;
+@@ -86,6 +88,26 @@ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		cedrus_write(dev, VE_DEC_MPEG_IQMINPUT, reg);
+ 	}
+ 
++	/*
++	 * top_field_first is always 0 in field pictures, but the hardware
++	 * uses this bit to tell the first field of a frame from the second.
++	 * A field is the second one when it has the opposite parity of the
++	 * previous field and is decoded into the same capture buffer.
++	 */
++	if (pic->picture_structure == V4L2_MPEG2_PIC_FRAME) {
++		tff = !!(pic->flags & V4L2_MPEG2_PIC_FLAG_TOP_FIELD_FIRST);
++		ctx->codec.mpeg2.pair_pending = false;
++	} else {
++		bool second = ctx->codec.mpeg2.pair_pending &&
++			      ctx->codec.mpeg2.pair_structure != pic->picture_structure &&
++			      ctx->codec.mpeg2.pair_dst == run->dst->vb2_buf.index;
++
++		tff = (pic->picture_structure == V4L2_MPEG2_PIC_TOP_FIELD) != second;
++		ctx->codec.mpeg2.pair_pending = !second;
++		ctx->codec.mpeg2.pair_structure = pic->picture_structure;
++		ctx->codec.mpeg2.pair_dst = run->dst->vb2_buf.index;
++	}
++
+ 	/* Set MPEG picture header. */
+ 
+ 	reg = VE_DEC_MPEG_MP12HDR_SLICE_TYPE(pic->picture_coding_type);
+@@ -95,7 +117,7 @@ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	reg |= VE_DEC_MPEG_MP12HDR_F_CODE(1, 1, pic->f_code[1][1]);
+ 	reg |= VE_DEC_MPEG_MP12HDR_INTRA_DC_PRECISION(pic->intra_dc_precision);
+ 	reg |= VE_DEC_MPEG_MP12HDR_INTRA_PICTURE_STRUCTURE(pic->picture_structure);
+-	reg |= VE_DEC_MPEG_MP12HDR_TOP_FIELD_FIRST(pic->flags & V4L2_MPEG2_PIC_FLAG_TOP_FIELD_FIRST);
++	reg |= VE_DEC_MPEG_MP12HDR_TOP_FIELD_FIRST(tff);
+ 	reg |= VE_DEC_MPEG_MP12HDR_FRAME_PRED_FRAME_DCT(pic->flags & V4L2_MPEG2_PIC_FLAG_FRAME_PRED_DCT);
+ 	reg |= VE_DEC_MPEG_MP12HDR_CONCEALMENT_MOTION_VECTORS(pic->flags & V4L2_MPEG2_PIC_FLAG_CONCEALMENT_MV);
+ 	reg |= VE_DEC_MPEG_MP12HDR_Q_SCALE_TYPE(pic->flags & V4L2_MPEG2_PIC_FLAG_Q_SCALE_TYPE);
+@@ -108,25 +130,47 @@ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 
+ 	/* Set frame dimensions. */
+ 
++	/*
++	 * Field pictures cover half of the frame's macroblock rows; the
++	 * vendor library halves both the coded and the boundary height.
++	 */
++	field = pic->picture_structure != V4L2_MPEG2_PIC_FRAME;
++
+ 	reg = VE_DEC_MPEG_PICCODEDSIZE_WIDTH(seq->horizontal_size);
+-	reg |= VE_DEC_MPEG_PICCODEDSIZE_HEIGHT(seq->vertical_size);
++	reg |= VE_DEC_MPEG_PICCODEDSIZE_HEIGHT(field ?
++			ALIGN(seq->vertical_size, 32) / 2 : seq->vertical_size);
+ 
+ 	cedrus_write(dev, VE_DEC_MPEG_PICCODEDSIZE, reg);
+ 
+ 	reg = VE_DEC_MPEG_PICBOUNDSIZE_WIDTH(ctx->src_fmt.width);
+-	reg |= VE_DEC_MPEG_PICBOUNDSIZE_HEIGHT(ctx->src_fmt.height);
++	reg |= VE_DEC_MPEG_PICBOUNDSIZE_HEIGHT(field ? ctx->src_fmt.height / 2 :
++						   ctx->src_fmt.height);
+ 
+ 	cedrus_write(dev, VE_DEC_MPEG_PICBOUNDSIZE, reg);
+ 
+-	/* Forward and backward prediction reference buffers. */
++	/*
++	 * Forward and backward prediction reference buffers. As the vendor
++	 * library does, I and P pictures use the current frame as backward
++	 * reference: the second field of a frame predicts from the first one.
++	 * Missing references also fall back to the current frame.
++	 */
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+ 
+-	cedrus_write_ref_buf_addr(ctx, vq, pic->forward_ref_ts,
+-				  VE_DEC_MPEG_FWD_REF_LUMA_ADDR,
+-				  VE_DEC_MPEG_FWD_REF_CHROMA_ADDR);
+-	cedrus_write_ref_buf_addr(ctx, vq, pic->backward_ref_ts,
+-				  VE_DEC_MPEG_BWD_REF_LUMA_ADDR,
+-				  VE_DEC_MPEG_BWD_REF_CHROMA_ADDR);
++	fwd = vb2_find_buffer(vq, pic->forward_ref_ts) ?: &run->dst->vb2_buf;
++	if (pic->picture_coding_type == V4L2_MPEG2_PIC_CODING_TYPE_B)
++		bwd = vb2_find_buffer(vq, pic->backward_ref_ts) ?:
++		      &run->dst->vb2_buf;
++	else
++		bwd = &run->dst->vb2_buf;
++
++	cedrus_write(dev, VE_DEC_MPEG_FWD_REF_LUMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, fwd, 0));
++	cedrus_write(dev, VE_DEC_MPEG_FWD_REF_CHROMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, fwd, 1));
++	cedrus_write(dev, VE_DEC_MPEG_BWD_REF_LUMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, bwd, 0));
++	cedrus_write(dev, VE_DEC_MPEG_BWD_REF_CHROMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, bwd, 1));
+ 
+ 	/* Destination luma and chroma buffers. */
+ 
+@@ -177,6 +221,13 @@ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	return 0;
+ }
+ 
++static int cedrus_mpeg2_start(struct cedrus_ctx *ctx)
++{
++	memset(&ctx->codec.mpeg2, 0, sizeof(ctx->codec.mpeg2));
++
++	return 0;
++}
++
+ static void cedrus_mpeg2_trigger(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+@@ -194,5 +245,6 @@ struct cedrus_dec_ops cedrus_dec_ops_mpeg2 = {
+ 	.irq_disable	= cedrus_mpeg2_irq_disable,
+ 	.irq_status	= cedrus_mpeg2_irq_status,
+ 	.setup		= cedrus_mpeg2_setup,
++	.start		= cedrus_mpeg2_start,
+ 	.trigger	= cedrus_mpeg2_trigger,
+ };
+-- 
+Armbian
+

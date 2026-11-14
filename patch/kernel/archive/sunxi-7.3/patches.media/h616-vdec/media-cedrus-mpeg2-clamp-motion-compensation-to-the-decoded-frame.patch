@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Tue, 03 Nov 2026 03:19:03 +0000
+Subject: media: cedrus: mpeg2: clamp motion compensation to the decoded frame
+
+The boundary register (VE_DEC_MPEG_PICBOUNDSIZE) is where the engine
+clamps the motion compensation reads from the references. It was set
+from the OUTPUT format, the size userspace sets. FFmpeg sets the
+display size, 1920x1080 for a 1080p or 1080i stream, so the engine
+clamped the references to line 1079. The reference pictures of ISO/IEC
+13818-2 are the whole decoded frame, rounded up to the macroblock rows
+(6.3.3: mb_height, pairs of rows for interlaced sequences), and vectors
+may point into the decoded lines 1080 to 1087. Those blocks were
+predicted from the repeated line 1079 instead.
+
+On an Orange Pi Zero2 (H616) a 1080p60 MP@HL stream (FFmpeg encoder,
+40 Mbit/s) had errors of up to 21 in the bottom macroblock row,
+spreading through the GOP; the same encode at 1920x1088 matched the
+software decoder to IDCT rounding (max 3). The ISO 13818-4 main
+profile streams are all 480 or 576 lines and did not show it.
+
+Take the boundary from the sequence header: the width and the height
+rounded up to the macroblock rows, halved for field pictures.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg2.c
+@@ -51,6 +51,7 @@
+ static int cedrus_mpeg2_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ {
+ 	struct vb2_buffer *fwd, *bwd;
++	unsigned int mb_height;
+ 	bool field, tff;
+ 	const struct v4l2_ctrl_mpeg2_sequence *seq;
+ 	const struct v4l2_ctrl_mpeg2_picture *pic;
+@@ -142,9 +143,22 @@
+ 
+ 	cedrus_write(dev, VE_DEC_MPEG_PICCODEDSIZE, reg);
+ 
+-	reg = VE_DEC_MPEG_PICBOUNDSIZE_WIDTH(ctx->src_fmt.width);
+-	reg |= VE_DEC_MPEG_PICBOUNDSIZE_HEIGHT(field ? ctx->src_fmt.height / 2 :
+-						   ctx->src_fmt.height);
++	/*
++	 * Motion compensation clamps the references to the boundary. The
++	 * reference pictures are the whole decoded frame, which ISO/IEC
++	 * 13818-2 6.3.3 rounds up to the macroblock rows (pairs of them for
++	 * interlaced sequences), so vectors may point below a 1080 line
++	 * picture into the decoded rows 1080 to 1087. The OUTPUT format size
++	 * is what userspace set (FFmpeg uses the display size) and is not
++	 * that boundary.
++	 */
++	mb_height = seq->flags & V4L2_MPEG2_SEQ_FLAG_PROGRESSIVE ?
++		    DIV_ROUND_UP(seq->vertical_size, 16) :
++		    2 * DIV_ROUND_UP(seq->vertical_size, 32);
++
++	reg = VE_DEC_MPEG_PICBOUNDSIZE_WIDTH(ALIGN(seq->horizontal_size, 16));
++	reg |= VE_DEC_MPEG_PICBOUNDSIZE_HEIGHT(field ? mb_height * 8 :
++						   mb_height * 16);
+ 
+ 	cedrus_write(dev, VE_DEC_MPEG_PICBOUNDSIZE, reg);
+ 
+-- 
+2.47.0
+

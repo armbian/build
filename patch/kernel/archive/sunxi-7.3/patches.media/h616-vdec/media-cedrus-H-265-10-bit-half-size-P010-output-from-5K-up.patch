@@ -1,0 +1,204 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 9 Nov 2026 21:30:00 +0000
+Subject: [PATCH] media: cedrus: H.265 10-bit half-size P010 output from 5K up
+
+A 6144x3456 10-bit H.265 stream decodes at 32 fps into the native
+10-bit AFBC format, but nothing on the H616 can use those frames: the
+display engine shows at most a 4096 wide AFBC window, the GPU has no
+AFBC and the frames cannot be downloaded. The linear P010 output does
+not fit: a CAPTURE buffer takes 111 MB with its hidden AFBC reference
+surface, and a pool of seven or eight of them exceeds a 1 GB board.
+
+The vendor library handles pictures of 5120 or more pixels wide or 2880
+or more lines high the same way for every codec: it keeps the
+references full size and writes a display copy at half the size in each
+direction through the scale-down path of the secondary output
+(bSecOutputEn, bScaleDownEn, nHorizonScaleDownRatio = 1,
+nVerticalScaleDownRatio = 1). The scale-down ratios are the
+scale_precision field of the H.265 SDRT control register (0x50, bits
+8-11, vertical << 2 | horizontal, each a power-of-two shift), which
+the library programs next to the secondary output addresses.
+
+The driver already writes P010 through the secondary output while the
+primary output reconstructs into the hidden AFBC surface. Offer the
+half size there: for H.265 10-bit with a coded size from the vendor's
+threshold up, a P010 CAPTURE format of at most half the coded size in
+both directions selects the half-size output (the coded size shifted
+right by one), and VIDIOC_ENUM_FRAMESIZES on the P010 CAPTURE format
+lists the coded size and the half size, as the verisilicon driver does
+for its G2 down-scaler. The visible P010 surface is then sized and
+strided for the half size; the hidden AFBC surface and the motion
+vector buffers keep the coded size. A 6144x3456 buffer shrinks to
+60 MB (15.9 MB P010 + 44 MB AFBC). The default and any larger request
+keep the coded size, so existing clients are unaffected.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -508,6 +508,36 @@
+ 	return cedrus_dst_is_afbc(ctx) || cedrus_dst_is_p010(ctx);
+ }
+ 
++/*
++ * H.265 10-bit pictures from 5K up (the vendor library's threshold: 5120
++ * wide or 2880 high) can be written at half their size in each direction
++ * by the scale-down path of the secondary output, while the references
++ * stay full size in the hidden AFBC surface. A full-size P010 buffer of a
++ * 6K picture with its reference surface takes 111 MB, too much for a pool
++ * of them on a 1 GB board; the half-size one takes 60 MB. Userspace
++ * selects it with a CAPTURE format of at most half the coded size
++ * (VIDIOC_ENUM_FRAMESIZES on the CAPTURE pixel format lists both sizes).
++ */
++#define CEDRUS_SCALE_DOWN_MIN_WIDTH	5120
++#define CEDRUS_SCALE_DOWN_MIN_HEIGHT	2880
++
++static inline bool cedrus_can_scale_down(struct cedrus_ctx *ctx,
++					 u32 pixelformat)
++{
++	return ctx->src_fmt.pixelformat == V4L2_PIX_FMT_HEVC_SLICE &&
++	       ctx->bit_depth > 8 && pixelformat == V4L2_PIX_FMT_P010 &&
++	       (ctx->src_fmt.width >= CEDRUS_SCALE_DOWN_MIN_WIDTH ||
++		ctx->src_fmt.height >= CEDRUS_SCALE_DOWN_MIN_HEIGHT);
++}
++
++/* Whether a CAPTURE format is the half-size output of the scaler. */
++static inline bool cedrus_fmt_is_scaled(struct cedrus_ctx *ctx,
++					const struct v4l2_pix_format *fmt)
++{
++	return cedrus_can_scale_down(ctx, fmt->pixelformat) &&
++	       fmt->width < ctx->src_fmt.width;
++}
++
+ /* Size of a 10-bit YUV 4:2:0 AFBC 16x16 split surface. */
+ static inline u32 cedrus_afbc_10_size(unsigned int width, unsigned int height)
+ {
+@@ -549,7 +579,15 @@
+ 
+ static inline struct v4l2_pix_format cedrus_dst_frame_fmt(struct cedrus_ctx *ctx)
+ {
+-	return cedrus_dst_frame_fmt_of(&ctx->dst_fmt);
++	struct v4l2_pix_format fmt = cedrus_dst_frame_fmt_of(&ctx->dst_fmt);
++
++	/* The references of a scaled-down output have the coded size. */
++	if (cedrus_fmt_is_scaled(ctx, &ctx->dst_fmt)) {
++		fmt.width = ctx->src_fmt.width;
++		fmt.height = ALIGN(ctx->src_fmt.height, 16);
++	}
++
++	return fmt;
+ }
+ 
+ /*
+@@ -608,10 +646,18 @@
+ 
+ 	if (pix_fmt->pixelformat == V4L2_PIX_FMT_P010) {
+ 		u32 visible = pix_fmt->bytesperline * pix_fmt->height * 3 / 2;
++		unsigned int width = pix_fmt->width;
++		unsigned int height = pix_fmt->height;
++
++		/* The references of a scaled-down output have the coded size. */
++		if (cedrus_fmt_is_scaled(ctx, pix_fmt)) {
++			width = ctx->src_fmt.width;
++			height = ALIGN(ctx->src_fmt.height, 16);
++		}
+ 
+ 		/* Hidden AFBC reconstruction surface, 4 KiB aligned. */
+ 		return cedrus_p010_recon_offset(pix_fmt) - visible +
+-		       cedrus_afbc_10_size(pix_fmt->width, pix_fmt->height);
++		       cedrus_afbc_10_size(width, height);
+ 	}
+ 
+ 	extra = cedrus_dst_2bit_size(pix_fmt->width, pix_fmt->height);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -831,6 +831,12 @@
+ 		cedrus_dst_format_set(dev, &recon);
+ 		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf,
+ 					   &ctx->dst_fmt, &ctx->dst_fmt);
++
++		/* Half-size output (cedrus_can_scale_down()). */
++		if (cedrus_fmt_is_scaled(ctx, &ctx->dst_fmt))
++			cedrus_write(dev, VE_DEC_H265_SDRT_CTRL,
++				     VE_DEC_H265_SDRT_CTRL_SCALE_VERT(1) |
++				     VE_DEC_H265_SDRT_CTRL_SCALE_HORZ(1));
+ 	}
+ 
+ 	/* Enable appropriate interruptions. */
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+@@ -611,6 +611,10 @@
+ #define VE_DEC_H265_BITS_END_ADDR_BASE(a)	((a) >> 8)
+ 
+ #define VE_DEC_H265_SDRT_CTRL			(VE_ENGINE_DEC_H265 + 0x50)
++
++/* Scale-down of the secondary output by 2^n in each direction. */
++#define VE_DEC_H265_SDRT_CTRL_SCALE_VERT(n)	SHIFT_AND_MASK_BITS(n, 11, 10)
++#define VE_DEC_H265_SDRT_CTRL_SCALE_HORZ(n)	SHIFT_AND_MASK_BITS(n, 9, 8)
+ #define VE_DEC_H265_SDRT_LUMA_ADDR		(VE_ENGINE_DEC_H265 + 0x54)
+ #define VE_DEC_H265_SDRT_CHROMA_ADDR		(VE_ENGINE_DEC_H265 + 0x58)
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -432,6 +432,24 @@
+ 	unsigned int max_width, max_height;
+ 	struct cedrus_format *fmt;
+ 
++	/*
++	 * CAPTURE pixel format that the scaler can write at half the coded
++	 * size (cedrus_can_scale_down()): the coded size, then half of it.
++	 */
++	fmt = cedrus_find_format(ctx, fsize->pixel_format, CEDRUS_DECODE_DST);
++	if (fmt && fmt->pixelformat == fsize->pixel_format &&
++	    cedrus_can_scale_down(ctx, fmt->pixelformat)) {
++		if (fsize->index > 1)
++			return -EINVAL;
++
++		fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
++		fsize->discrete.width = ctx->src_fmt.width >> fsize->index;
++		fsize->discrete.height = ctx->src_fmt.height >> fsize->index;
++		memset(fsize->reserved, 0, sizeof(fsize->reserved));
++
++		return 0;
++	}
++
+ 	if (fsize->index)
+ 		return -EINVAL;
+ 
+@@ -505,6 +523,17 @@
+ 		pix_fmt->height = height;
+ 	}
+ 
++	/*
++	 * A request for at most half the coded size selects the half-size
++	 * output of the scaler where it is available (cedrus_can_scale_down()).
++	 */
++	if (cedrus_can_scale_down(ctx, pix_fmt->pixelformat) &&
++	    width && height && width <= pix_fmt->width >> 1 &&
++	    height <= pix_fmt->height >> 1) {
++		pix_fmt->width >>= 1;
++		pix_fmt->height >>= 1;
++	}
++
+ 	cedrus_prepare_format(pix_fmt, max_width, max_height);
+ 
+ 	/*
+@@ -633,7 +662,10 @@
+ 
+ void cedrus_reset_cap_format(struct cedrus_ctx *ctx)
+ {
++	/* Default to the coded size (no scaling). */
+ 	ctx->dst_fmt.pixelformat = 0;
++	ctx->dst_fmt.width = 0;
++	ctx->dst_fmt.height = 0;
+ 	cedrus_try_fmt_vid_cap_p(ctx, &ctx->dst_fmt, false);
+ }
+ 
+-- 
+2.43.0

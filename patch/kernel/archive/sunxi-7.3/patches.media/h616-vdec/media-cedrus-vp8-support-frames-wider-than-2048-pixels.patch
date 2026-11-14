@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Wed, 7 Oct 2026 02:57:45 +0200
+Subject: media: cedrus: vp8: support frames wider than 2048
+ pixels
+
+Above 2048 pixels the deblocking and intra prediction row buffers don't
+fit into the VE SRAM anymore. Put them into DRAM like H.264 does; the
+vendor library sizes the deblocking buffer as 24 bytes per column.
+
+Also allocate the probability table at the size the vendor uses
+(0x5400). The hardware uses the area past 0x2400 as scratch space (most
+likely the segment map) for large frames, and 3840x2160 streams fault
+without it.
+
+Tested on H616 with 2560x1440 and 3840x2160 libvpx streams (bit-exact
+with FFmpeg's software decoder).
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |  7 ++
+ .../staging/media/sunxi/cedrus/cedrus_vp8.c   | 66 ++++++++++++++++++-
+ 2 files changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -156,6 +156,13 @@ struct cedrus_ctx {
+ 
+ 			u8		*entropy_probs_buf;
+ 			dma_addr_t	entropy_probs_buf_dma;
++
++			void		*deblk_buf;
++			dma_addr_t	deblk_buf_dma;
++			ssize_t		deblk_buf_size;
++			void		*intra_pred_buf;
++			dma_addr_t	intra_pred_buf_dma;
++			ssize_t		intra_pred_buf_size;
+ 		} vp8;
+ 	} codec;
+ };
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vp8.c b/drivers/staging/media/sunxi/cedrus/cedrus_vp8.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vp8.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vp8.c
+@@ -25,7 +25,7 @@
+ #include "cedrus_hw.h"
+ #include "cedrus_regs.h"
+ 
+-#define CEDRUS_ENTROPY_PROBS_SIZE 0x2400
++#define CEDRUS_ENTROPY_PROBS_SIZE 0x5400
+ #define VP8_PROB_HALF 128
+ #define QUANT_DELTA_COUNT 5
+ 
+@@ -666,6 +666,20 @@ static int cedrus_vp8_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 
+ 	cedrus_write(dev, VE_H264_CTRL, VE_H264_CTRL_VP8);
+ 
++	if (ctx->codec.vp8.deblk_buf_size) {
++		cedrus_write(dev, VE_BUF_CTRL,
++			     VE_BUF_CTRL_INTRAPRED_MIXED_RAM |
++			     VE_BUF_CTRL_DBLK_MIXED_RAM);
++		cedrus_write(dev, VE_DBLK_DRAM_BUF_ADDR,
++			     ctx->codec.vp8.deblk_buf_dma);
++		cedrus_write(dev, VE_INTRAPRED_DRAM_BUF_ADDR,
++			     ctx->codec.vp8.intra_pred_buf_dma);
++	} else {
++		cedrus_write(dev, VE_BUF_CTRL,
++			     VE_BUF_CTRL_INTRAPRED_INT_SRAM |
++			     VE_BUF_CTRL_DBLK_INT_SRAM);
++	}
++
+ 	cedrus_vp8_update_probs(slice, ctx->codec.vp8.entropy_probs_buf);
+ 
+ 	reg = slice->first_part_size * 8;
+@@ -849,7 +863,44 @@ static int cedrus_vp8_start(struct cedrus_ctx *ctx)
+ 	memcpy(&ctx->codec.vp8.entropy_probs_buf[2048],
+ 	       prob_table_init, sizeof(prob_table_init));
+ 
++	/*
++	 * Above 2048 pixels the deblocking and intra prediction row buffers
++	 * no longer fit into the internal SRAM. The vendor library sizes the
++	 * deblocking buffer as 24 bytes per (32 aligned) column.
++	 */
++	if (ctx->src_fmt.width > 2048) {
++		ctx->codec.vp8.deblk_buf_size =
++			ALIGN(ctx->src_fmt.width, 32) * 24;
++		ctx->codec.vp8.deblk_buf =
++			dma_alloc_attrs(dev->dev, ctx->codec.vp8.deblk_buf_size,
++					&ctx->codec.vp8.deblk_buf_dma,
++					GFP_KERNEL, DMA_ATTR_NO_KERNEL_MAPPING);
++		if (!ctx->codec.vp8.deblk_buf)
++			goto err_probs;
++
++		ctx->codec.vp8.intra_pred_buf_size =
++			ALIGN(ctx->src_fmt.width, 64) * 5 * 2;
++		ctx->codec.vp8.intra_pred_buf =
++			dma_alloc_attrs(dev->dev,
++					ctx->codec.vp8.intra_pred_buf_size,
++					&ctx->codec.vp8.intra_pred_buf_dma,
++					GFP_KERNEL, DMA_ATTR_NO_KERNEL_MAPPING);
++		if (!ctx->codec.vp8.intra_pred_buf)
++			goto err_deblk;
++	}
++
+ 	return 0;
++
++err_deblk:
++	dma_free_attrs(dev->dev, ctx->codec.vp8.deblk_buf_size,
++		       ctx->codec.vp8.deblk_buf, ctx->codec.vp8.deblk_buf_dma,
++		       DMA_ATTR_NO_KERNEL_MAPPING);
++	ctx->codec.vp8.deblk_buf_size = 0;
++err_probs:
++	dma_free_coherent(dev->dev, CEDRUS_ENTROPY_PROBS_SIZE,
++			  ctx->codec.vp8.entropy_probs_buf,
++			  ctx->codec.vp8.entropy_probs_buf_dma);
++	return -ENOMEM;
+ }
+ 
+ static void cedrus_vp8_stop(struct cedrus_ctx *ctx)
+@@ -861,6 +912,19 @@ static void cedrus_vp8_stop(struct cedrus_ctx *ctx)
+ 	dma_free_coherent(dev->dev, CEDRUS_ENTROPY_PROBS_SIZE,
+ 			  ctx->codec.vp8.entropy_probs_buf,
+ 			  ctx->codec.vp8.entropy_probs_buf_dma);
++
++	if (ctx->codec.vp8.deblk_buf_size) {
++		dma_free_attrs(dev->dev, ctx->codec.vp8.deblk_buf_size,
++			       ctx->codec.vp8.deblk_buf,
++			       ctx->codec.vp8.deblk_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++		dma_free_attrs(dev->dev, ctx->codec.vp8.intra_pred_buf_size,
++			       ctx->codec.vp8.intra_pred_buf,
++			       ctx->codec.vp8.intra_pred_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++		ctx->codec.vp8.deblk_buf_size = 0;
++		ctx->codec.vp8.intra_pred_buf_size = 0;
++	}
+ }
+ 
+ static void cedrus_vp8_trigger(struct cedrus_ctx *ctx)
+-- 
+Armbian
+

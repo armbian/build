@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Fri, 6 Nov 2026 19:00:00 +0000
+Subject: [PATCH] media: cedrus: change formats with CAPTURE buffers left while
+ stopped
+
+Since the VP9 resize support wired up VIDIOC_REMOVE_BUFS, REQBUFS and
+CREATE_BUFS report V4L2_BUF_CAP_SUPPORTS_REMOVE_BUFS for every codec.
+GStreamer's v4l2codecs decoders then change the picture size the way
+the verisilicon driver allows: they stop both queues, remove the
+CAPTURE buffers they got back with VIDIOC_REMOVE_BUFS, set the new
+OUTPUT and CAPTURE formats and create new buffers. Buffers still lent
+downstream (the decoder's buffer pool keeps a few) are removed only
+when they come back. cedrus kept the old rule for everything but VP9,
+"no format change while the CAPTURE queue has buffers", so S_FMT
+fails with -EBUSY and every resolution change ends the stream
+("gst_v4l2_decoder_set_sink_fmt() failed: Device or resource busy",
+then not-negotiated), e.g. for an H.264 or MPEG-2 stream with a new
+sequence size.
+
+Accept the format change with CAPTURE buffers left when both queues
+are stopped and the coded format, hence the codec, stays, for S_FMT on
+either queue. Nothing uses the remaining buffers until they are queued
+again: the OUTPUT stop ran the codec's stop(), which frees the
+per-buffer auxiliary buffers (allocated again at the new size), and
+cedrus_buf_prepare() checks a requeued buffer against the new format
+and records the layout it is prepared with. While streaming the rules
+are unchanged (VP9 resizes, the others refuse).
+
+The stop() loops that free those auxiliary buffers (H.264, H.265,
+MPEG-4) went up to vb2_get_num_buffers(), the number of
+buffers. With VIDIOC_REMOVE_BUFS the indices have holes, and buffers
+created after removed ones lie above that count: they kept the motion
+vector buffers of the old size, too small for a larger picture. Walk
+all max_num_buffers indices instead.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus_h264.c  |  2 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_h265.c  |  2 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c |  2 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 46 +++++++++++++++++++----
+ 4 files changed, 41 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+index abf9036e3..9b75d92fd 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+@@ -678,7 +678,7 @@ static void cedrus_h264_stop(struct cedrus_ctx *ctx)
+ 
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+ 
+-	for (i = 0; i < vb2_get_num_buffers(vq); i++) {
++	for (i = 0; i < vq->max_num_buffers; i++) {
+ 		struct vb2_buffer *vb = vb2_get_buffer(vq, i);
+ 
+ 		if (!vb)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index c8bffe1c1..bd5563ac6 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -890,7 +890,7 @@ static void cedrus_h265_stop(struct cedrus_ctx *ctx)
+ 
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+ 
+-	for (i = 0; i < vb2_get_num_buffers(vq); i++) {
++	for (i = 0; i < vq->max_num_buffers; i++) {
+ 		struct vb2_buffer *vb = vb2_get_buffer(vq, i);
+ 
+ 		if (!vb)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+index d3aad605d..9bfbd062b 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+@@ -896,7 +896,7 @@ static void cedrus_mpeg4_stop(struct cedrus_ctx *ctx)
+ 	unsigned int i;
+ 
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+-	for (i = 0; i < vb2_get_num_buffers(vq); i++) {
++	for (i = 0; i < vq->max_num_buffers; i++) {
+ 		struct vb2_buffer *vb = vb2_get_buffer(vq, i);
+ 
+ 		if (vb)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index b037518e0..c54adf35d 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -526,14 +526,37 @@ static int cedrus_try_fmt_vid_out(struct file *file, void *priv,
+  * buffer in the layout it was prepared with (struct cedrus_buffer.fmt), so
+  * the frames still queued and the references are unaffected by the new
+  * format. The other decoders take the layout of their references from the
+- * current format and keep the usual rule: a format change needs the
+- * queues without buffers.
++ * current format: they change formats only with both queues stopped
++ * (cedrus_formats_change_while_stopped()).
+  */
+ static bool cedrus_resizes_while_busy(struct cedrus_ctx *ctx)
+ {
+ 	return ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME;
+ }
+ 
++/*
++ * Whether the formats may change while the CAPTURE queue still has
++ * buffers: with both queues stopped. A client that supports
++ * VIDIOC_REMOVE_BUFS (V4L2_BUF_CAP_SUPPORTS_REMOVE_BUFS, reported since
++ * the VP9 resize support) changes the picture size of any codec that way,
++ * as on the verisilicon driver: it stops streaming, removes the CAPTURE
++ * buffers it got back, sets the new formats and creates new buffers,
++ * while buffers that it lent downstream are removed only when they come
++ * back. GStreamer's v4l2codecs decoders do this on every resolution
++ * change (MJPEG with frames of two sizes, an H.264 stream with a new
++ * SPS). With the OUTPUT queue stopped the codec's stop() has freed the
++ * per-buffer auxiliary buffers, which are allocated again for the new
++ * size, and a buffer that is queued again is checked against the new
++ * format by cedrus_buf_prepare().
++ */
++static bool cedrus_formats_change_while_stopped(struct cedrus_ctx *ctx)
++{
++	struct v4l2_m2m_ctx *m2m_ctx = ctx->fh.m2m_ctx;
++
++	return !vb2_is_streaming(&m2m_ctx->out_q_ctx.q) &&
++	       !vb2_is_streaming(&m2m_ctx->cap_q_ctx.q);
++}
++
+ static int cedrus_s_fmt_vid_cap(struct file *file, void *priv,
+ 				struct v4l2_format *f)
+ {
+@@ -546,11 +569,14 @@ static int cedrus_s_fmt_vid_cap(struct file *file, void *priv,
+ 		return ret;
+ 
+ 	/*
+-	 * With buffers only the size may change (cedrus_resizes_while_busy()):
+-	 * the pixel format is the one the queued buffers were prepared with.
++	 * While streaming only the size may change
++	 * (cedrus_resizes_while_busy()): the pixel format is the one the
++	 * queued buffers were prepared with. With both queues stopped, the
++	 * buffers still allocated are of no use to the decoder until they are
++	 * queued again (cedrus_formats_change_while_stopped()).
+ 	 */
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, f->type);
+-	if (vb2_is_busy(vq) &&
++	if (vb2_is_busy(vq) && !cedrus_formats_change_while_stopped(ctx) &&
+ 	    !(cedrus_resizes_while_busy(ctx) &&
+ 	      f->fmt.pix.pixelformat == ctx->dst_fmt.pixelformat))
+ 		return -EBUSY;
+@@ -680,10 +706,14 @@ static int cedrus_s_fmt_vid_out(struct file *file, void *priv,
+ 		return -EBUSY;
+ 	/*
+ 	 * Since format change on the OUTPUT queue will reset
+-	 * the CAPTURE queue, we can't allow doing so
+-	 * when the CAPTURE queue has buffers allocated.
++	 * the CAPTURE format, we can't allow doing so
++	 * when the CAPTURE queue has buffers allocated, unless
++	 * both queues are stopped and the coded format, hence the
++	 * codec, stays (cedrus_formats_change_while_stopped()).
+ 	 */
+-	if (vb2_is_busy(peer_vq))
++	if (vb2_is_busy(peer_vq) &&
++	    !(cedrus_formats_change_while_stopped(ctx) &&
++	      f->fmt.pix.pixelformat == ctx->src_fmt.pixelformat))
+ 		return -EBUSY;
+ 
+ 	return cedrus_s_fmt_vid_out_p(cedrus_file2ctx(file), &f->fmt.pix);
+-- 
+2.43.0
+

@@ -1,0 +1,1409 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 9 Oct 2026 03:43:42 +0200
+Subject: media: uapi: add MPEG-4 Part 2, H.263 and Sorenson
+ Spark stateless decoder controls
+
+Add a stateless decoder API for MPEG-4 Part 2 (the Simple and Advanced
+Simple profiles of ISO/IEC 14496-2, which covers the DivX and Xvid
+bitstreams), H.263 and Sorenson Spark.
+
+There is one pixel format and one set of controls per syntax:
+
+- V4L2_PIX_FMT_MPEG4_SLICE ('MG4S') carries one VOP, from its start code,
+  with the V4L2_CID_STATELESS_MPEG4_VOL, _VOP and _QUANTISATION controls.
+
+- V4L2_PIX_FMT_H263_SLICE ('S263') carries one H.263 picture, from its
+  picture start code, with the V4L2_CID_STATELESS_H263_PICTURE control.
+  MPEG-4 VOPs with a short video header are H.263 pictures.
+
+- V4L2_PIX_FMT_SPK_SLICE ('SPKS') is the stateless counterpart of
+  V4L2_PIX_FMT_SPK: the same picture control, with the version of the
+  Sorenson Spark header.
+
+The controls carry the syntax elements the decoding process needs, the
+derived values a stateless decoder cannot compute without keeping state
+across pictures (TRB/TRD of the direct mode, in frames and in fields)
+and the references as capture buffer timestamps. Tools outside of the
+Simple and Advanced Simple profiles (shapes, static sprites, scalability,
+NEWPRED, reduced resolution VOPs, ...) are left out rather than added as
+flags that every driver would have to refuse.
+
+Hardware which cannot parse the video packet headers of MPEG-4 or the
+GOB and slice headers of H.263 gets their location, macroblock number
+and quantiser from the optional V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS
+and V4L2_CID_STATELESS_H263_SLICE_PARAMS dynamic arrays, like the
+V4L2_CID_STATELESS_VC1_SLICE_PARAMS control, so that the kernel never
+parses the bitstream.
+
+Widespread MPEG-4 encoders deviate from the standard in ways the
+bitstream does not reveal; decoding their output as encoded needs to
+reproduce the deviations, which applications detect from the encoder
+version in the user data. V4L2_CID_STATELESS_MPEG4_QUIRKS selects them,
+each with the arithmetic it changes, and its maximum tells applications
+which ones the driver can reproduce, so that they can decode the other
+bitstreams in software.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ .../media/v4l/ext-ctrls-codec-stateless.rst   | 503 ++++++++++++++++++
+ .../media/v4l/pixfmt-compressed.rst           |  50 ++
+ .../media/v4l/videodev2.h.rst.exceptions      |   6 +
+ .../media/v4l/vidioc-g-ext-ctrls.rst          |  24 +
+ .../media/v4l/vidioc-queryctrl.rst            |  36 ++
+ drivers/media/v4l2-core/v4l2-ctrls-core.c     | 245 +++++++++
+ drivers/media/v4l2-core/v4l2-ctrls-defs.c     |  30 ++
+ drivers/media/v4l2-core/v4l2-ioctl.c          |   3 +
+ include/media/v4l2-ctrls.h                    |  12 +
+ include/uapi/linux/v4l2-controls.h            | 231 ++++++++
+ include/uapi/linux/videodev2.h                |  17 +
+ 11 files changed, 1157 insertions(+)
+
+diff --git a/Documentation/userspace-api/media/v4l/ext-ctrls-codec-stateless.rst b/Documentation/userspace-api/media/v4l/ext-ctrls-codec-stateless.rst
+index 2618b222e..7ce03eba5 100644
+--- a/Documentation/userspace-api/media/v4l/ext-ctrls-codec-stateless.rst
++++ b/Documentation/userspace-api/media/v4l/ext-ctrls-codec-stateless.rst
+@@ -5230,3 +5230,506 @@ frame-interlaced picture both elements are equal.
+       - 0x01
+       - ``PIC_HEADER_FLAG`` syntax element: the slice header repeats the picture
+ 	header.
++
++.. _v4l2-codec-stateless-mpeg4:
++
++``V4L2_CID_STATELESS_MPEG4_VOL (struct)``
++    Specifies the video object layer parameters (as extracted from the
++    bitstream) for the associated MPEG-4 Part 2 slice data. This includes the
++    necessary parameters for configuring a stateless hardware decoding
++    pipeline for MPEG-4 Part 2. The bitstream parameters are those of the
++    ``VideoObjectLayer()`` syntax of :ref:`mpeg4part2`. Only the
++    rectangular, 8-bit, 4:2:0 video object layers of the Simple and Advanced
++    Simple profiles are covered.
++
++.. c:type:: v4l2_ctrl_mpeg4_vol
++
++.. cssclass:: longtable
++
++.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
++
++.. flat-table:: struct v4l2_ctrl_mpeg4_vol
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u32
++      - ``flags``
++      - See :ref:`MPEG-4 VOL Flags <mpeg4_vol_flags>`.
++    * - __u16
++      - ``video_object_layer_width``
++      - Width of the VOP in luma samples.
++    * - __u16
++      - ``video_object_layer_height``
++      - Height of the VOP in luma samples.
++    * - __u16
++      - ``vop_time_increment_resolution``
++      - Number of evenly spaced ticks in one second, the unit of ``trb`` and
++	``trd`` of struct :c:type:`v4l2_ctrl_mpeg4_vop`.
++    * - __u8
++      - ``sprite_enable``
++      - ``V4L2_MPEG4_SPRITE_ENABLE_NONE`` (0) or
++	``V4L2_MPEG4_SPRITE_ENABLE_GMC`` (2), the value of the ``sprite_enable``
++	syntax element. Static sprites are not supported.
++    * - __u8
++      - ``no_of_sprite_warping_points``
++      - Number of global motion compensation warping points, 0 to 3. Zero
++	unless ``sprite_enable`` is ``V4L2_MPEG4_SPRITE_ENABLE_GMC``.
++    * - __u8
++      - ``sprite_warping_accuracy``
++      - ``sprite_warping_accuracy`` syntax element, 0 to 3: the trajectories
++	of the warping points are in units of 1 / (2 << ``sprite_warping_accuracy``)
++	luma samples.
++    * - __u8
++      - ``reserved[3]``
++      - Applications and drivers must set this to zero.
++
++.. _mpeg4_vol_flags:
++
++``MPEG-4 VOL Flags``
++
++.. cssclass:: longtable
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - ``V4L2_MPEG4_VOL_FLAG_INTERLACED``
++      - 0x00000001
++      - ``interlaced`` syntax element: the VOPs may use field DCT and field
++	motion compensation.
++    * - ``V4L2_MPEG4_VOL_FLAG_QUANT_TYPE``
++      - 0x00000002
++      - ``quant_type`` syntax element: the second inverse quantisation method,
++	with the matrices of ``V4L2_CID_STATELESS_MPEG4_QUANTISATION``, is used.
++    * - ``V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE``
++      - 0x00000004
++      - ``quarter_sample`` syntax element: the motion vectors have quarter
++	sample accuracy.
++    * - ``V4L2_MPEG4_VOL_FLAG_RESYNC_MARKER_DISABLE``
++      - 0x00000008
++      - ``resync_marker_disable`` syntax element: the VOPs have no video
++	packets.
++    * - ``V4L2_MPEG4_VOL_FLAG_DATA_PARTITIONED``
++      - 0x00000010
++      - ``data_partitioned`` syntax element.
++    * - ``V4L2_MPEG4_VOL_FLAG_REVERSIBLE_VLC``
++      - 0x00000020
++      - ``reversible_vlc`` syntax element.
++
++``V4L2_CID_STATELESS_MPEG4_VOP (struct)``
++    Specifies the video object plane parameters (as extracted from the
++    bitstream) for the associated MPEG-4 Part 2 slice data, as defined by the
++    ``VideoObjectPlane()`` syntax of :ref:`mpeg4part2`.
++
++.. c:type:: v4l2_ctrl_mpeg4_vop
++
++.. cssclass:: longtable
++
++.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
++
++.. flat-table:: struct v4l2_ctrl_mpeg4_vop
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u64
++      - ``backward_ref_ts``
++      - Timestamp of the V4L2 capture buffer to use as backward reference, used
++	with B-VOPs. The timestamp refers to the ``timestamp`` field in
++	struct :c:type:`v4l2_buffer`. Use the :c:func:`v4l2_timeval_to_ns()`
++	function to convert the struct :c:type:`timeval` in struct
++	:c:type:`v4l2_buffer` to a __u64.
++    * - __u64
++      - ``forward_ref_ts``
++      - Timestamp of the V4L2 capture buffer to use as forward reference, used
++	with P-VOPs, S-VOPs and B-VOPs.
++    * - __u32
++      - ``data_bit_offset``
++      - Offset in bits from the first bit of the VOP start code to the first
++	bit of the first macroblock of the VOP, that is, the size in bits of the
++	VOP header.
++    * - __u32
++      - ``flags``
++      - See :ref:`MPEG-4 VOP Flags <mpeg4_vop_flags>`.
++    * - __u32
++      - ``trb``
++      - TRB of B-VOPs: the difference, in ticks of
++	``vop_time_increment_resolution``, between the time of the B-VOP and
++	the time of its forward reference, as used by the direct mode of
++	:ref:`mpeg4part2`.
++    * - __u32
++      - ``trd``
++      - TRD of B-VOPs: the difference, in ticks of
++	``vop_time_increment_resolution``, between the times of the backward and
++	forward references. ``trb`` must be smaller than ``trd``.
++    * - __u16
++      - ``trb_field``
++      - TRB of the field direct mode of interlaced B-VOPs, in field periods,
++	before the adjustment for the field parities of the field direct mode
++	of :ref:`mpeg4part2`: 2 * (round(T(B) / Tframe) - round(T(fwd) / Tframe)),
++	where Tframe is the frame period, the time between the first B-VOP of
++	the video object layer and its forward reference.
++    * - __u16
++      - ``trd_field``
++      - TRD of the field direct mode of interlaced B-VOPs, in field periods:
++	2 * (round(T(bwd) / Tframe) - round(T(fwd) / Tframe)).
++    * - __s16
++      - ``sprite_trajectory_du[V4L2_MPEG4_MAX_GMC_WARPING_POINTS]``
++      - Horizontal trajectories of the warping points of S-VOPs, as decoded by
++	``sprite_trajectory()``, in the units of ``sprite_warping_accuracy``.
++	The elements beyond ``no_of_sprite_warping_points`` must be zero.
++    * - __s16
++      - ``sprite_trajectory_dv[V4L2_MPEG4_MAX_GMC_WARPING_POINTS]``
++      - Vertical trajectories of the warping points of S-VOPs.
++    * - __u8
++      - ``vop_coding_type``
++      - ``vop_coding_type`` syntax element: ``V4L2_MPEG4_VOP_CODING_TYPE_I``
++	(0), ``V4L2_MPEG4_VOP_CODING_TYPE_P`` (1), ``V4L2_MPEG4_VOP_CODING_TYPE_B``
++	(2) or ``V4L2_MPEG4_VOP_CODING_TYPE_S`` (3). S-VOPs require
++	``sprite_enable`` to be ``V4L2_MPEG4_SPRITE_ENABLE_GMC``.
++    * - __u8
++      - ``vop_quant``
++      - ``vop_quant`` syntax element, 1 to 31.
++    * - __u8
++      - ``intra_dc_vlc_thr``
++      - ``intra_dc_vlc_thr`` syntax element, 0 to 7.
++    * - __u8
++      - ``vop_fcode_forward``
++      - ``vop_fcode_forward`` syntax element, 1 to 7. Set to 1 for I-VOPs.
++    * - __u8
++      - ``vop_fcode_backward``
++      - ``vop_fcode_backward`` syntax element, 1 to 7. Set to 1 unless the VOP
++	is a B-VOP.
++    * - __u8
++      - ``backward_ref_vop_coding_type``
++      - Coding type of the backward reference of B-VOPs: I, P or S. Its
++	macroblocks are the co-located macroblocks of the direct mode.
++    * - __u8
++      - ``reserved[2]``
++      - Applications and drivers must set this to zero.
++
++.. _mpeg4_vop_flags:
++
++``MPEG-4 VOP Flags``
++
++.. cssclass:: longtable
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - ``V4L2_MPEG4_VOP_FLAG_ROUNDING_TYPE``
++      - 0x00000001
++      - ``vop_rounding_type`` syntax element of P-VOPs and S-VOPs.
++    * - ``V4L2_MPEG4_VOP_FLAG_TOP_FIELD_FIRST``
++      - 0x00000002
++      - ``top_field_first`` syntax element of interlaced VOPs.
++    * - ``V4L2_MPEG4_VOP_FLAG_ALTERNATE_VERTICAL_SCAN``
++      - 0x00000004
++      - ``alternate_vertical_scan_flag`` syntax element of interlaced VOPs.
++
++``V4L2_CID_STATELESS_MPEG4_QUANTISATION (struct)``
++    Specifies the quantisation matrices of the second inverse quantisation
++    method, the ``intra_quant_mat`` and ``nonintra_quant_mat`` of the
++    ``VideoObjectLayer()`` syntax of :ref:`mpeg4part2`. It is only used with
++    ``V4L2_MPEG4_VOL_FLAG_QUANT_TYPE``. The matrices are always complete:
++    applications fill in the default matrices of the standard when the
++    bitstream does not load them, which are also the default value of the
++    control.
++
++.. c:type:: v4l2_ctrl_mpeg4_quantisation
++
++.. tabularcolumns:: |p{1.2cm}|p{8.0cm}|p{8.1cm}|
++
++.. flat-table:: struct v4l2_ctrl_mpeg4_quantisation
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u8
++      - ``intra_quantiser_matrix[64]``
++      - The quantisation matrix of the intra macroblocks, in zigzag scanning
++	order.
++    * - __u8
++      - ``non_intra_quantiser_matrix[64]``
++      - The quantisation matrix of the non-intra macroblocks, in zigzag
++	scanning order.
++
++``V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS (struct)``
++    Specifies where the video packets of the VOP are located in the
++    associated MPEG-4 Part 2 slice data. This control is a dynamically sized
++    array with one element per segment of the VOP which starts with a header,
++    in bitstream order: the first element describes the segment which starts
++    with the VOP header, the following ones the video packets, which start
++    with a resync marker and a ``video_packet_header()`` of
++    :ref:`mpeg4part2`.
++
++    This control is only exposed by the drivers which need it, because their
++    hardware cannot parse the video packet headers. If it is exposed,
++    applications must set it with every request, also for VOPs without video
++    packets.
++
++.. c:type:: v4l2_ctrl_mpeg4_slice_params
++
++.. cssclass:: longtable
++
++.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
++
++.. flat-table:: struct v4l2_ctrl_mpeg4_slice_params
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u32
++      - ``offset``
++      - Offset in bytes from the beginning of the output buffer to the first
++	byte of the VOP start code or of the resync marker. Zero for the first
++	segment.
++    * - __u32
++      - ``size``
++      - Size in bytes of the segment, including its header.
++    * - __u32
++      - ``data_bit_offset``
++      - Offset in bits from the first bit of the byte at ``offset`` to the
++	first bit of the first macroblock of the segment. For the first segment
++	this is ``data_bit_offset`` of struct :c:type:`v4l2_ctrl_mpeg4_vop`.
++    * - __u16
++      - ``macroblock_number``
++      - Number of the first macroblock of the segment in raster scan order,
++	the ``macroblock_number`` syntax element of the video packet header.
++	Zero for the first segment, then strictly increasing.
++    * - __u8
++      - ``quant_scale``
++      - Quantiser of the first macroblock of the segment: ``vop_quant`` for the
++	first segment, the ``quant_scale`` syntax element of the video packet
++	header for the others.
++    * - __u8
++      - ``reserved``
++      - Applications and drivers must set this to zero.
++
++``V4L2_CID_STATELESS_MPEG4_QUIRKS (bitmask)``
++    Selects the deviations from :ref:`mpeg4part2` of the encoder of the
++    bitstream that the decoder must reproduce to decode it as it was encoded.
++    Several widespread encoders (DivX 4 and 5, early Xvid, early libavcodec)
++    produce such bitstreams, and their deviations cannot be detected from the
++    syntax: applications identify the encoder from the user data of the
++    bitstream. The ``maximum`` of the control is the set of quirks that the
++    driver can reproduce; applications should decode bitstreams which need
++    other quirks in software. The control is optional: drivers which reproduce
++    no quirk need not expose it.
++
++.. _mpeg4_quirks:
++
++``MPEG-4 Quirks``
++
++.. cssclass:: longtable
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - ``V4L2_MPEG4_QUIRK_EDGE_EXACT_SIZE``
++      - 0x00000001
++      - The reference VOPs are extended beyond their edges (for unrestricted
++	motion vectors) from the samples at ``video_object_layer_width`` - 1
++	and ``video_object_layer_height`` - 1, instead of from the last samples
++	of the last macroblock column and row.
++    * - ``V4L2_MPEG4_QUIRK_QPEL_CHROMA``
++      - 0x00000002
++      - In quarter sample VOPs, the chroma vector of a macroblock with one
++	motion vector is derived from the luma vector component ``mv`` as
++	``c = (mv >> 1) | (mv & 1)``, then ``c = (c >> 1) | (c & 1)``, instead
++	of ``c = mv / 2``, then ``c = (c >> 1) | (c & 1)``.
++    * - ``V4L2_MPEG4_QUIRK_QPEL_CHROMA2``
++      - 0x00000004
++      - As ``V4L2_MPEG4_QUIRK_QPEL_CHROMA``, but with the first step
++	``c = (mv >> 1) + t[mv & 7]``, where ``t`` is { 0, 0, 1, 1, 0, 0, 0, 1 }.
++	It takes precedence over ``V4L2_MPEG4_QUIRK_QPEL_CHROMA``.
++    * - ``V4L2_MPEG4_QUIRK_FIELD_HPEL_CHROMA``
++      - 0x00000008
++      - The chroma vectors of field predictions are derived from the half
++	sample luma field vector ``(mvx, mvy)`` as
++	``((mvx >> 1) | (mvx & 1), mvy >> 1)``.
++    * - ``V4L2_MPEG4_QUIRK_DC_NO_CLIP``
++      - 0x00000010
++      - Intra DC coefficients larger than 2047 after the DC prediction are not
++	clipped to 2047.
++    * - ``V4L2_MPEG4_QUIRK_XVID_ILACE``
++      - 0x00000020
++      - In interlaced P-VOPs and S-VOPs, the ``dct_type`` flag is also present
++	in the non-intra macroblocks without coded blocks.
++    * - ``V4L2_MPEG4_QUIRK_GMC_UNSCALED_REF``
++      - 0x00000040
++      - The DivX 5.00 GMC: the sprite reference points are computed without
++	scaling the trajectories, ``i0' = du[0]`` instead of
++	``i0' = (s / 2) * du[0]`` and likewise for the other points and
++	coordinates (``s`` being 2 << ``sprite_warping_accuracy``), and the
++	vector of the GMC macroblocks of a translation-only warp, used to
++	predict the following motion vectors, is rounded towards zero instead
++	of to the nearest.
++
++.. _v4l2-codec-stateless-h263:
++
++``V4L2_CID_STATELESS_H263_PICTURE (struct)``
++    Specifies the picture parameters (as extracted from the bitstream) for the
++    associated H.263 or Sorenson Spark slice data, as defined by section 5.1
++    "Picture layer" of :ref:`h263`. MPEG-4 VOPs with a short video header are
++    H.263 pictures.
++
++.. c:type:: v4l2_ctrl_h263_picture
++
++.. cssclass:: longtable
++
++.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
++
++.. flat-table:: struct v4l2_ctrl_h263_picture
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u64
++      - ``forward_ref_ts``
++      - Timestamp of the V4L2 capture buffer to use as reference, used with P
++	pictures. The timestamp refers to the ``timestamp`` field in
++	struct :c:type:`v4l2_buffer`. Use the :c:func:`v4l2_timeval_to_ns()`
++	function to convert the struct :c:type:`timeval` in struct
++	:c:type:`v4l2_buffer` to a __u64.
++    * - __u32
++      - ``data_bit_offset``
++      - Offset in bits from the first bit of the picture start code to the
++	first bit of the first macroblock (or GOB) of the picture, that is, the
++	size in bits of the picture header.
++    * - __u32
++      - ``flags``
++      - See :ref:`H.263 Picture Flags <h263_picture_flags>`.
++    * - __u16
++      - ``width``
++      - Width of the picture in luma samples.
++    * - __u16
++      - ``height``
++      - Height of the picture in luma samples.
++    * - __u8
++      - ``picture_coding_type``
++      - ``V4L2_H263_PICTURE_CODING_TYPE_I`` (0) or
++	``V4L2_H263_PICTURE_CODING_TYPE_P`` (1).
++    * - __u8
++      - ``pquant``
++      - ``PQUANT`` syntax element, 1 to 31.
++    * - __u8
++      - ``spk_version``
++      - Version of the Sorenson Spark picture header, 0 or 1. It selects the
++	escape coding of the transform coefficients. Must be zero for H.263.
++    * - __u8
++      - ``reserved``
++      - Applications and drivers must set this to zero.
++
++.. _h263_picture_flags:
++
++``H.263 Picture Flags``
++
++.. cssclass:: longtable
++
++.. flat-table::
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - ``V4L2_H263_PICTURE_FLAG_ROUNDING_TYPE``
++      - 0x00000001
++      - ``RTYPE`` syntax element of P pictures with an extended picture type.
++    * - ``V4L2_H263_PICTURE_FLAG_PLUSPTYPE``
++      - 0x00000002
++      - The picture header has an extended picture type (``PLUSPTYPE``),
++	which changes the syntax of the unrestricted motion vector mode.
++    * - ``V4L2_H263_PICTURE_FLAG_UMV``
++      - 0x00000004
++      - Unrestricted Motion Vector mode (Annex D).
++    * - ``V4L2_H263_PICTURE_FLAG_SAC``
++      - 0x00000008
++      - Syntax-based Arithmetic Coding mode (Annex E).
++    * - ``V4L2_H263_PICTURE_FLAG_AP``
++      - 0x00000010
++      - Advanced Prediction mode (Annex F).
++    * - ``V4L2_H263_PICTURE_FLAG_AIC``
++      - 0x00000020
++      - Advanced INTRA Coding mode (Annex I).
++    * - ``V4L2_H263_PICTURE_FLAG_DF``
++      - 0x00000040
++      - Deblocking Filter mode (Annex J).
++    * - ``V4L2_H263_PICTURE_FLAG_SS``
++      - 0x00000080
++      - Slice Structured mode (Annex K).
++    * - ``V4L2_H263_PICTURE_FLAG_SS_RECTANGULAR``
++      - 0x00000100
++      - Rectangular slices submode of the Slice Structured mode.
++    * - ``V4L2_H263_PICTURE_FLAG_SS_ARBITRARY``
++      - 0x00000200
++      - Arbitrary slice ordering submode of the Slice Structured mode.
++    * - ``V4L2_H263_PICTURE_FLAG_ISD``
++      - 0x00000400
++      - Independent Segment Decoding mode (Annex R).
++    * - ``V4L2_H263_PICTURE_FLAG_AIV``
++      - 0x00000800
++      - Alternative INTER VLC mode (Annex S).
++    * - ``V4L2_H263_PICTURE_FLAG_MQ``
++      - 0x00001000
++      - Modified Quantization mode (Annex T).
++    * - ``V4L2_H263_PICTURE_FLAG_RRU``
++      - 0x00002000
++      - Reduced-Resolution Update mode (Annex Q).
++
++``V4L2_CID_STATELESS_H263_SLICE_PARAMS (struct)``
++    Specifies where the segments of the picture which start with a header are
++    located in the associated H.263 or Sorenson Spark slice data. This control
++    is a dynamically sized array with one element per such segment, in
++    bitstream order: the first element describes the segment which starts with
++    the picture header, the following ones the GOBs with a GOB header (section
++    5.2 "Group of Blocks layer" of :ref:`h263`) or the slices of the Slice
++    Structured mode (Annex K). GOBs without a header continue the previous
++    segment.
++
++    This control is only exposed by the drivers which need it, because their
++    hardware cannot parse the GOB and slice headers. If it is exposed,
++    applications must set it with every request.
++
++.. c:type:: v4l2_ctrl_h263_slice_params
++
++.. cssclass:: longtable
++
++.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
++
++.. flat-table:: struct v4l2_ctrl_h263_slice_params
++    :header-rows:  0
++    :stub-columns: 0
++    :widths:       1 1 2
++
++    * - __u32
++      - ``offset``
++      - Offset in bytes from the beginning of the output buffer to the byte
++	which holds the first bit of the picture, GOB or slice start code. The
++	GOB and slice start codes need not be byte aligned. Zero for the first
++	segment.
++    * - __u32
++      - ``size``
++      - Size in bytes of the segment, including its header and the byte which
++	holds the first bit of the next start code, if any.
++    * - __u32
++      - ``data_bit_offset``
++      - Offset in bits from the first bit of the byte at ``offset`` to the
++	first bit of the first macroblock of the segment. For the first segment
++	this is ``data_bit_offset`` of struct :c:type:`v4l2_ctrl_h263_picture`.
++    * - __u16
++      - ``macroblock_number``
++      - Number of the first macroblock of the segment in raster scan order.
++	Zero for the first segment, then strictly increasing.
++    * - __u8
++      - ``quant_scale``
++      - Quantiser of the first macroblock of the segment: ``PQUANT``,
++	``GQUANT`` or ``SQUANT``.
++    * - __u8
++      - ``reserved``
++      - Applications and drivers must set this to zero.
+diff --git a/Documentation/userspace-api/media/v4l/pixfmt-compressed.rst b/Documentation/userspace-api/media/v4l/pixfmt-compressed.rst
+index 2bbbdd400..652ef0fdc 100644
+--- a/Documentation/userspace-api/media/v4l/pixfmt-compressed.rst
++++ b/Documentation/userspace-api/media/v4l/pixfmt-compressed.rst
+@@ -139,6 +139,56 @@ Compressed Formats
+       - ``V4L2_PIX_FMT_XVID``
+       - 'XVID'
+       - Xvid video elementary stream.
++    * .. _V4L2-PIX-FMT-MPEG4-SLICE:
++
++      - ``V4L2_PIX_FMT_MPEG4_SLICE``
++      - 'MG4S'
++      - MPEG-4 Part 2 parsed VOP data, for the Simple and Advanced Simple
++	profiles of :ref:`mpeg4part2` (including the bitstreams of the DivX and
++	Xvid encoders). This format is adapted for stateless video decoders that
++	implement an MPEG-4 Part 2 pipeline with the :ref:`stateless_decoder`.
++	Metadata associated with the VOP to decode is required to be passed
++	through the ``V4L2_CID_STATELESS_MPEG4_VOL`` and
++	``V4L2_CID_STATELESS_MPEG4_VOP`` controls, and the quantisation matrices
++	through the ``V4L2_CID_STATELESS_MPEG4_QUANTISATION`` control when the
++	VOL uses them. Drivers may additionally require the location of the
++	video packets to be passed through the
++	``V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS`` control, and may reproduce
++	encoder deviations selected by the ``V4L2_CID_STATELESS_MPEG4_QUIRKS``
++	control. See the :ref:`associated Codec Control IDs
++	<v4l2-codec-stateless-mpeg4>`. Exactly one output and one capture buffer
++	must be provided for use with this pixel format. The output buffer must
++	contain exactly one coded VOP, starting with its VOP start code and
++	including all its video packets, without the video object layer, group
++	of VOP or user data headers which may precede it. VOPs which are not
++	coded (``vop_coded`` equal to 0) are not queued. The several VOPs that
++	some encoders pack in one container frame are queued separately.
++    * .. _V4L2-PIX-FMT-H263-SLICE:
++
++      - ``V4L2_PIX_FMT_H263_SLICE``
++      - 'S263'
++      - H.263 parsed picture data, as extracted from the :ref:`h263`
++	bitstream. This format is adapted for stateless video decoders that
++	implement an H.263 pipeline with the :ref:`stateless_decoder`. Metadata
++	associated with the picture to decode is required to be passed through
++	the ``V4L2_CID_STATELESS_H263_PICTURE`` control. Drivers may additionally
++	require the location of the GOBs and slices to be passed through the
++	``V4L2_CID_STATELESS_H263_SLICE_PARAMS`` control. See the
++	:ref:`associated Codec Control IDs <v4l2-codec-stateless-h263>`. Exactly
++	one output and one capture buffer must be provided for use with this
++	pixel format. The output buffer must contain exactly one coded picture,
++	starting with its picture start code. MPEG-4 VOPs with a short video
++	header use this format.
++    * .. _V4L2-PIX-FMT-SPK-SLICE:
++
++      - ``V4L2_PIX_FMT_SPK_SLICE``
++      - 'SPKS'
++      - Sorenson Spark parsed picture data, the stateless counterpart of
++	``V4L2_PIX_FMT_SPK``. It follows the rules of
++	``V4L2_PIX_FMT_H263_SLICE``, with the picture header and the escape
++	coding of Sorenson Spark, whose version is given by the
++	``spk_version`` field of the ``V4L2_CID_STATELESS_H263_PICTURE``
++	control.
+     * .. _V4L2-PIX-FMT-VC1-ANNEX-G:
+ 
+       - ``V4L2_PIX_FMT_VC1_ANNEX_G``
+diff --git a/Documentation/userspace-api/media/v4l/videodev2.h.rst.exceptions b/Documentation/userspace-api/media/v4l/videodev2.h.rst.exceptions
+index e09959f5b..02a8ac574 100644
+--- a/Documentation/userspace-api/media/v4l/videodev2.h.rst.exceptions
++++ b/Documentation/userspace-api/media/v4l/videodev2.h.rst.exceptions
+@@ -177,6 +177,12 @@ replace symbol V4L2_CTRL_TYPE_VC1_ENTRYPOINT_HEADER :c:type:`V4L.v4l2_ctrl_type`
+ replace symbol V4L2_CTRL_TYPE_VC1_PICTURE_LAYER :c:type:`V4L.v4l2_ctrl_type`
+ replace symbol V4L2_CTRL_TYPE_VC1_BITPLANES :c:type:`V4L.v4l2_ctrl_type`
+ replace symbol V4L2_CTRL_TYPE_VC1_SLICE_PARAMS :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_MPEG4_VOL :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_MPEG4_VOP :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_MPEG4_QUANTISATION :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_H263_PICTURE :c:type:`V4L.v4l2_ctrl_type`
++replace symbol V4L2_CTRL_TYPE_H263_SLICE_PARAMS :c:type:`V4L.v4l2_ctrl_type`
+ 
+ # V4L2 capability defines
+ replace define V4L2_CAP_VIDEO_CAPTURE device-capabilities
+diff --git a/Documentation/userspace-api/media/v4l/vidioc-g-ext-ctrls.rst b/Documentation/userspace-api/media/v4l/vidioc-g-ext-ctrls.rst
+index e07ade098..752f0a8c6 100644
+--- a/Documentation/userspace-api/media/v4l/vidioc-g-ext-ctrls.rst
++++ b/Documentation/userspace-api/media/v4l/vidioc-g-ext-ctrls.rst
+@@ -322,6 +322,30 @@ still cause this situation.
+       - ``p_vc1_slice_params``
+       - A pointer to a struct :c:type:`v4l2_ctrl_vc1_slice_params`. Valid if this control is
+         of type ``V4L2_CTRL_TYPE_VC1_SLICE_PARAMS``.
++    * - struct :c:type:`v4l2_ctrl_mpeg4_vol` *
++      - ``p_mpeg4_vol``
++      - A pointer to a struct :c:type:`v4l2_ctrl_mpeg4_vol`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_MPEG4_VOL``.
++    * - struct :c:type:`v4l2_ctrl_mpeg4_vop` *
++      - ``p_mpeg4_vop``
++      - A pointer to a struct :c:type:`v4l2_ctrl_mpeg4_vop`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_MPEG4_VOP``.
++    * - struct :c:type:`v4l2_ctrl_mpeg4_quantisation` *
++      - ``p_mpeg4_quantisation``
++      - A pointer to a struct :c:type:`v4l2_ctrl_mpeg4_quantisation`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_MPEG4_QUANTISATION``.
++    * - struct :c:type:`v4l2_ctrl_mpeg4_slice_params` *
++      - ``p_mpeg4_slice_params``
++      - A pointer to a struct :c:type:`v4l2_ctrl_mpeg4_slice_params`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS``.
++    * - struct :c:type:`v4l2_ctrl_h263_picture` *
++      - ``p_h263_picture``
++      - A pointer to a struct :c:type:`v4l2_ctrl_h263_picture`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_H263_PICTURE``.
++    * - struct :c:type:`v4l2_ctrl_h263_slice_params` *
++      - ``p_h263_slice_params``
++      - A pointer to a struct :c:type:`v4l2_ctrl_h263_slice_params`. Valid if this control is
++        of type ``V4L2_CTRL_TYPE_H263_SLICE_PARAMS``.
+     * - struct :c:type:`v4l2_ctrl_hdr10_cll_info` *
+       - ``p_hdr10_cll_info``
+       - A pointer to a struct :c:type:`v4l2_ctrl_hdr10_cll_info`. Valid if this control is
+diff --git a/Documentation/userspace-api/media/v4l/vidioc-queryctrl.rst b/Documentation/userspace-api/media/v4l/vidioc-queryctrl.rst
+index bace99edd..e1e9c2217 100644
+--- a/Documentation/userspace-api/media/v4l/vidioc-queryctrl.rst
++++ b/Documentation/userspace-api/media/v4l/vidioc-queryctrl.rst
+@@ -609,6 +609,42 @@ See also the examples in :ref:`control`.
+       - n/a
+       - A struct :c:type:`v4l2_ctrl_vc1_slice_params`, containing VC-1
+ 	slice parameters for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_MPEG4_VOL``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_mpeg4_vol`, containing MPEG-4 Part 2
++	video object layer parameters for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_MPEG4_VOP``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_mpeg4_vop`, containing MPEG-4 Part 2
++	video object plane parameters for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_MPEG4_QUANTISATION``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_mpeg4_quantisation`, containing MPEG-4 Part 2
++	quantisation matrices for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_mpeg4_slice_params`, containing MPEG-4 Part 2
++	video packet parameters for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_H263_PICTURE``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_h263_picture`, containing H.263 or
++	Sorenson Spark picture parameters for stateless video decoders.
++    * - ``V4L2_CTRL_TYPE_H263_SLICE_PARAMS``
++      - n/a
++      - n/a
++      - n/a
++      - A struct :c:type:`v4l2_ctrl_h263_slice_params`, containing H.263 or
++	Sorenson Spark GOB and slice parameters for stateless video decoders.
+ 
+ .. raw:: latex
+ 
+diff --git a/drivers/media/v4l2-core/v4l2-ctrls-core.c b/drivers/media/v4l2-core/v4l2-ctrls-core.c
+index 80209bb3d..e5608a629 100644
+--- a/drivers/media/v4l2-core/v4l2-ctrls-core.c
++++ b/drivers/media/v4l2-core/v4l2-ctrls-core.c
+@@ -104,6 +104,29 @@ static const u8 mpeg2_intra_quant_matrix[64] = {
+ 	46, 46, 56, 56, 58, 69, 69, 83
+ };
+ 
++/* Default MPEG-4 Part 2 quantisation matrices, in zigzag order */
++static const u8 mpeg4_intra_quant_matrix[64] = {
++	 8, 17, 17, 20, 18, 18, 19, 19,
++	21, 21, 22, 22, 22, 21, 21, 23,
++	23, 23, 23, 23, 23, 25, 24, 24,
++	24, 24, 25, 25, 27, 27, 26, 26,
++	26, 26, 26, 27, 28, 28, 28, 28,
++	28, 28, 28, 30, 30, 30, 30, 30,
++	30, 32, 32, 32, 32, 32, 35, 35,
++	35, 35, 38, 38, 38, 41, 41, 45,
++};
++
++static const u8 mpeg4_non_intra_quant_matrix[64] = {
++	16, 17, 17, 18, 18, 18, 19, 19,
++	19, 19, 20, 20, 20, 20, 20, 21,
++	21, 21, 21, 21, 21, 22, 22, 22,
++	22, 22, 22, 22, 23, 23, 23, 23,
++	23, 23, 23, 23, 24, 24, 24, 25,
++	24, 24, 24, 25, 26, 26, 26, 26,
++	25, 27, 27, 27, 27, 27, 28, 28,
++	28, 28, 30, 30, 30, 31, 31, 33,
++};
++
+ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
+ 			      union v4l2_ctrl_ptr ptr)
+ {
+@@ -117,6 +140,12 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
+ 	struct v4l2_ctrl_av1_sequence *p_av1_sequence;
+ 	struct v4l2_ctrl_hevc_sps *p_hevc_sps;
+ 	struct v4l2_ctrl_vc1_sequence *p_vc1_sequence;
++	struct v4l2_ctrl_mpeg4_vol *p_mpeg4_vol;
++	struct v4l2_ctrl_mpeg4_vop *p_mpeg4_vop;
++	struct v4l2_ctrl_mpeg4_slice_params *p_mpeg4_slice;
++	struct v4l2_ctrl_mpeg4_quantisation *p_mpeg4_quant;
++	struct v4l2_ctrl_h263_picture *p_h263_picture;
++	struct v4l2_ctrl_h263_slice_params *p_h263_slice;
+ 	void *p = ptr.p + idx * ctrl->elem_size;
+ 
+ 	if (ctrl->p_def.p_const)
+@@ -186,6 +215,48 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
+ 		p_vc1_sequence->profile = V4L2_VC1_PROFILE_SIMPLE;
+ 		p_vc1_sequence->flags = V4L2_VC1_SEQUENCE_FLAG_RES_RTM;
+ 		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOL:
++		p_mpeg4_vol = p;
++
++		/* QCIF, the smallest standard picture size */
++		p_mpeg4_vol->video_object_layer_width = 176;
++		p_mpeg4_vol->video_object_layer_height = 144;
++		p_mpeg4_vol->vop_time_increment_resolution = 30000;
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOP:
++		p_mpeg4_vop = p;
++
++		p_mpeg4_vop->vop_quant = 1;
++		p_mpeg4_vop->vop_fcode_forward = 1;
++		p_mpeg4_vop->vop_fcode_backward = 1;
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_QUANTISATION:
++		p_mpeg4_quant = p;
++
++		memcpy(p_mpeg4_quant->intra_quantiser_matrix,
++		       mpeg4_intra_quant_matrix,
++		       ARRAY_SIZE(mpeg4_intra_quant_matrix));
++		memcpy(p_mpeg4_quant->non_intra_quantiser_matrix,
++		       mpeg4_non_intra_quant_matrix,
++		       ARRAY_SIZE(mpeg4_non_intra_quant_matrix));
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS:
++		p_mpeg4_slice = p;
++
++		p_mpeg4_slice->quant_scale = 1;
++		break;
++	case V4L2_CTRL_TYPE_H263_PICTURE:
++		p_h263_picture = p;
++
++		p_h263_picture->width = 176;
++		p_h263_picture->height = 144;
++		p_h263_picture->pquant = 1;
++		break;
++	case V4L2_CTRL_TYPE_H263_SLICE_PARAMS:
++		p_h263_slice = p;
++
++		p_h263_slice->quant_scale = 1;
++		break;
+ 	case V4L2_CTRL_TYPE_FWHT_PARAMS:
+ 		p_fwht_params = p;
+ 		p_fwht_params->version = V4L2_FWHT_VERSION;
+@@ -487,6 +558,24 @@ void v4l2_ctrl_type_op_log(const struct v4l2_ctrl *ctrl)
+ 	case V4L2_CTRL_TYPE_VC1_SLICE_PARAMS:
+ 		pr_cont("VC1_SLICE_PARAMS");
+ 		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOL:
++		pr_cont("MPEG4_VOL");
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOP:
++		pr_cont("MPEG4_VOP");
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_QUANTISATION:
++		pr_cont("MPEG4_QUANTISATION");
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS:
++		pr_cont("MPEG4_SLICE_PARAMS");
++		break;
++	case V4L2_CTRL_TYPE_H263_PICTURE:
++		pr_cont("H263_PICTURE");
++		break;
++	case V4L2_CTRL_TYPE_H263_SLICE_PARAMS:
++		pr_cont("H263_SLICE_PARAMS");
++		break;
+ 	case V4L2_CTRL_TYPE_RECT:
+ 		pr_cont("(%d,%d)/%ux%u",
+ 			ptr.p_rect->left, ptr.p_rect->top,
+@@ -1206,6 +1295,131 @@ validate_vc1_slice_params(struct v4l2_ctrl_vc1_slice_params *slice)
+ 	return 0;
+ }
+ 
++static int validate_mpeg4_vol(struct v4l2_ctrl_mpeg4_vol *vol)
++{
++	if (vol->flags & ~(V4L2_MPEG4_VOL_FLAG_INTERLACED |
++			   V4L2_MPEG4_VOL_FLAG_QUANT_TYPE |
++			   V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE |
++			   V4L2_MPEG4_VOL_FLAG_RESYNC_MARKER_DISABLE |
++			   V4L2_MPEG4_VOL_FLAG_DATA_PARTITIONED |
++			   V4L2_MPEG4_VOL_FLAG_REVERSIBLE_VLC))
++		return -EINVAL;
++
++	/* Reversible VLCs are only used with data partitioning. */
++	if ((vol->flags & V4L2_MPEG4_VOL_FLAG_REVERSIBLE_VLC) &&
++	    !(vol->flags & V4L2_MPEG4_VOL_FLAG_DATA_PARTITIONED))
++		return -EINVAL;
++
++	switch (vol->sprite_enable) {
++	case V4L2_MPEG4_SPRITE_ENABLE_NONE:
++		if (vol->no_of_sprite_warping_points ||
++		    vol->sprite_warping_accuracy)
++			return -EINVAL;
++		break;
++	case V4L2_MPEG4_SPRITE_ENABLE_GMC:
++		if (vol->no_of_sprite_warping_points >
++		    V4L2_MPEG4_MAX_GMC_WARPING_POINTS ||
++		    vol->sprite_warping_accuracy > 3)
++			return -EINVAL;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	if (!vol->video_object_layer_width || !vol->video_object_layer_height)
++		return -EINVAL;
++
++	zero_reserved(*vol);
++
++	return 0;
++}
++
++static int validate_mpeg4_vop(struct v4l2_ctrl_mpeg4_vop *vop)
++{
++	if (vop->vop_coding_type > V4L2_MPEG4_VOP_CODING_TYPE_S)
++		return -EINVAL;
++
++	if (vop->flags & ~(V4L2_MPEG4_VOP_FLAG_ROUNDING_TYPE |
++			   V4L2_MPEG4_VOP_FLAG_TOP_FIELD_FIRST |
++			   V4L2_MPEG4_VOP_FLAG_ALTERNATE_VERTICAL_SCAN))
++		return -EINVAL;
++
++	if (vop->vop_quant < 1 || vop->vop_quant > 31 ||
++	    vop->intra_dc_vlc_thr > 7 ||
++	    vop->vop_fcode_forward < 1 || vop->vop_fcode_forward > 7 ||
++	    vop->vop_fcode_backward < 1 || vop->vop_fcode_backward > 7)
++		return -EINVAL;
++
++	/* A B-VOP is never a reference. */
++	if (vop->backward_ref_vop_coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B ||
++	    vop->backward_ref_vop_coding_type > V4L2_MPEG4_VOP_CODING_TYPE_S)
++		return -EINVAL;
++
++	if (vop->vop_coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B &&
++	    (!vop->trd || vop->trb >= vop->trd))
++		return -EINVAL;
++
++	zero_reserved(*vop);
++
++	return 0;
++}
++
++static int validate_mpeg4_slice_params(struct v4l2_ctrl_mpeg4_slice_params *slice)
++{
++	if (slice->quant_scale < 1 || slice->quant_scale > 31)
++		return -EINVAL;
++
++	zero_reserved(*slice);
++
++	return 0;
++}
++
++static int validate_h263_picture(struct v4l2_ctrl_h263_picture *pic)
++{
++	if (pic->picture_coding_type > V4L2_H263_PICTURE_CODING_TYPE_P)
++		return -EINVAL;
++
++	if (pic->flags & ~(V4L2_H263_PICTURE_FLAG_ROUNDING_TYPE |
++			   V4L2_H263_PICTURE_FLAG_PLUSPTYPE |
++			   V4L2_H263_PICTURE_FLAG_UMV |
++			   V4L2_H263_PICTURE_FLAG_SAC |
++			   V4L2_H263_PICTURE_FLAG_AP |
++			   V4L2_H263_PICTURE_FLAG_AIC |
++			   V4L2_H263_PICTURE_FLAG_DF |
++			   V4L2_H263_PICTURE_FLAG_SS |
++			   V4L2_H263_PICTURE_FLAG_SS_RECTANGULAR |
++			   V4L2_H263_PICTURE_FLAG_SS_ARBITRARY |
++			   V4L2_H263_PICTURE_FLAG_ISD |
++			   V4L2_H263_PICTURE_FLAG_AIV |
++			   V4L2_H263_PICTURE_FLAG_MQ |
++			   V4L2_H263_PICTURE_FLAG_RRU))
++		return -EINVAL;
++
++	/* The slice structured submodes need Annex K. */
++	if ((pic->flags & (V4L2_H263_PICTURE_FLAG_SS_RECTANGULAR |
++			   V4L2_H263_PICTURE_FLAG_SS_ARBITRARY)) &&
++	    !(pic->flags & V4L2_H263_PICTURE_FLAG_SS))
++		return -EINVAL;
++
++	if (pic->pquant < 1 || pic->pquant > 31 || pic->spk_version > 1 ||
++	    !pic->width || !pic->height)
++		return -EINVAL;
++
++	zero_reserved(*pic);
++
++	return 0;
++}
++
++static int validate_h263_slice_params(struct v4l2_ctrl_h263_slice_params *slice)
++{
++	if (slice->quant_scale < 1 || slice->quant_scale > 31)
++		return -EINVAL;
++
++	zero_reserved(*slice);
++
++	return 0;
++}
++
+ /*
+  * Compound controls validation requires setting unused fields/flags to zero
+  * in order to properly detect unchanged controls with v4l2_ctrl_type_op_equal's
+@@ -1661,6 +1875,19 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
+ 	case V4L2_CTRL_TYPE_VC1_SLICE_PARAMS:
+ 		return validate_vc1_slice_params(p);
+ 
++	case V4L2_CTRL_TYPE_MPEG4_VOL:
++		return validate_mpeg4_vol(p);
++	case V4L2_CTRL_TYPE_MPEG4_VOP:
++		return validate_mpeg4_vop(p);
++	case V4L2_CTRL_TYPE_MPEG4_QUANTISATION:
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS:
++		return validate_mpeg4_slice_params(p);
++	case V4L2_CTRL_TYPE_H263_PICTURE:
++		return validate_h263_picture(p);
++	case V4L2_CTRL_TYPE_H263_SLICE_PARAMS:
++		return validate_h263_slice_params(p);
++
+ 	case V4L2_CTRL_TYPE_AREA:
+ 		area = p;
+ 		if (!area->width || !area->height)
+@@ -2399,6 +2626,24 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
+ 	case V4L2_CTRL_TYPE_VC1_SLICE_PARAMS:
+ 		elem_size = sizeof(struct v4l2_ctrl_vc1_slice_params);
+ 		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOL:
++		elem_size = sizeof(struct v4l2_ctrl_mpeg4_vol);
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_VOP:
++		elem_size = sizeof(struct v4l2_ctrl_mpeg4_vop);
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_QUANTISATION:
++		elem_size = sizeof(struct v4l2_ctrl_mpeg4_quantisation);
++		break;
++	case V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS:
++		elem_size = sizeof(struct v4l2_ctrl_mpeg4_slice_params);
++		break;
++	case V4L2_CTRL_TYPE_H263_PICTURE:
++		elem_size = sizeof(struct v4l2_ctrl_h263_picture);
++		break;
++	case V4L2_CTRL_TYPE_H263_SLICE_PARAMS:
++		elem_size = sizeof(struct v4l2_ctrl_h263_slice_params);
++		break;
+ 	case V4L2_CTRL_TYPE_AREA:
+ 		elem_size = sizeof(struct v4l2_area);
+ 		break;
+diff --git a/drivers/media/v4l2-core/v4l2-ctrls-defs.c b/drivers/media/v4l2-core/v4l2-ctrls-defs.c
+index 846df1daa..8dc9494a4 100644
+--- a/drivers/media/v4l2-core/v4l2-ctrls-defs.c
++++ b/drivers/media/v4l2-core/v4l2-ctrls-defs.c
+@@ -1270,6 +1270,13 @@ const char *v4l2_ctrl_get_name(u32 id)
+ 	case V4L2_CID_STATELESS_VC1_PICTURE_LAYER:		return "VC-1 Picture Layer";
+ 	case V4L2_CID_STATELESS_VC1_BITPLANES:			return "VC-1 Bitplanes";
+ 	case V4L2_CID_STATELESS_VC1_SLICE_PARAMS:		return "VC-1 Slice Parameters";
++	case V4L2_CID_STATELESS_MPEG4_VOL:			return "MPEG-4 Video Object Layer";
++	case V4L2_CID_STATELESS_MPEG4_VOP:			return "MPEG-4 Video Object Plane";
++	case V4L2_CID_STATELESS_MPEG4_QUANTISATION:		return "MPEG-4 Quantisation Matrices";
++	case V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS:		return "MPEG-4 Slice Parameters";
++	case V4L2_CID_STATELESS_MPEG4_QUIRKS:			return "MPEG-4 Encoder Quirks";
++	case V4L2_CID_STATELESS_H263_PICTURE:			return "H.263 Picture";
++	case V4L2_CID_STATELESS_H263_SLICE_PARAMS:		return "H.263 Slice Parameters";
+ 
+ 	/* Colorimetry controls */
+ 	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
+@@ -1658,6 +1665,29 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
+ 		*type = V4L2_CTRL_TYPE_VC1_SLICE_PARAMS;
+ 		*flags |= V4L2_CTRL_FLAG_DYNAMIC_ARRAY;
+ 		break;
++	case V4L2_CID_STATELESS_MPEG4_VOL:
++		*type = V4L2_CTRL_TYPE_MPEG4_VOL;
++		break;
++	case V4L2_CID_STATELESS_MPEG4_VOP:
++		*type = V4L2_CTRL_TYPE_MPEG4_VOP;
++		break;
++	case V4L2_CID_STATELESS_MPEG4_QUANTISATION:
++		*type = V4L2_CTRL_TYPE_MPEG4_QUANTISATION;
++		break;
++	case V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS:
++		*type = V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS;
++		*flags |= V4L2_CTRL_FLAG_DYNAMIC_ARRAY;
++		break;
++	case V4L2_CID_STATELESS_MPEG4_QUIRKS:
++		*type = V4L2_CTRL_TYPE_BITMASK;
++		break;
++	case V4L2_CID_STATELESS_H263_PICTURE:
++		*type = V4L2_CTRL_TYPE_H263_PICTURE;
++		break;
++	case V4L2_CID_STATELESS_H263_SLICE_PARAMS:
++		*type = V4L2_CTRL_TYPE_H263_SLICE_PARAMS;
++		*flags |= V4L2_CTRL_FLAG_DYNAMIC_ARRAY;
++		break;
+ 	case V4L2_CID_UNIT_CELL_SIZE:
+ 		*type = V4L2_CTRL_TYPE_AREA;
+ 		*flags |= V4L2_CTRL_FLAG_READ_ONLY;
+diff --git a/drivers/media/v4l2-core/v4l2-ioctl.c b/drivers/media/v4l2-core/v4l2-ioctl.c
+index eec509870..672afd24d 100644
+--- a/drivers/media/v4l2-core/v4l2-ioctl.c
++++ b/drivers/media/v4l2-core/v4l2-ioctl.c
+@@ -1514,6 +1514,9 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
+ 		case V4L2_PIX_FMT_VC1_ANNEX_G:	descr = "VC-1 (SMPTE 412M Annex G)"; break;
+ 		case V4L2_PIX_FMT_VC1_ANNEX_L:	descr = "VC-1 (SMPTE 412M Annex L)"; break;
+ 		case V4L2_PIX_FMT_VC1_SLICE:	descr = "VC-1 Parsed Slice Data"; break;
++		case V4L2_PIX_FMT_MPEG4_SLICE:	descr = "MPEG-4 Part 2 Parsed VOP Data"; break;
++		case V4L2_PIX_FMT_H263_SLICE:	descr = "H.263 Parsed Picture Data"; break;
++		case V4L2_PIX_FMT_SPK_SLICE:	descr = "Sorenson Spark Parsed Data"; break;
+ 		case V4L2_PIX_FMT_VP8:		descr = "VP8"; break;
+ 		case V4L2_PIX_FMT_VP8_FRAME:    descr = "VP8 Frame"; break;
+ 		case V4L2_PIX_FMT_VP9:		descr = "VP9"; break;
+diff --git a/include/media/v4l2-ctrls.h b/include/media/v4l2-ctrls.h
+index 0b0aeafa9..f88c9bd05 100644
+--- a/include/media/v4l2-ctrls.h
++++ b/include/media/v4l2-ctrls.h
+@@ -61,6 +61,12 @@ struct video_device;
+  * @p_vc1_picture_layer:	Pointer to a VC-1 picture layer structure.
+  * @p_vc1_bitplanes:		Pointer to a VC-1 bitplanes structure.
+  * @p_vc1_slice_params:	Pointer to a VC-1 slice parameters structure.
++ * @p_mpeg4_vol:		Pointer to an MPEG-4 video object layer structure.
++ * @p_mpeg4_vop:		Pointer to an MPEG-4 video object plane structure.
++ * @p_mpeg4_quantisation:	Pointer to an MPEG-4 quantisation structure.
++ * @p_mpeg4_slice_params:	Pointer to an MPEG-4 slice parameters structure.
++ * @p_h263_picture:		Pointer to an H.263 picture structure.
++ * @p_h263_slice_params:	Pointer to an H.263 slice parameters structure.
+  * @p_rect:			Pointer to a rectangle.
+  * @p:				Pointer to a compound value.
+  * @p_const:			Pointer to a constant compound value.
+@@ -100,6 +106,12 @@ union v4l2_ctrl_ptr {
+ 	struct v4l2_ctrl_vc1_picture_layer *p_vc1_picture_layer;
+ 	struct v4l2_ctrl_vc1_bitplanes *p_vc1_bitplanes;
+ 	struct v4l2_ctrl_vc1_slice_params *p_vc1_slice_params;
++	struct v4l2_ctrl_mpeg4_vol *p_mpeg4_vol;
++	struct v4l2_ctrl_mpeg4_vop *p_mpeg4_vop;
++	struct v4l2_ctrl_mpeg4_quantisation *p_mpeg4_quantisation;
++	struct v4l2_ctrl_mpeg4_slice_params *p_mpeg4_slice_params;
++	struct v4l2_ctrl_h263_picture *p_h263_picture;
++	struct v4l2_ctrl_h263_slice_params *p_h263_slice_params;
+ 	struct v4l2_rect *p_rect;
+ 	void *p;
+ 	const void *p_const;
+diff --git a/include/uapi/linux/v4l2-controls.h b/include/uapi/linux/v4l2-controls.h
+index 7bc1b29ea..032076c3f 100644
+--- a/include/uapi/linux/v4l2-controls.h
++++ b/include/uapi/linux/v4l2-controls.h
+@@ -4063,6 +4063,237 @@ struct v4l2_ctrl_vc1_slice_params {
+ 	__u8	reserved[3];
+ };
+ 
++/* Stateless MPEG-4 Part 2 controls */
++
++#define V4L2_MPEG4_VOL_FLAG_INTERLACED			0x01
++#define V4L2_MPEG4_VOL_FLAG_QUANT_TYPE			0x02
++#define V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE		0x04
++#define V4L2_MPEG4_VOL_FLAG_RESYNC_MARKER_DISABLE	0x08
++#define V4L2_MPEG4_VOL_FLAG_DATA_PARTITIONED		0x10
++#define V4L2_MPEG4_VOL_FLAG_REVERSIBLE_VLC		0x20
++
++#define V4L2_MPEG4_SPRITE_ENABLE_NONE			0
++#define V4L2_MPEG4_SPRITE_ENABLE_GMC			2
++
++#define V4L2_MPEG4_MAX_GMC_WARPING_POINTS		3
++
++#define V4L2_CID_STATELESS_MPEG4_VOL	(V4L2_CID_CODEC_STATELESS_BASE + 700)
++/**
++ * struct v4l2_ctrl_mpeg4_vol - MPEG-4 video object layer
++ *
++ * All the members, except the flags, carry the syntax elements of the same
++ * name of the video_object_layer() syntax of ISO/IEC 14496-2. Only the
++ * rectangular, 8-bit, 4:2:0 video object layers of the Simple and Advanced
++ * Simple profiles are covered.
++ *
++ * @flags: see V4L2_MPEG4_VOL_FLAG_{}.
++ * @video_object_layer_width: width of the VOP in luma samples.
++ * @video_object_layer_height: height of the VOP in luma samples.
++ * @vop_time_increment_resolution: number of ticks in one second.
++ * @sprite_enable: V4L2_MPEG4_SPRITE_ENABLE_NONE or
++ *	V4L2_MPEG4_SPRITE_ENABLE_GMC; static sprites are not supported.
++ * @no_of_sprite_warping_points: number of GMC warping points, 0 to 3.
++ * @sprite_warping_accuracy: GMC warping accuracy code, 0 to 3.
++ * @reserved: padding field. Should be zeroed by applications.
++ */
++struct v4l2_ctrl_mpeg4_vol {
++	__u32	flags;
++	__u16	video_object_layer_width;
++	__u16	video_object_layer_height;
++	__u16	vop_time_increment_resolution;
++	__u8	sprite_enable;
++	__u8	no_of_sprite_warping_points;
++	__u8	sprite_warping_accuracy;
++	__u8	reserved[3];
++};
++
++#define V4L2_MPEG4_VOP_CODING_TYPE_I			0
++#define V4L2_MPEG4_VOP_CODING_TYPE_P			1
++#define V4L2_MPEG4_VOP_CODING_TYPE_B			2
++#define V4L2_MPEG4_VOP_CODING_TYPE_S			3
++
++#define V4L2_MPEG4_VOP_FLAG_ROUNDING_TYPE		0x01
++#define V4L2_MPEG4_VOP_FLAG_TOP_FIELD_FIRST		0x02
++#define V4L2_MPEG4_VOP_FLAG_ALTERNATE_VERTICAL_SCAN	0x04
++
++#define V4L2_CID_STATELESS_MPEG4_VOP	(V4L2_CID_CODEC_STATELESS_BASE + 701)
++/**
++ * struct v4l2_ctrl_mpeg4_vop - MPEG-4 video object plane
++ *
++ * @backward_ref_ts: timestamp of the V4L2 capture buffer to use as backward
++ *	reference, used with B-VOPs.
++ * @forward_ref_ts: timestamp of the V4L2 capture buffer to use as forward
++ *	reference, used with P-VOPs, S-VOPs and B-VOPs.
++ * @data_bit_offset: offset in bits from the first bit of the VOP start code
++ *	to the first macroblock.
++ * @flags: see V4L2_MPEG4_VOP_FLAG_{}.
++ * @trb: TRB of B-VOPs, in ticks of vop_time_increment_resolution.
++ * @trd: TRD of B-VOPs, in ticks of vop_time_increment_resolution.
++ * @trb_field: TRB of field B-VOP macroblocks, in field periods.
++ * @trd_field: TRD of field B-VOP macroblocks, in field periods.
++ * @sprite_trajectory_du: horizontal GMC warping point trajectories of
++ *	S-VOPs, as decoded from sprite_trajectory().
++ * @sprite_trajectory_dv: vertical GMC warping point trajectories of S-VOPs.
++ * @vop_coding_type: see V4L2_MPEG4_VOP_CODING_TYPE_{}.
++ * @vop_quant: vop_quant syntax element, 1 to 31.
++ * @intra_dc_vlc_thr: intra_dc_vlc_thr syntax element, 0 to 7.
++ * @vop_fcode_forward: vop_fcode_forward syntax element, 1 to 7.
++ * @vop_fcode_backward: vop_fcode_backward syntax element, 1 to 7.
++ * @backward_ref_vop_coding_type: coding type of the backward reference of
++ *	B-VOPs, V4L2_MPEG4_VOP_CODING_TYPE_I, P or S.
++ * @reserved: padding field. Should be zeroed by applications.
++ */
++struct v4l2_ctrl_mpeg4_vop {
++	__u64	backward_ref_ts;
++	__u64	forward_ref_ts;
++	__u32	data_bit_offset;
++	__u32	flags;
++	__u32	trb;
++	__u32	trd;
++	__u16	trb_field;
++	__u16	trd_field;
++	__s16	sprite_trajectory_du[V4L2_MPEG4_MAX_GMC_WARPING_POINTS];
++	__s16	sprite_trajectory_dv[V4L2_MPEG4_MAX_GMC_WARPING_POINTS];
++	__u8	vop_coding_type;
++	__u8	vop_quant;
++	__u8	intra_dc_vlc_thr;
++	__u8	vop_fcode_forward;
++	__u8	vop_fcode_backward;
++	__u8	backward_ref_vop_coding_type;
++	__u8	reserved[2];
++};
++
++#define V4L2_CID_STATELESS_MPEG4_QUANTISATION	(V4L2_CID_CODEC_STATELESS_BASE + 702)
++/**
++ * struct v4l2_ctrl_mpeg4_quantisation - MPEG-4 quantisation matrices
++ *
++ * The matrices are in zigzag scan order and always complete. They default
++ * to the default matrices of ISO/IEC 14496-2. Used with
++ * V4L2_MPEG4_VOL_FLAG_QUANT_TYPE.
++ *
++ * @intra_quantiser_matrix: intra quantisation matrix.
++ * @non_intra_quantiser_matrix: non-intra quantisation matrix.
++ */
++struct v4l2_ctrl_mpeg4_quantisation {
++	__u8	intra_quantiser_matrix[64];
++	__u8	non_intra_quantiser_matrix[64];
++};
++
++#define V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS	(V4L2_CID_CODEC_STATELESS_BASE + 703)
++/**
++ * struct v4l2_ctrl_mpeg4_slice_params - MPEG-4 video packet
++ *
++ * One element per segment of the VOP that starts with a header: the first
++ * one starts with the VOP header, the following ones with a video packet
++ * header (resync marker).
++ *
++ * @offset: offset in bytes from the start of the OUTPUT buffer to the
++ *	first byte of the VOP start code or of the resync marker.
++ * @size: size in bytes of the segment, header included.
++ * @data_bit_offset: offset in bits from the first bit of the segment to its
++ *	first macroblock.
++ * @macroblock_number: number of the first macroblock of the segment, in
++ *	raster scan order.
++ * @quant_scale: quantiser scale of the first macroblock of the segment:
++ *	vop_quant for the first segment, quant_scale for video packets.
++ * @reserved: padding field. Should be zeroed by applications.
++ */
++struct v4l2_ctrl_mpeg4_slice_params {
++	__u32	offset;
++	__u32	size;
++	__u32	data_bit_offset;
++	__u16	macroblock_number;
++	__u8	quant_scale;
++	__u8	reserved;
++};
++
++#define V4L2_MPEG4_QUIRK_EDGE_EXACT_SIZE		0x01
++#define V4L2_MPEG4_QUIRK_QPEL_CHROMA			0x02
++#define V4L2_MPEG4_QUIRK_QPEL_CHROMA2			0x04
++#define V4L2_MPEG4_QUIRK_FIELD_HPEL_CHROMA		0x08
++#define V4L2_MPEG4_QUIRK_DC_NO_CLIP			0x10
++#define V4L2_MPEG4_QUIRK_XVID_ILACE			0x20
++#define V4L2_MPEG4_QUIRK_GMC_UNSCALED_REF		0x40
++
++#define V4L2_CID_STATELESS_MPEG4_QUIRKS		(V4L2_CID_CODEC_STATELESS_BASE + 704)
++
++/* Stateless H.263 and Sorenson Spark controls */
++
++#define V4L2_H263_PICTURE_CODING_TYPE_I			0
++#define V4L2_H263_PICTURE_CODING_TYPE_P			1
++
++#define V4L2_H263_PICTURE_FLAG_ROUNDING_TYPE		0x0001
++#define V4L2_H263_PICTURE_FLAG_PLUSPTYPE		0x0002
++#define V4L2_H263_PICTURE_FLAG_UMV			0x0004
++#define V4L2_H263_PICTURE_FLAG_SAC			0x0008
++#define V4L2_H263_PICTURE_FLAG_AP			0x0010
++#define V4L2_H263_PICTURE_FLAG_AIC			0x0020
++#define V4L2_H263_PICTURE_FLAG_DF			0x0040
++#define V4L2_H263_PICTURE_FLAG_SS			0x0080
++#define V4L2_H263_PICTURE_FLAG_SS_RECTANGULAR		0x0100
++#define V4L2_H263_PICTURE_FLAG_SS_ARBITRARY		0x0200
++#define V4L2_H263_PICTURE_FLAG_ISD			0x0400
++#define V4L2_H263_PICTURE_FLAG_AIV			0x0800
++#define V4L2_H263_PICTURE_FLAG_MQ			0x1000
++#define V4L2_H263_PICTURE_FLAG_RRU			0x2000
++
++#define V4L2_CID_STATELESS_H263_PICTURE	(V4L2_CID_CODEC_STATELESS_BASE + 800)
++/**
++ * struct v4l2_ctrl_h263_picture - H.263 or Sorenson Spark picture
++ *
++ * @forward_ref_ts: timestamp of the V4L2 capture buffer to use as reference,
++ *	used with P pictures.
++ * @data_bit_offset: offset in bits from the first bit of the picture start
++ *	code to the first macroblock.
++ * @flags: see V4L2_H263_PICTURE_FLAG_{}.
++ * @width: width of the picture in luma samples.
++ * @height: height of the picture in luma samples.
++ * @picture_coding_type: see V4L2_H263_PICTURE_CODING_TYPE_{}.
++ * @pquant: PQUANT syntax element, 1 to 31.
++ * @spk_version: version of the Sorenson Spark bitstream, 0 or 1. Zero for
++ *	H.263.
++ * @reserved: padding field. Should be zeroed by applications.
++ */
++struct v4l2_ctrl_h263_picture {
++	__u64	forward_ref_ts;
++	__u32	data_bit_offset;
++	__u32	flags;
++	__u16	width;
++	__u16	height;
++	__u8	picture_coding_type;
++	__u8	pquant;
++	__u8	spk_version;
++	__u8	reserved;
++};
++
++#define V4L2_CID_STATELESS_H263_SLICE_PARAMS	(V4L2_CID_CODEC_STATELESS_BASE + 801)
++/**
++ * struct v4l2_ctrl_h263_slice_params - H.263 GOB or slice
++ *
++ * One element per segment of the picture that starts with a header: the
++ * first one starts with the picture header, the following ones with a GOB
++ * or slice header. GOBs without a header continue the previous segment.
++ *
++ * @offset: offset in bytes from the start of the OUTPUT buffer to the byte
++ *	which holds the first bit of the picture, GOB or slice start code.
++ * @size: size in bytes of the segment, header included.
++ * @data_bit_offset: offset in bits from the first bit of the byte at
++ *	@offset to the first macroblock of the segment.
++ * @macroblock_number: number of the first macroblock of the segment, in
++ *	raster scan order.
++ * @quant_scale: quantiser of the first macroblock of the segment: PQUANT,
++ *	GQUANT or SQUANT.
++ * @reserved: padding field. Should be zeroed by applications.
++ */
++struct v4l2_ctrl_h263_slice_params {
++	__u32	offset;
++	__u32	size;
++	__u32	data_bit_offset;
++	__u16	macroblock_number;
++	__u8	quant_scale;
++	__u8	reserved;
++};
++
+ /* MPEG-compression definitions kept for backwards compatibility */
+ #ifndef __KERNEL__
+ #define V4L2_CTRL_CLASS_MPEG            V4L2_CTRL_CLASS_CODEC
+diff --git a/include/uapi/linux/videodev2.h b/include/uapi/linux/videodev2.h
+index 002772d40..0a35da683 100644
+--- a/include/uapi/linux/videodev2.h
++++ b/include/uapi/linux/videodev2.h
+@@ -780,6 +780,9 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_HEVC_SLICE v4l2_fourcc('S', '2', '6', '5') /* HEVC parsed slices */
+ #define V4L2_PIX_FMT_AV1_FRAME v4l2_fourcc('A', 'V', '1', 'F') /* AV1 parsed frame */
+ #define V4L2_PIX_FMT_VC1_SLICE v4l2_fourcc('S', 'V', 'C', '1') /* VC-1 parsed slice data */
++#define V4L2_PIX_FMT_MPEG4_SLICE v4l2_fourcc('M', 'G', '4', 'S') /* MPEG-4 Part 2 parsed VOP data */
++#define V4L2_PIX_FMT_H263_SLICE v4l2_fourcc('S', '2', '6', '3') /* H.263 parsed picture data */
++#define V4L2_PIX_FMT_SPK_SLICE v4l2_fourcc('S', 'P', 'K', 'S') /* Sorenson Spark parsed picture data */
+ #define V4L2_PIX_FMT_AV1      v4l2_fourcc('A', 'V', '0', '1') /* AV1 */
+ #define V4L2_PIX_FMT_SPK      v4l2_fourcc('S', 'P', 'K', '0') /* Sorenson Spark */
+ #define V4L2_PIX_FMT_RV30     v4l2_fourcc('R', 'V', '3', '0') /* RealVideo 8 */
+@@ -1923,6 +1926,12 @@ struct v4l2_ext_control {
+ 		struct v4l2_ctrl_vc1_picture_layer __user *p_vc1_picture_layer;
+ 		struct v4l2_ctrl_vc1_bitplanes __user *p_vc1_bitplanes;
+ 		struct v4l2_ctrl_vc1_slice_params __user *p_vc1_slice_params;
++		struct v4l2_ctrl_mpeg4_vol __user *p_mpeg4_vol;
++		struct v4l2_ctrl_mpeg4_vop __user *p_mpeg4_vop;
++		struct v4l2_ctrl_mpeg4_quantisation __user *p_mpeg4_quantisation;
++		struct v4l2_ctrl_mpeg4_slice_params __user *p_mpeg4_slice_params;
++		struct v4l2_ctrl_h263_picture __user *p_h263_picture;
++		struct v4l2_ctrl_h263_slice_params __user *p_h263_slice_params;
+ 		struct v4l2_ctrl_hdr10_cll_info __user *p_hdr10_cll_info;
+ 		struct v4l2_ctrl_hdr10_mastering_display __user *p_hdr10_mastering_display;
+ 		void __user *ptr;
+@@ -2014,6 +2023,14 @@ enum v4l2_ctrl_type {
+ 	V4L2_CTRL_TYPE_VC1_PICTURE_LAYER	= 0x0292,
+ 	V4L2_CTRL_TYPE_VC1_BITPLANES		= 0x0293,
+ 	V4L2_CTRL_TYPE_VC1_SLICE_PARAMS		= 0x0294,
++
++	V4L2_CTRL_TYPE_MPEG4_VOL		= 0x02a0,
++	V4L2_CTRL_TYPE_MPEG4_VOP		= 0x02a1,
++	V4L2_CTRL_TYPE_MPEG4_QUANTISATION	= 0x02a2,
++	V4L2_CTRL_TYPE_MPEG4_SLICE_PARAMS	= 0x02a3,
++
++	V4L2_CTRL_TYPE_H263_PICTURE		= 0x02b0,
++	V4L2_CTRL_TYPE_H263_SLICE_PARAMS	= 0x02b1,
+ };
+ 
+ /*  Used in the VIDIOC_QUERYCTRL ioctl for querying controls */
+-- 
+Armbian
+
