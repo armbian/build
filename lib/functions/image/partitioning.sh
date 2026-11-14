@@ -157,9 +157,29 @@ function prepare_partitions() {
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		sdsize=$FIXED_IMAGE_SIZE
-		# basic sanity check
-		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs && $sdsize -lt $rootfs_size ]]; then
-			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
+		# basic sanity check: the partitions must fit. With nfs, /boot takes the
+		# rest of the image. btrfs compresses the rootfs.
+		local needed=$((OFFSET + UEFISIZE))
+		[[ -n $biospart ]] && needed=$((needed + BIOSSIZE))
+		[[ $ROOTFS_TYPE != nfs ]] && needed=$((needed + BOOTSIZE))
+		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs ]]; then
+			# The files of the EFI and /boot partitions are not on root. Each must fit its partition.
+			local efi_files=0 boot_files=0 efi_dir="${UEFI_MOUNT_POINT:-}"
+			if [[ -n $uefipart && -n $efi_dir && -d "${SDCARD}${efi_dir}" ]]; then
+				efi_files=$(du --apparent-size -sm "${SDCARD}${efi_dir}" | cut -f1)
+				((efi_files <= UEFISIZE)) || exit_with_error "EFI partition is too small" "${efi_dir}: ${efi_files} MiB of files, UEFISIZE=${UEFISIZE} MiB"
+			fi
+			if [[ -n $bootpart && -d "${SDCARD}/boot" ]]; then
+				boot_files=$(du --apparent-size -sm "${SDCARD}/boot" | cut -f1)
+				# An EFI partition inside /boot (/boot/efi) is counted once.
+				[[ $efi_dir == /boot/* ]] && boot_files=$((boot_files - efi_files))
+				((boot_files <= BOOTSIZE)) || exit_with_error "/boot partition is too small" "${boot_files} MiB of files, BOOTSIZE=${BOOTSIZE} MiB"
+			fi
+			local root_size=$((rootfs_size - efi_files - boot_files))
+			needed=$((needed + root_size))
+		fi
+		if [[ $sdsize -lt $needed ]]; then
+			exit_with_error "User defined image size is too small" "FIXED_IMAGE_SIZE=$sdsize MiB, needs at least $needed MiB (OFFSET=$OFFSET BIOSSIZE=$BIOSSIZE UEFISIZE=$UEFISIZE BOOTSIZE=$BOOTSIZE)"
 		fi
 	else
 		local imagesize=$(($rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
