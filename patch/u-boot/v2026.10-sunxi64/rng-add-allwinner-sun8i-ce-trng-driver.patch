@@ -1,7 +1,7 @@
 From: Arun Iyengar <aiyengar1990@gmail.com>
 Subject: [PATCH] rng: add Allwinner Crypto Engine (sun8i-ce) TRNG driver
 
-The Crypto Engine of the H6/H616/H618 contains a true random number
+The Crypto Engine of the H616/H618 contains a true random number
 generator, exposed like the engine's other algorithms through a task
 descriptor (Linux drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c:
 algorithm 0x1c on these "V2" engines, length in bytes, 8-bit error field
@@ -14,26 +14,28 @@ ram/trng clocks and the reset, programs the H616 module clock to
 PLL_PERI0(2X)/4 = 300 MHz (the rate Linux uses; the sunxi CCU driver has
 no set_rate) exactly like the pending sun8i-ce AES/hash series, then for
 each read queues a TRNG task on flow 3 and polls the flow's completion
-bit. Addresses are word addresses on the H616. With DM_RNG enabled the
-generic booti/bootm path injects kaslr-seed (and rng-seed with
-BOARD_RNG_SEED through the weak board_rng_seed()) automatically.
+bit. Addresses are word addresses on the H616. The manual describes no
+way to abort a task, so after a failed run the engine is reset before
+the buffer is freed (the vendor driver resets it on a timeout). With
+DM_RNG enabled the generic booti/bootm path injects kaslr-seed (and
+rng-seed with BOARD_RNG_SEED through the weak board_rng_seed())
+automatically.
 
 Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
 ---
 diff -ruN a/drivers/rng/Kconfig b/drivers/rng/Kconfig
 --- a/drivers/rng/Kconfig
 +++ b/drivers/rng/Kconfig
-@@ -140,4 +140,14 @@
+@@ -140,4 +140,13 @@
  	  case the LDFW (Loadable Firmware) has to be loaded first, as it
  	  actually implements TRNG SMC calls.
  
 +config RNG_SUN8I_CE
 +	bool "Allwinner Crypto Engine (sun8i-ce) TRNG"
 +	depends on DM_RNG && ARCH_SUNXI
-+	default y
 +	help
 +	  Enable the true random number generator of the Allwinner Crypto
-+	  Engine found in the H6 and H616/H618 SoCs. The TRNG is driven
++	  Engine found in the H616/H618 SoCs. The TRNG is driven
 +	  through a task descriptor like the other engine algorithms; the
 +	  driver uses it to provide /chosen/kaslr-seed and rng-seed to Linux.
 +
@@ -49,7 +51,7 @@ diff -ruN a/drivers/rng/Makefile b/drivers/rng/Makefile
 diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 --- /dev/null
 +++ b/drivers/rng/sun8i_ce_rng.c
-@@ -0,0 +1,300 @@
+@@ -0,0 +1,295 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Allwinner Crypto Engine (sun8i-ce) true random number generator
@@ -143,7 +145,7 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +
 +struct sun8i_ce_rng_variant {
 +	bool word_addresses;
-+	u32 mod_clk_cfg;	/* 0: leave the CCU mod clock register alone */
++	u32 mod_clk_cfg;
 +};
 +
 +struct sun8i_ce_rng_priv {
@@ -228,6 +230,12 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +	}
 +
 +out:
++	/*
++	 * No way to abort a task is documented: reset the engine so that it
++	 * can no longer write to buf or read the task once they are reused.
++	 */
++	if (ret)
++		reset_reset_bulk(&priv->resets, 10);
 +	clrbits_le32(priv->base + CE_ICR, flow_bit);
 +	invalidate_dcache_range((ulong)buf, (ulong)buf + len);
 +
@@ -249,12 +257,6 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +		return -ENOMEM;
 +
 +	ret = sun8i_ce_rng_run(priv, buf, todo);
-+	/*
-+	 * On a timeout the engine can still own buf and write to it later.
-+	 * Leak the buffer instead of returning it to the heap.
-+	 */
-+	if (ret == -ETIMEDOUT)
-+		return ret;
 +	if (!ret)
 +		memcpy(data, buf, len);
 +
@@ -326,17 +328,12 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +	.read = sun8i_ce_rng_read,
 +};
 +
-+static const struct sun8i_ce_rng_variant sun50i_h6_variant = {
-+};
-+
 +static const struct sun8i_ce_rng_variant sun50i_h616_variant = {
 +	.word_addresses = true,
 +	.mod_clk_cfg = SUN50I_H616_CCU_CE_CLK_CFG,
 +};
 +
 +static const struct udevice_id sun8i_ce_rng_ids[] = {
-+	{ .compatible = "allwinner,sun50i-h6-crypto",
-+	  .data = (ulong)&sun50i_h6_variant },
 +	{ .compatible = "allwinner,sun50i-h616-crypto",
 +	  .data = (ulong)&sun50i_h616_variant },
 +	{ }
