@@ -147,6 +147,18 @@ function post_umount_final_image__750_cryptroot_cleanup() {
 
 function cleanup_cryptroot() {
 	[[ -n $cryptroot_hold_fd ]] && exec {cryptroot_hold_fd}<&- && unset cryptroot_hold_fd
-	cryptsetup luksClose "${CRYPTROOT_MAPPER}" 2>&1
-	display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
+	if cryptsetup close "${CRYPTROOT_MAPPER}" 2>&1; then
+		display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
+		return 0
+	fi
+	# Child processes can inherit the hold fd. The kernel removes the mapping when the last holder exits.
+	declare dm_node holders="" fd pid
+	dm_node="$(readlink -f "/dev/mapper/${CRYPTROOT_MAPPER}")"
+	for fd in /proc/[0-9]*/fd/*; do
+		[[ "$(readlink "$fd" 2> /dev/null)" == "$dm_node" ]] || continue
+		pid="${fd#/proc/}" && pid="${pid%%/*}"
+		holders+="${pid}:$(cat "/proc/${pid}/comm" 2> /dev/null) "
+	done
+	display_alert "Cryptroot busy, deferred removal of ${CRYPTROOT_MAPPER}" "holders: ${holders:-unknown}" "wrn"
+	cryptsetup close --deferred "${CRYPTROOT_MAPPER}" 2>&1 || true
 }
