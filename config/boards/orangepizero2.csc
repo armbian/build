@@ -12,3 +12,13 @@ KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 
 enable_extension "uwe5622-allwinner"
+
+# SPI NOR: same image, offset 0; $2 is /dev/mtdblockN
+function write_uboot_platform_mtd() {
+	local img="$1/u-boot-sunxi-with-spl.bin" mtd="${2/mtdblock/mtd}"
+	if command -v flashcp > /dev/null && [[ -c $mtd ]]; then
+		flashcp -v "$img" "$mtd"
+	else
+		dd if="$img" of="$2" conv=fsync,notrunc status=none
+	fi
+}
