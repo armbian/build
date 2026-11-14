@@ -25,4 +25,9 @@ their pins.
 NOR's `mtdN` from `cat /proc/mtd`, then, with the installed board package
 `linux-u-boot-orangepizero2-<branch>`:
 `flashcp -v /usr/lib/linux-u-boot-<branch>-orangepizero2/u-boot-sunxi-with-spl.bin /dev/mtdN`.
-`flash_erase /dev/mtdN 0 0` blanks it again.
+`flash_erase /dev/mtdN 0 0` blanks it again, including the saved environment.
+
+The U-Boot environment lives in the same NOR at 0xf0000 (64 KiB) for SD and SPI
+boots. flashcp of the image above only erases the blocks the image covers, so a
+saved environment survives it; `env default -a; saveenv` in U-Boot resets it.
+`fw_printenv`/`fw_setenv` use `/etc/fw_env.config` from the board's BSP package.
