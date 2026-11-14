@@ -299,9 +299,12 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	fi
 	# The BSP ships 55-bsp-default.conf after the distro defaults.
 	# It provides linux-sysctl-defaults without replacing the distro package.
+	# Provides, Conflicts and Replaces armbian-bsp-cli: one BSP at a time. apt then
+	# swaps the BSP of another branch (current -> edge) without file clashes.
 	cat <<- EOF >> "${control_file_new}"
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}${EXTRA_BSPDEPS:+, ${EXTRA_BSPDEPS}}
-		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Conflicts: armbian-bsp-cli
+		Replaces: zram-config, armbian-bsp-cli, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Provides: armbian-bsp-cli, linux-sysctl-defaults
 	EOF
@@ -483,7 +486,9 @@ function board_side_bsp_cli_postinst_base() {
 	# ARMBIAN_PRETTY_NAME is now set in armbian-base-files.
 
 	# Force ramlog to be enabled if it exists. @TODO: why?
-	[[ -f /etc/lib/systemd/system/armbian-ramlog.service ]] && systemctl --no-reload enable armbian-ramlog.service
+	[[ -f /lib/systemd/system/armbian-ramlog.service ]] && systemctl --no-reload enable armbian-ramlog.service
+	# The armbian-live-patch extension ships this unit. postrm disables it on a BSP swap.
+	[[ -f /etc/systemd/system/armbian-live-patch.service ]] && systemctl --no-reload enable armbian-live-patch.service
 
 	# check if it was disabled in config and disable in new service
 	if [[ -n "$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]]; then
