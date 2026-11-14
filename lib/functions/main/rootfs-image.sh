@@ -8,6 +8,11 @@
 # https://github.com/armbian/build/
 
 function build_rootfs_and_image() {
+	# Directories in the image must not be group-writable. The build-wide umask 002 is for host directories.
+	declare build_umask
+	build_umask="$(umask)"
+	umask 022
+
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_ENVIRONMENT:-cli} ${DESKTOP_TIER:-none} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
 	# get a basic rootfs, either from cache or from scratch
@@ -93,6 +98,8 @@ function build_rootfs_and_image() {
 	# ------------------------------------ UP HERE IT's 'rootfs' stuff -------------------------------
 
 	#------------------------------------ DOWN HERE IT's 'image' stuff -------------------------------
+
+	umask "${build_umask}" # the image file is host output
 
 	LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
 	LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
