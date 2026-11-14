@@ -128,7 +128,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-nanopc-t6-mmc-frequency.dtbo \
 	rockchip-rk3588-odroidm2-weather-board-zero.dtbo \
 	rockchip-rk3588-odroidm2-display-vu8s.dtbo \
-	rockchip-rk3588-orangepi-5-ap6275p.dtbo
+	rockchip-rk3588-orangepi-5-ap6275p.dtbo \
+	rockchip-rk3588-orangepi-5-ultra-ap6611s.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr \
