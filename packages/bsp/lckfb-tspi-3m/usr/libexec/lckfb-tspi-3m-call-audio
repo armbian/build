@@ -1,0 +1,129 @@
+#!/usr/bin/python3 -u
+# Connect the 4G module's call audio to the default speaker and microphone
+# while a phone call is active, and disconnect it afterwards.
+#
+# ModemManager reports calls on D-Bus; the module's audio is a USB sound
+# card (see lckfb-tspi-3m-modem-voice). Two pw-loopback processes carry
+# downlink (module -> speaker) and uplink (microphone -> module) only
+# during a call, so the microphone is not held open the rest of the time.
+import json, signal, subprocess
+from gi.repository import Gio, GLib
+
+MM = 'org.freedesktop.ModemManager1'
+CALL_STATE_ACTIVE = 4
+active, loops = set(), []
+retry = 0
+
+def modem_nodes():
+    src = sink = None
+    try:
+        objs = json.loads(subprocess.run(['pw-dump'], capture_output=True, text=True, timeout=5).stdout)
+    except Exception:
+        return None, None
+    for o in objs:
+        p = (o.get('info') or {}).get('props') or {}
+        n, c = p.get('node.name', ''), p.get('media.class', '')
+        if 'usb-Quectel' in n and c == 'Audio/Source':
+            src = n
+        elif 'usb-Quectel' in n and c == 'Audio/Sink':
+            sink = n
+    return src, sink
+
+def retry_start():
+    global retry
+    retry = 0
+    start()
+    return False
+
+def start():
+    global retry
+    if loops or not active or retry:
+        return
+    src, sink = modem_nodes()
+    if not src or not sink:
+        # pw-dump can fail, and the module's sound card can appear a moment
+        # after the call does. No further signal arrives for a call that
+        # simply stays active, so look again.
+        print('call active, but no modem audio device found; retrying')
+        retry = GLib.timeout_add_seconds(2, retry_start)
+        return
+    loops.append(subprocess.Popen(['pw-loopback', '-n', 'call-downlink',
+        '--capture-props', 'target.object=%s node.passive=true' % src]))
+    loops.append(subprocess.Popen(['pw-loopback', '-n', 'call-uplink',
+        '--playback-props', 'target.object=%s' % sink]))
+    print('call audio connected')
+
+def stop():
+    global retry
+    if retry:
+        GLib.source_remove(retry)
+        retry = 0
+    if not loops:
+        return
+    while loops:
+        p = loops.pop()
+        p.terminate()
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    print('call audio disconnected')
+
+def update(path, state):
+    if state == CALL_STATE_ACTIVE:
+        active.add(path)
+    else:
+        active.discard(path)
+    start() if active else stop()
+
+def on_signal(conn, sender, path, iface, name, params):
+    if name == 'PropertiesChanged':
+        ifc, changed, _ = params.unpack()
+        if ifc == MM + '.Call' and 'State' in changed:
+            update(path, changed['State'])
+    elif name == 'StateChanged' and iface == MM + '.Call':
+        update(path, params.unpack()[1])
+    elif name == 'InterfacesRemoved':
+        update(params.unpack()[0], 0)
+
+def on_owner(conn, sender, path, iface, name, params):
+    # ModemManager went away (stopped or crashed). It sends no call signals
+    # on the way out, so drop what it told us; otherwise the loopbacks, the
+    # microphone uplink among them, stay up with nothing to end them.
+    if params.unpack()[2] == '':
+        active.clear()
+        stop()
+
+def existing_calls():
+    # Signals only report changes. A call that is already active when this
+    # service starts or restarts has to be asked for.
+    def call(path, iface, method, args, ret):
+        return bus.call_sync(MM, path, iface, method, args, GLib.VariantType(ret),
+                             Gio.DBusCallFlags.NO_AUTO_START, 3000, None).unpack()[0]
+    try:
+        objs = call('/org/freedesktop/ModemManager1',
+                    'org.freedesktop.DBus.ObjectManager', 'GetManagedObjects',
+                    None, '(a{oa{sa{sv}}})')
+    except GLib.Error:
+        return        # ModemManager is not running
+    for modem, ifaces in objs.items():
+        if MM + '.Modem.Voice' not in ifaces:
+            continue
+        try:
+            for path in call(modem, MM + '.Modem.Voice', 'ListCalls', None, '(ao)'):
+                state = call(path, 'org.freedesktop.DBus.Properties', 'Get',
+                             GLib.Variant('(ss)', (MM + '.Call', 'State')), '(v)')
+                update(path, state)
+        except GLib.Error as e:
+            print('could not read existing calls on %s: %s' % (modem, e.message))
+
+bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+for sig in ('PropertiesChanged', 'StateChanged', 'InterfacesRemoved'):
+    bus.signal_subscribe(MM, None, sig, None, None, Gio.DBusSignalFlags.NONE, on_signal)
+bus.signal_subscribe('org.freedesktop.DBus', 'org.freedesktop.DBus', 'NameOwnerChanged',
+                     '/org/freedesktop/DBus', MM, Gio.DBusSignalFlags.NONE, on_owner)
+existing_calls()
+loop = GLib.MainLoop()
+for s in (signal.SIGTERM, signal.SIGINT):
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, s, lambda: (stop(), loop.quit()))
+loop.run()
