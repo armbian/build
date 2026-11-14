@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @description Installs the NVIDIA proprietary driver and builds its kernel module via DKMS, blacklisting `nouveau`. Auto-detects the highest `nvidia-dkms-<N>` in the chroot's apt index (or uses `NVIDIA_DRIVER_VERSION`/the Debian `nvidia-dkms` metapackage), forces `INSTALL_HEADERS=yes`, and ships an `armbian-nvidia-autodetect` service that disables the driver on GPU-less hosts. Skipped on minimal images and on kernels without a working headers package.
+# @description Installs the NVIDIA proprietary driver and builds its kernel module via DKMS, blacklisting `nouveau`. Auto-detects the highest `nvidia-dkms-<N>` in the chroot's apt index (or uses `NVIDIA_DRIVER_VERSION`/Debian `nvidia-kernel-dkms`), forces `INSTALL_HEADERS=yes`, and ships an `armbian-nvidia-autodetect` service: on GPU-less hosts it blacklists the driver at boot and removes it at the next shutdown. Skipped on minimal images and on kernels without a working headers package.
 
 function extension_finish_config__build_nvidia_kernel_module() {
 	# Deny on minimal CLI images
@@ -24,13 +24,14 @@ function extension_finish_config__build_nvidia_kernel_module() {
 	# post_install hook below asks apt (inside the chroot, after apt
 	# sources are wired up) which nvidia-dkms-<N> is actually
 	# available for the target distribution/release and picks the
-	# highest one. Debian-style unversioned `nvidia-dkms` is the
-	# fall-back when no numbered variants exist (Debian bookworm,
-	# trixie). Set NVIDIA_DRIVER_VERSION via env or config to pin.
+	# highest one. Debian `nvidia-kernel-dkms` is the fall-back when no
+	# numbered variants exist (Debian bookworm, trixie). Set NVIDIA_DRIVER_VERSION via env or config to pin.
 	display_alert "Forcing INSTALL_HEADERS=yes" "${EXTENSION}" "debug"
 }
 
-function post_install_kernel_debs__build_nvidia_kernel_module() {
+# Runs after the build enables the Armbian repository (image-late): nvidia-open
+# comes from it. Earlier hooks see only the distribution repositories.
+function post_repo_customize_image__build_nvidia_kernel_module() {
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 
 	# Pre-ship the modprobe blacklist BEFORE installing nvidia packages.
@@ -51,14 +52,16 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	EOF
 
 	# Resolve which nvidia-dkms / nvidia-driver package(s) to install.
-	# Three cases:
+	# Four cases:
 	#   1. Operator pinned NVIDIA_DRIVER_VERSION (env/config) → trust it.
-	#   2. Auto-detect: highest `nvidia-dkms-<N>` in the chroot's apt
+	#   2. `nvidia-open`: the latest driver from the NVIDIA repository,
+	#      mirrored into the Armbian repository (armbian/external).
+	#   3. Auto-detect: highest `nvidia-dkms-<N>` in the chroot's apt
 	#      index. This is the common Ubuntu shape — 535, 550, 560,
 	#      580, … depending on release and snapshot.
-	#   3. Fall through to the unversioned Debian metapackage
-	#      `nvidia-dkms` when no numeric variants exist.
-	# If none of the three resolve, skip with a warning rather than
+	#   4. Fall through to Debian `nvidia-kernel-dkms` when no numeric
+	#      variants exist.
+	# If none of them resolve, skip with a warning rather than
 	# blowing the build up with an opaque "package not found".
 	local nvidia_dkms_pkg nvidia_driver_pkg
 	if [[ -n "${NVIDIA_DRIVER_VERSION:-}" ]]; then
@@ -82,21 +85,28 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		# no numbered nvidia-dkms-N packages (Debian / fall-through
 		# case). Under the framework's outer set -e the substitution
 		# would abort the build before we get to test $latest, making
-		# case-3 below unreachable. `|| true` keeps the substitution
+		# the cases below unreachable. `|| true` keeps the substitution
 		# successful with $latest empty so the fall-through fires.
 		latest=$(chroot_sdcard "apt-cache pkgnames 'nvidia-dkms-' 2>/dev/null \
 			| grep -E '^nvidia-dkms-[0-9]+\$' \
 			| sed 's/nvidia-dkms-//' \
 			| sort -nr | head -1 || true")
-		if [[ -n "$latest" ]]; then
+		if chroot_sdcard "apt-cache pkgnames nvidia-open 2>/dev/null | grep -qx nvidia-open"; then
+			# One package pulls the driver and the open kernel module.
+			# Turing and newer only. Older GPUs are not supported: the user
+			# installs a legacy driver (board-instructions/uefi-x86.md).
+			nvidia_dkms_pkg="nvidia-open"
+			display_alert "Using nvidia-open from the Armbian repository" "${DISTRIBUTION}/${RELEASE}" "info"
+		elif [[ -n "$latest" ]]; then
 			NVIDIA_DRIVER_VERSION="$latest"
 			nvidia_dkms_pkg="nvidia-dkms-${NVIDIA_DRIVER_VERSION}"
 			nvidia_driver_pkg="nvidia-driver-${NVIDIA_DRIVER_VERSION}"
 			display_alert "Auto-detected nvidia-dkms for ${DISTRIBUTION}/${RELEASE}" "${NVIDIA_DRIVER_VERSION}" "info"
-		elif chroot_sdcard "apt-cache pkgnames nvidia-dkms 2>/dev/null | grep -qx nvidia-dkms"; then
-			nvidia_dkms_pkg="nvidia-dkms"
+		elif chroot_sdcard "apt-cache pkgnames nvidia-kernel-dkms 2>/dev/null | grep -qx nvidia-kernel-dkms"; then
+			# Debian (non-free): one driver branch per release, no numbered packages.
+			nvidia_dkms_pkg="nvidia-kernel-dkms"
 			nvidia_driver_pkg="nvidia-driver"
-			display_alert "Using unversioned nvidia-dkms metapackage" "${DISTRIBUTION}/${RELEASE}" "info"
+			display_alert "Using Debian nvidia-kernel-dkms" "${DISTRIBUTION}/${RELEASE}" "info"
 		else
 			# Detection failed. Dump enough state to diagnose without
 			# needing to re-enter the chroot manually.
@@ -125,7 +135,7 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	# chroot_sdcard_apt_get_install() -> chroot_sdcard_apt_get() -> chroot_sdcard() -> run_host_command_logged_raw()
 	# it handles bash-specific quoting issues, apt proxies, logging, and errors.
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
-	chroot_sdcard_apt_get_install "${nvidia_dkms_pkg}" "${nvidia_driver_pkg}"
+	chroot_sdcard_apt_get_install "${nvidia_dkms_pkg}" ${nvidia_driver_pkg:+"${nvidia_driver_pkg}"}
 }
 
 # Hook docs (lib/functions/rootfs/distro-agnostic.sh): post_install_kernel_debs
@@ -140,27 +150,12 @@ function post_family_tweaks__build_nvidia_kernel_module_autodetect() {
 	install_armbian_nvidia_autodetect_helper
 }
 
+
 # -----------------------------------------------------------------------------
-# Runtime auto-disable of the driver on hosts without NVIDIA hardware.
-#
-# Replaces a dmesg-grep one-liner that used to live in
-# packages/bsp/common/usr/lib/armbian/armbian-firstrun. The old approach was
-# unreliable for two reasons:
-#   1. It looked for "No NVIDIA GPU found" in dmesg — that line is only
-#      printed if the driver actually attempted to bind and failed, and is
-#      already rotated out of the ring buffer on many boots.
-#   2. It purged a hardcoded version (nvidia-dkms-510) — wrong on every
-#      distro/release that ships a different driver branch, and especially
-#      wrong now that the install path auto-picks the highest available.
-#
-# This installs a small detector + systemd one-shot that:
-#   - probes the PCI bus directly (lspci, vendor 0x10de) — works regardless
-#     of whether the driver loaded,
-#   - blacklists nvidia / nvidia_drm / nvidia_modeset / nvidia_uvm via
-#     /etc/modprobe.d so they don't load on the next boot,
-#   - dpkg-query's the actually-installed nvidia-dkms-* / nvidia-driver-* /
-#     nvidia-settings / nvidia-common packages (no hardcoded version) and
-#     apt-purges them.
+# Runtime: the driver is installed by default. On a host without NVIDIA
+# hardware, the boot only blacklists the modules. The package removal takes
+# about a minute, so it runs at the next shutdown or reboot, not at boot.
+# A live system (boot=live) keeps the packages: the removal frees nothing there.
 # -----------------------------------------------------------------------------
 function install_armbian_nvidia_autodetect_helper() {
 	display_alert "Installing runtime NVIDIA hardware detector" "${EXTENSION}" "info"
@@ -169,112 +164,107 @@ function install_armbian_nvidia_autodetect_helper() {
 
 	cat <<- 'AUTODETECT_SH' > "${SDCARD}/usr/lib/armbian/armbian-nvidia-autodetect"
 		#!/bin/sh
-		# armbian-nvidia-autodetect — installed by build/extensions/nvidia.sh.
-		#
-		# On hosts WITH an NVIDIA GPU (PCI vendor 10de): no-op.
-		# On hosts WITHOUT one: blacklist the modules and purge the nvidia
-		# packages so DKMS doesn't keep rebuilding the kernel module on
-		# every kernel update.
-		#
-		# Detection is via lspci (queries the PCI bus directly). Earlier
-		# attempts used `dmesg | grep "No NVIDIA GPU found"` which only
-		# fires if the driver bound far enough to print that line, and
-		# falls off the ring buffer.
+		# armbian-nvidia-autodetect: installed by build/extensions/nvidia.sh.
+		# start: NVIDIA GPU (PCI vendor 10de) present: enable the driver.
+		#        Else blacklist the driver, remove it from DKMS and mark its
+		#        packages for removal.
+		# stop:  at shutdown, remove the marked packages.
 
-		set -e
+		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
+		# Kept until the removal completes, so a failed removal runs again.
+		MARK=/var/lib/armbian/nvidia-remove
 
-		# Need lspci. It's part of pciutils — present on every desktop
-		# image, but be defensive on hand-built minimal flavours.
-		if ! command -v lspci > /dev/null 2>&1; then
-			exit 0
-		fi
+		log() {
+			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
+		}
 
-		# NVIDIA PCI vendor ID is 0x10de. Match the literal "[10de:" in
-		# `lspci -nn` output so non-VGA NVIDIA devices (Tegra USB-C,
-		# audio over HDMI, etc.) also count.
-		if lspci -nn 2>/dev/null | grep -qiE '\[10de:'; then
-			# Hardware is present. The build framework ships a default
-			# /etc/modprobe.d/armbian-nvidia-disabled.conf so initrd udev
-			# doesn't try to load nvidia* on no-GPU hosts. Now that we've
-			# confirmed there IS a GPU, clear the file and modprobe so
-			# display-manager (we are Before= it) starts with the driver
-			# loaded. The rootfs deletion self-heals initramfs on the
-			# next kernel upgrade — until then, initrd stays stale but
-			# this runtime modprobe covers the gap each boot.
-			#
-			# rm -f is idempotent. modprobe nvidia_drm with modeset=1
-			# pulls nvidia + nvidia_modeset via dependencies and gives
-			# Wayland-friendly KMS in one shot. || true on the modprobe
-			# in case the package was previously purged and isn't
-			# installed - the operator handles re-install separately.
-			if [ -f /etc/modprobe.d/armbian-nvidia-disabled.conf ]; then
-				rm -f /etc/modprobe.d/armbian-nvidia-disabled.conf
-				echo "armbian-nvidia-autodetect: NVIDIA hardware detected; cleared modprobe blacklist" | systemd-cat -t armbian-nvidia-autodetect 2>/dev/null || true
-			fi
-			modprobe nvidia_drm modeset=1 2>/dev/null || true
-			exit 0
-		fi
+		# Driver packages with files on the system, also partly removed ones:
+		# NVIDIA repository, Ubuntu numbered and Debian names.
+		installed() {
+			dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' \
+				'nvidia-dkms-*' 'nvidia-driver-*' nvidia-driver nvidia-kernel-dkms \
+				nvidia-open-kernel-dkms nvidia-open nvidia-kernel-open-dkms \
+				nvidia-settings nvidia-common 2> /dev/null |
+				awk 'substr($1, 2, 1) != "n" {print $2}' | tr '\n' ' '
+		}
 
-		# No NVIDIA hardware. Belt and suspenders:
-		#   1. modprobe.d blacklist — takes effect on the next boot and
-		#      is idempotent if we get killed mid-purge.
-		#   2. apt purge — removes the package set so DKMS doesn't burn
-		#      cycles rebuilding modules that will never load.
-		cat > /etc/modprobe.d/armbian-nvidia-disabled.conf <<-EOF
-			# Installed by armbian-nvidia-autodetect: no NVIDIA GPU on this host.
-			# Delete this file to re-enable the driver.
-			blacklist nvidia
-			blacklist nvidia_drm
-			blacklist nvidia_modeset
-			blacklist nvidia_uvm
-		EOF
-
-		# dpkg-query the package set actually installed (no hardcoded
-		# version — varies per distro / extension config). Returns
-		# empty on a second run, which makes the purge a no-op.
-		# Glob 'nvidia-dkms-*' requires the trailing dash so it won't
-		# match the bare 'nvidia-dkms' / 'nvidia-driver' metapackages
-		# Debian ships (and which the install branch above can pick
-		# under case-3). List those exact names alongside the globs
-		# so the purge covers both shapes.
-		NVIDIA_PKGS=$(dpkg-query -W -f='${binary:Package}\n' \
-			'nvidia-dkms-*' 'nvidia-driver-*' \
-			'nvidia-dkms'   'nvidia-driver'   \
-			'nvidia-settings' 'nvidia-common' 2>/dev/null | tr '\n' ' ')
-		if [ -n "$NVIDIA_PKGS" ]; then
-			DEBIAN_FRONTEND=noninteractive apt-get -y -qq purge $NVIDIA_PKGS >/dev/null 2>&1 || true
-			DEBIAN_FRONTEND=noninteractive apt-get -y -qq autoremove --purge >/dev/null 2>&1 || true
-		fi
+		case "${1:-start}" in
+			start)
+				command -v lspci > /dev/null 2>&1 || exit 0
+				if lspci -nn 2> /dev/null | grep -qi '\[10de:'; then
+					# The image ships the blacklist. Remove it and load the driver now.
+					# The initramfs keeps the blacklist until its next rebuild.
+					if [ -f "$BLACKLIST" ]; then
+						rm -f "$BLACKLIST"
+						log "NVIDIA hardware found; driver enabled"
+					fi
+					rm -f "$MARK"
+					modprobe nvidia_drm modeset=1 2> /dev/null || true
+					exit 0
+				fi
+				mkdir -p /etc/modprobe.d
+				cat > "$BLACKLIST" <<- EOF
+					# Installed by armbian-nvidia-autodetect: no NVIDIA GPU on this host.
+					# Delete this file to enable the driver.
+					blacklist nvidia
+					blacklist nvidia_drm
+					blacklist nvidia_modeset
+					blacklist nvidia_uvm
+				EOF
+				grep -qw 'boot=live' /proc/cmdline && exit 0
+				if [ -n "$(installed)" ]; then
+					mkdir -p "${MARK%/*}"
+					: > "$MARK"
+					# Kernel upgrades before the shutdown then do not rebuild the driver.
+					for src in /var/lib/dkms/nvidia*/*/source; do
+						[ -e "$src" ] || continue
+						ver=${src%/source}
+						mod=${ver%/*}
+						dkms remove "${mod##*/}/${ver##*/}" --all > /dev/null 2>&1 || true
+					done
+				fi
+				;;
+			stop)
+				[ -f "$MARK" ] || exit 0
+				pkgs=$(installed)
+				log "no NVIDIA hardware; removing ${pkgs:-the remaining dependencies}"
+				# A power cut during an earlier removal leaves dpkg interrupted.
+				dpkg --configure -a > /dev/null 2>&1 || true
+				# The purge can be done already: autoremove then cleans up.
+				# shellcheck disable=SC2086 # word splitting is intended
+				if { [ -z "$pkgs" ] || DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o DPkg::Lock::Timeout=60 purge $pkgs > /dev/null 2>&1; } &&
+					DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o DPkg::Lock::Timeout=60 autoremove --purge > /dev/null 2>&1; then
+					rm -f "$MARK"
+					log "removed"
+				else
+					log "removal failed; it runs again at the next shutdown"
+				fi
+				;;
+		esac
+		exit 0
 	AUTODETECT_SH
 	chmod 0755 "${SDCARD}/usr/lib/armbian/armbian-nvidia-autodetect"
 
 	cat <<- 'AUTODETECT_SERVICE' > "${SDCARD}/etc/systemd/system/armbian-nvidia-autodetect.service"
 		[Unit]
-		Description=Detect NVIDIA hardware; disable driver if absent
+		Description=Detect NVIDIA hardware; remove the driver if absent
 		Documentation=https://github.com/armbian/build/blob/main/extensions/nvidia.sh
-		# Run BEFORE anything that might try to use the GPU (display
-		# manager, console framebuffer init). After local fs so the
-		# script's writes and dpkg state are available.
+		# Start before the display manager. Stop after it, while the
+		# local file systems are still mounted.
 		After=local-fs.target
 		Before=display-manager.service graphical.target
 
 		[Service]
 		Type=oneshot
-		ExecStart=/usr/lib/armbian/armbian-nvidia-autodetect
-		# Stay activated so the unit shows green in `systemctl status`
-		# after a successful run — without this the unit would always
-		# read as inactive (dead).
 		RemainAfterExit=yes
+		ExecStart=/usr/lib/armbian/armbian-nvidia-autodetect start
+		ExecStop=/usr/lib/armbian/armbian-nvidia-autodetect stop
+		TimeoutStopSec=5min
 
 		[Install]
 		WantedBy=multi-user.target
 	AUTODETECT_SERVICE
 
-	# Enable the unit so it fires at every boot. Cheap when NVIDIA is
-	# present (early exit on the lspci check) and idempotent when not
-	# (apt-purge is a no-op on a system where the packages are already
-	# gone). Running every boot means hot-pluggable scenarios (eGPU,
-	# Thunderbolt) get re-evaluated.
-	chroot_sdcard "systemctl enable armbian-nvidia-autodetect.service" || \
+	chroot_sdcard "systemctl enable armbian-nvidia-autodetect.service" ||
 		display_alert "Could not enable armbian-nvidia-autodetect.service in chroot" "${EXTENSION}" "warn"
 }
