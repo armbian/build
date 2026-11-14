@@ -3,29 +3,35 @@ From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Sat, 14 Nov 2026 10:34:28 +1300
 Subject: pmdomain: rockchip: switch off the subdomains of a regulator domain at probe
 
-A domain that needs a regulator is switched off at probe, because the
-state of its regulator is unknown. Its subdomains are added only after
-that, so a subdomain the bootloader left on stays powered and not idled
-behind a parent that is off. genpd reads it as off and never touches
-it again. When the regulator is later disabled as unused, the bus hangs
-on the NIUs of those subdomains.
+A power domain that needs a regulator is switched off at probe, because
+the state of its regulator is unknown at that point. Its subdomains are
+added only after that, so a subdomain the bootloader left on stays
+powered and not idled behind a parent that is off. genpd reads it as off
+and never touches it again, and when the regulator core later disables
+the regulator as unused, the bus hangs on the NIUs of those subdomains.
 
-On the RK3576 this hangs boards that do not enable the NPU: PD_NPU needs
-a regulator, U-Boot leaves NPUTOP, NPU0 and NPU1 on, and the SoC locks
-up when regulator_late_cleanup() disables vdd_npu_s0.
+On the RK3576 this hangs boards that do not enable the NPU once PD_NPU
+manages its supply (next patch): U-Boot leaves NPUTOP, NPU0 and NPU1 on,
+and the SoC locks up when regulator_late_cleanup() disables vdd_npu_s0.
 
-Mark the domain and everything below it as off when it is added, and
-switch the whole subtree off once it is complete, children first.
+Mark a regulator domain and every domain below it as off when it is
+added, and once the subtree is complete, switch it off from the leaves
+up. If a subdomain fails to switch off, leave its parents on and warn.
+
+Tested on a Radxa ROCK 4D with the NPU disabled in the DT. Without this
+patch, all 14 boots left NPUTOP, NPU0 and NPU1 on, and one of them hung.
+With it, all 10 boots switched them off, with no hang.
 
 Reported-by: Vladimir Bely <vlwwwwww@gmail.com>
-Closes: https://github.com/gahingwoo/linux-rk3576-npu/issues/4
+Closes: https://lore.kernel.org/all/20261113132323.159015-1-vlwwwwww@gmail.com/
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+
 ---
- drivers/pmdomain/rockchip/pm-domains.c | 47 ++++++++++++++++++++++----
- 1 file changed, 41 insertions(+), 6 deletions(-)
+ drivers/pmdomain/rockchip/pm-domains.c | 60 +++++++++++++++++++++++---
+ 1 file changed, 54 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
-index d45821459e91..8479bb5136f0 100644
+index d45821459e91..8ffc9f42a8c0 100644
 --- a/drivers/pmdomain/rockchip/pm-domains.c
 +++ b/drivers/pmdomain/rockchip/pm-domains.c
 @@ -105,6 +105,7 @@ struct rockchip_pm_domain {
@@ -74,37 +80,49 @@ index d45821459e91..8479bb5136f0 100644
  		      (pd->info->mem_status_mask && !rockchip_pmu_domain_is_mem_on(pd)));
  
  	pmu->genpd_data.domains[id] = &pd->genpd;
-@@ -1058,6 +1067,29 @@ static void rockchip_configure_pd_cnt(struct rockchip_pmu *pmu,
+@@ -1058,6 +1067,41 @@ static void rockchip_configure_pd_cnt(struct rockchip_pmu *pmu,
  	regmap_write(pmu->regmap, domain_reg_offset + 4, count);
  }
  
 +/*
 + * Switch off the domains marked off_at_probe below and including @np,
-+ * children before their parent.
++ * children before their parent. If a child fails to switch off, leave its
++ * ancestors on.
 + */
-+static void rockchip_pm_power_off_subtree(struct rockchip_pmu *pmu,
-+					  struct device_node *np)
++static int rockchip_pm_power_off_subtree(struct rockchip_pmu *pmu,
++					 struct device_node *np)
 +{
 +	struct rockchip_pm_domain *pd;
 +	u32 idx;
++	int ret;
 +
-+	for_each_child_of_node_scoped(np, child)
-+		rockchip_pm_power_off_subtree(pmu, child);
++	for_each_child_of_node_scoped(np, child) {
++		ret = rockchip_pm_power_off_subtree(pmu, child);
++		if (ret)
++			return ret;
++	}
 +
 +	if (of_property_read_u32(np, "reg", &idx) ||
 +	    idx >= pmu->genpd_data.num_domains ||
 +	    !pmu->genpd_data.domains[idx])
-+		return;
++		return 0;
 +
 +	pd = to_rockchip_pd(pmu->genpd_data.domains[idx]);
-+	if (pd->off_at_probe)
-+		rockchip_pd_power(pd, false);
++	if (!pd->off_at_probe)
++		return 0;
++
++	ret = rockchip_pd_power(pd, false);
++	if (ret)
++		dev_warn(pmu->dev, "failed to switch off %s at probe: %d\n",
++			 pd->genpd.name, ret);
++
++	return ret;
 +}
 +
  static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
  				     struct device_node *parent)
  {
-@@ -1076,7 +1108,8 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
+@@ -1076,7 +1120,8 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
  		}
  		parent_domain = pmu->genpd_data.domains[idx];
  
@@ -114,7 +132,7 @@ index d45821459e91..8479bb5136f0 100644
  		if (error) {
  			dev_err(pmu->dev, "failed to handle node %pOFn: %d\n",
  				np, error);
-@@ -1172,7 +1205,7 @@ static int rockchip_pm_domain_probe(struct platform_device *pdev)
+@@ -1172,7 +1217,7 @@ static int rockchip_pm_domain_probe(struct platform_device *pdev)
  	guard(mutex)(&dmc_pmu_mutex);
  
  	for_each_available_child_of_node_scoped(np, node) {
@@ -123,11 +141,12 @@ index d45821459e91..8479bb5136f0 100644
  		if (error) {
  			dev_err(dev, "failed to handle node %pOFn: %d\n",
  				node, error);
-@@ -1185,6 +1218,8 @@ static int rockchip_pm_domain_probe(struct platform_device *pdev)
+@@ -1185,6 +1230,9 @@ static int rockchip_pm_domain_probe(struct platform_device *pdev)
  				node, error);
  			goto err_out;
  		}
 +
++		/* A domain left on is not fatal; carry on with the others. */
 +		rockchip_pm_power_off_subtree(pmu, node);
  	}
  
