@@ -82,8 +82,6 @@ driver_rtl8189ES() {
 
 		# cfg80211 set_monitor_channel gained a net_device arg (6.13 mainline; backported to 6.12.101)
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-set-monitor-channel-6.12.101.patch" "applying"
-		# build rtw_get_wireless_stats only when its user (CONFIG_WIRELESS_EXT handlers) is built
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-guard-wireless-stats-wext.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8189ES chipsets" "info"
@@ -316,8 +314,6 @@ driver_xradio_xr819() {
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/xradio-Switching-from-del_timer_sync-to-timer_delete_sync.patch" "applying"
-		# -Wempty-body (empty debug macros) and -Wmissing-prototypes fixes
-		process_patch_file "${SRC}/patch/misc/xradio-fix-empty-body-and-missing-prototypes.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Xradio XR819 ${xradio_xr819_ver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Xradio XR819 ${xradio_xr819_ver}" "info"
