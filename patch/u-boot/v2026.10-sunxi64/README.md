@@ -21,7 +21,8 @@ their pins.
 
 ## Orange Pi Zero2: SPI NOR
 
-`u-boot-sunxi-with-spl.bin` is also the SPI NOR image (offset 0). Find the 2 MiB
-NOR in `cat /proc/mtd` (`/dev/mtd0` on the Zero2), then
-`flashcp -v /usr/lib/linux-u-boot-*/u-boot-sunxi-with-spl.bin /dev/mtd0`.
-`flash_erase /dev/mtd0 0 0` blanks it again.
+`u-boot-sunxi-with-spl.bin` is also the SPI NOR image (offset 0). Take the 2 MiB
+NOR's `mtdN` from `cat /proc/mtd`, then, with the installed board package
+`linux-u-boot-orangepizero2-<branch>`:
+`flashcp -v /usr/lib/linux-u-boot-<branch>-orangepizero2/u-boot-sunxi-with-spl.bin /dev/mtdN`.
+`flash_erase /dev/mtdN 0 0` blanks it again.
