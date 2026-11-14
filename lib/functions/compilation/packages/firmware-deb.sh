@@ -59,7 +59,6 @@ function compile_firmware() {
 	do_checkout="no" fetch_from_repo "${ARMBIAN_FIRMWARE_SOURCE}" "armbian-firmware-git" "${ARMBIAN_FIRMWARE_BRANCH}"
 	declare -r armbian_firmware_git_sha1="${fetched_revision}"
 
-	declare extra_conflicts_comma=""
 	if [[ -n $FULL ]]; then
 		# Fetch kernel firmware from git. This is large, but we don't have two copies of it anymore. So more manageable.
 		declare fetched_revision
@@ -71,9 +70,6 @@ function compile_firmware() {
 		cd "${SRC}/cache/sources/linux-firmware-git" || exit_with_error "can't change directory"
 		run_host_command_logged make DESTDIR="${fw_temp_dir}/${fw_dir}" FIRMWAREDIR=/lib/firmware install
 
-		# Full version conflicts with more stuff, of course.
-		extra_conflicts_comma=",amd64-microcode,intel-microcode"
-
 		# This symlink messes with the armbian-firmware overwrite step
 		# @TODO: remove no longer needed symlink from armbian-firmware
 		if [[ -d "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/" ]]; then
@@ -83,6 +79,10 @@ function compile_firmware() {
 
 	# Armbian firmware; this overwrites anything in the mainline firmware repo (if that was included, in the full version only)
 	run_host_command_logged git -C "${SRC}/cache/sources/armbian-firmware-git" archive --format=tar "${armbian_firmware_git_sha1}" "|" tar -C "${fw_temp_dir}/${fw_dir}/lib/firmware/" -xf -
+
+	# amd64-microcode and intel-microcode own these files. They also load the microcode early.
+	# amd_sev and amdtee: amd64-microcode ships them too (except jammy). Check its file list on updates.
+	run_host_command_logged rm -rf "${fw_temp_dir}/${fw_dir}/lib/firmware/"{amd-ucode,intel-ucode,amdtee} "${fw_temp_dir}/${fw_dir}/lib/firmware/amd/amd_sev_"*.sbin
 
 	# Show the size of the firmware directory in a tree if debugging
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
@@ -99,8 +99,8 @@ function compile_firmware() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Conflicts: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}${extra_conflicts_comma}
-		Provides: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}${extra_conflicts_comma}
+		Conflicts: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+		Provides: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
 		Section: kernel
 		Priority: optional
 		Description: Armbian - Linux firmware${FULL}
