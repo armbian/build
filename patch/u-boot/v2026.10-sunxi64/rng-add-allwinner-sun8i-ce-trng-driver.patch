@@ -14,10 +14,11 @@ Add a minimal DM_RNG driver bound to the crypto node: takes the bus/mod/
 ram/trng clocks and the reset, programs the H616 module clock to
 PLL_PERI0(2X)/4 = 300 MHz (the rate Linux uses; the sunxi CCU driver has
 no set_rate) exactly like the pending sun8i-ce AES/hash series, then for
-each read queues a TRNG task on flow 3 and polls the flow's completion
-bit. Addresses are word addresses on the H616. The manual describes no
-way to abort a task, so after a failed run the engine is reset before
-the buffer is freed (the vendor driver resets it on a timeout). With
+each read queues TRNG tasks of at most 4 KiB on flow 3 (the TRNG makes
+about 64 KiB/s) and polls the flow's completion bit. Addresses are word
+addresses on the H616. The manual describes no way to abort a task, so
+after a failed run the engine is reset before the buffer is freed (the
+vendor driver resets it on a timeout). With
 DM_RNG enabled the generic booti/bootm path injects kaslr-seed (and
 rng-seed with BOARD_RNG_SEED through the weak board_rng_seed())
 automatically.
@@ -52,7 +53,7 @@ diff -ruN a/drivers/rng/Makefile b/drivers/rng/Makefile
 diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 --- /dev/null
 +++ b/drivers/rng/sun8i_ce_rng.c
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,306 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Allwinner Crypto Engine (sun8i-ce) true random number generator
@@ -109,6 +110,8 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +#define CE_FLOW_ERR_MASK(f)	GENMASK((f) * 8 + 7, (f) * 8)
 +/* The TRNG produces data in 32 byte granules */
 +#define CE_TRNG_GRANULE		32
++/* About 64 KiB/s: keep every task well inside the timeout */
++#define CE_TRNG_MAX_CHUNK	4096
 +#define CE_TIMEOUT_US		3000000
 +
 +/* H6/H616 CCU: CE module clock */
@@ -246,22 +249,31 @@ diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
 +static int sun8i_ce_rng_read(struct udevice *dev, void *data, size_t len)
 +{
 +	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
-+	size_t todo = ALIGN(len, CE_TRNG_GRANULE);
++	size_t chunk = min_t(size_t, ALIGN(len, CE_TRNG_GRANULE),
++			     CE_TRNG_MAX_CHUNK);
++	u8 *out = data;
 +	u8 *buf;
-+	int ret;
++	int ret = 0;
 +
 +	if (!len)
 +		return 0;
 +
-+	buf = memalign(ARCH_DMA_MINALIGN, ALIGN(todo, ARCH_DMA_MINALIGN));
++	buf = memalign(ARCH_DMA_MINALIGN, ALIGN(chunk, ARCH_DMA_MINALIGN));
 +	if (!buf)
 +		return -ENOMEM;
 +
-+	ret = sun8i_ce_rng_run(priv, buf, todo);
-+	if (!ret)
-+		memcpy(data, buf, len);
++	while (len) {
++		size_t n = min(len, chunk);
 +
-+	memset(buf, 0, todo);
++		ret = sun8i_ce_rng_run(priv, buf, ALIGN(n, CE_TRNG_GRANULE));
++		if (ret)
++			break;
++		memcpy(out, buf, n);
++		out += n;
++		len -= n;
++	}
++
++	memset(buf, 0, chunk);
 +	free(buf);
 +
 +	return ret;
