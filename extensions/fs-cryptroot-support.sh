@@ -86,9 +86,18 @@ function cryptroot_open_mapper() {
 		sleep 15
 		waited+=15
 	done
-	# Keep the open count above 0, also between mkfs and mount. The kernel drops the hold when the build ends.
-	exec {cryptroot_hold_fd}< "/dev/mapper/$CRYPTROOT_MAPPER" ||
-		display_alert "Cannot hold mapping open" "a waiting build can remove it after 2 minutes idle" "wrn"
+	# Keep the open count above 0, also between mkfs and mount. A helper process holds the mapping:
+	# a fd in this shell leaks into each child process, and the close at cleanup then fails.
+	# The helper exits when the build ends, also when the build is killed.
+	(
+		declare fd
+		for fd in /proc/self/fd/*; do # Inherited fds such as the log pipe: the log must not wait for the helper.
+			fd="${fd##*/}"
+			((fd > 2)) && exec {fd}>&-
+		done
+		exec tail --pid=$$ -f /dev/null < "/dev/mapper/$CRYPTROOT_MAPPER" > /dev/null 2>&1
+	) &
+	cryptroot_hold_pid=$!
 }
 
 function pre_install_kernel_debs__adjust_dropbear_configuration() {
@@ -146,7 +155,23 @@ function post_umount_final_image__750_cryptroot_cleanup() {
 }
 
 function cleanup_cryptroot() {
-	[[ -n $cryptroot_hold_fd ]] && exec {cryptroot_hold_fd}<&- && unset cryptroot_hold_fd
-	cryptsetup luksClose "${CRYPTROOT_MAPPER}" 2>&1
-	display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
+	if [[ -n $cryptroot_hold_pid ]]; then
+		kill "$cryptroot_hold_pid" 2> /dev/null || true
+		wait "$cryptroot_hold_pid" 2> /dev/null || true
+		unset cryptroot_hold_pid
+	fi
+	if cryptsetup close "${CRYPTROOT_MAPPER}" 2>&1; then
+		display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
+		return 0
+	fi
+	# The kernel removes the mapping when the last holder exits.
+	declare dm_node holders="" fd pid
+	dm_node="$(readlink -f "/dev/mapper/${CRYPTROOT_MAPPER}")"
+	for fd in /proc/[0-9]*/fd/*; do
+		[[ "$(readlink "$fd" 2> /dev/null)" == "$dm_node" ]] || continue
+		pid="${fd#/proc/}" && pid="${pid%%/*}"
+		holders+="${pid}:$(cat "/proc/${pid}/comm" 2> /dev/null) "
+	done
+	display_alert "Cryptroot busy, deferred removal of ${CRYPTROOT_MAPPER}" "holders: ${holders:-unknown}" "wrn"
+	cryptsetup close --deferred "${CRYPTROOT_MAPPER}" 2>&1 || true
 }
