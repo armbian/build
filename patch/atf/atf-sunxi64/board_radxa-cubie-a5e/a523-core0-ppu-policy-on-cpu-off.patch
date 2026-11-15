@@ -1,0 +1,66 @@
+From 2fed875c85e0b5f995b672cd5568c84dcb5accb0 Mon Sep 17 00:00:00 2001
+From: serg987 <50438876+serg987@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 10:21:37 -0500
+Subject: [PATCH] fix(allwinner): a523: let core 0 power off after CPU_OFF
+
+The A523 core PPUs run in dynamic mode, where PPU_PWPR holds the lowest
+power mode the PPU may enter on its own. The secondary cores come out of
+reset with that policy set to OFF, but the boot core is left at policy
+ON (PWPR = 0x108, the others read 0x100). After PSCI CPU_OFF, core 0
+therefore never powers down, and the next CPU_ON spins forever in
+sunxi_pwr_domain_on() waiting for PPU_PWSR to report OFF: taking CPU0
+offline and back online hangs the whole system.
+
+Clear the policy field of every core PPU when the native PSCI ops are
+installed. For the secondary cores this is a no-op.
+
+Tested on a Radxa Cubie A5E (A527): core 0 PWPR now reads 0x100, and
+CPU0 offline/online cycles no longer hang (hundreds of cycles, with and
+without cpufreq scaling).
+
+Change-Id: I8fa9e2ab64ef2326a69d35c34af6869b87b6c4ea
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: serg987 <50438876+serg987@users.noreply.github.com>
+---
+ plat/allwinner/common/sunxi_native_pm_a55.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/plat/allwinner/common/sunxi_native_pm_a55.c b/plat/allwinner/common/sunxi_native_pm_a55.c
+index d67f211..56c4003 100644
+--- a/plat/allwinner/common/sunxi_native_pm_a55.c
++++ b/plat/allwinner/common/sunxi_native_pm_a55.c
+@@ -21,8 +21,11 @@
+ #define SUNXI_INITARCH_REG(n)		(SUNXI_CPUCFG_BASE + 0x0020 + (n) * 4)
+ #define HOTPLUG_CONTROL_REG(n)		(SUNXI_R_CPUCFG_BASE + 0x200 + (n) * 4)
+ #define HOTPLUG_POWERMODE_REG(n)	(SUNXI_R_CPUCFG_BASE + 0x220 + (n) * 4)
++#define PPU_PWPR(n)			(SUNXI_R_CPUCFG_BASE + (n) * 0x1000 + 0x1000)
+ #define PPU_PWSR(n)			(SUNXI_R_CPUCFG_BASE + (n) * 0x1000 + 0x1008)
+ 
++#define PPU_PWR_POLICY_MASK		GENMASK(3, 0)
++
+ #define STATE_ON			8
+ #define STATE_OFF			0
+ 
+@@ -114,5 +117,18 @@ static const plat_psci_ops_t sunxi_native_psci_ops = {
+ 
+ void sunxi_set_native_psci_ops(const plat_psci_ops_t **psci_ops)
+ {
++	unsigned int core;
++
++	/*
++	 * The core PPUs run in dynamic mode, where the policy is the lowest
++	 * power mode the PPU may enter on its own. The secondary cores come
++	 * out of reset with policy OFF, but the boot core (core 0) is left at
++	 * policy ON, so it never actually powers down after CPU_OFF and the
++	 * next CPU_ON spins forever waiting for PPU_PWSR to report OFF.
++	 * Allow all cores to power off.
++	 */
++	for (core = 0; core < PLATFORM_CORE_COUNT; core++)
++		mmio_clrbits_32(PPU_PWPR(core + 1), PPU_PWR_POLICY_MASK);
++
+ 	*psci_ops = &sunxi_native_psci_ops;
+ }
+-- 
+2.34.1
+
