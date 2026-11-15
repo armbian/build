@@ -6,11 +6,11 @@ Subject: [PATCH] dma: arm-dma350: add acpi support for cix soc
 Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
 
 ---
- drivers/dma/arm-dma350.c | 1040 ++++++++++++++++++++++++++++++++++++--
- 1 file changed, 1000 insertions(+), 40 deletions(-)
+ drivers/dma/arm-dma350.c | 1050 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 1009 insertions(+), 41 deletions(-)
 
 diff --git a/drivers/dma/arm-dma350.c b/drivers/dma/arm-dma350.c
-index 09403aca8..4522f4ea1 100644
+index 09403aca8..a94390dae 100644
 --- a/drivers/dma/arm-dma350.c
 +++ b/drivers/dma/arm-dma350.c
 @@ -2,13 +2,25 @@
@@ -341,7 +341,7 @@ index 09403aca8..4522f4ea1 100644
  }
  
  static struct dma_async_tx_descriptor *d350_prep_memcpy(struct dma_chan *chan,
-@@ -346,13 +610,22 @@ static int d350_terminate_all(struct dma_chan *chan)
+@@ -346,13 +610,23 @@ static int d350_terminate_all(struct dma_chan *chan)
  	LIST_HEAD(list);
  
  	spin_lock_irqsave(&dch->vc.lock, flags);
@@ -354,7 +354,9 @@ index 09403aca8..4522f4ea1 100644
 +	writel_relaxed(0, dch->base + CH_LINKADDRHI);
 +
  	if (dch->desc) {
- 		if (dch->status != DMA_ERROR)
+-		if (dch->status != DMA_ERROR)
++		/* A failed non-cyclic descriptor is already completed. */
++		if (dch->status != DMA_ERROR || dch->desc->cyclic)
  			vchan_terminate_vdesc(&dch->desc->vd);
  		dch->desc = NULL;
  		dch->status = DMA_COMPLETE;
@@ -364,7 +366,7 @@ index 09403aca8..4522f4ea1 100644
  	vchan_get_all_descriptors(&dch->vc, &list);
  	list_splice_tail(&list, &dch->vc.desc_terminated);
  	spin_unlock_irqrestore(&dch->vc.lock, flags);
-@@ -386,11 +659,31 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
+@@ -386,11 +660,31 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
  	spin_lock_irqsave(&dch->vc.lock, flags);
  	if (cookie == dch->cookie) {
  		status = dch->status;
@@ -400,7 +402,7 @@ index 09403aca8..4522f4ea1 100644
  	} else if (status == DMA_IN_PROGRESS) {
  		/* Somebody else terminated it? */
  		status = DMA_ERROR;
-@@ -401,6 +694,86 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
+@@ -401,6 +695,86 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
  	return status;
  }
  
@@ -487,7 +489,7 @@ index 09403aca8..4522f4ea1 100644
  static void d350_start_next(struct d350_chan *dch)
  {
  	u32 hdr, *reg;
-@@ -409,9 +782,25 @@ static void d350_start_next(struct d350_chan *dch)
+@@ -409,9 +783,28 @@ static void d350_start_next(struct d350_chan *dch)
  	if (!dch->desc)
  		return;
  
@@ -495,26 +497,29 @@ index 09403aca8..4522f4ea1 100644
  	dch->status = DMA_IN_PROGRESS;
  	dch->cookie = dch->desc->vd.tx.cookie;
 +
++	/*
++	 * The active descriptor leaves the issued list: completion and
++	 * termination add its node to another list.
++	 */
++	list_del(&dch->desc->vd.node);
++
 +	/* Handle cyclic transfers specially */
 +	if (dch->desc->cyclic) {
-+		/* Don't remove from list - we need it for callbacks */
 +		d350_start_cyclic(dch);
 +		return;
 +	}
 +
 +	/* Handle scatter-gather transfers with command linking */
 +	if (dch->desc->scatter_gather) {
-+		/* Don't remove from list until complete */
 +		d350_start_sg(dch);
 +		return;
 +	}
 +
-+	/* Simple transfer: remove from list and program directly */
-+	list_del(&dch->desc->vd.node);
++	/* Simple transfer: program directly */
  	dch->residue = d350_desc_bytes(dch->desc);
  
  	hdr = dch->desc->command[0];
-@@ -469,17 +858,39 @@ static void d350_issue_pending(struct dma_chan *chan)
+@@ -469,17 +862,39 @@ static void d350_issue_pending(struct dma_chan *chan)
  static irqreturn_t d350_irq(int irq, void *data)
  {
  	struct d350_chan *dch = data;
@@ -559,7 +564,7 @@ index 09403aca8..4522f4ea1 100644
  		if (errinfo & (CH_ERRINFO_AXIRDPOISERR | CH_ERRINFO_AXIRDRESPERR))
  			vd->tx_result.result = DMA_TRANS_READ_FAILED;
  		else if (errinfo & CH_ERRINFO_AXIWRRESPERR)
-@@ -488,21 +899,48 @@ static irqreturn_t d350_irq(int irq, void *data)
+@@ -488,21 +903,52 @@ static irqreturn_t d350_irq(int irq, void *data)
  			vd->tx_result.result = DMA_TRANS_ABORTED;
  
  		vd->tx_result.residue = d350_get_residue(dch);
@@ -580,6 +585,10 @@ index 09403aca8..4522f4ea1 100644
 +
 +		/* Stop the channel on error */
 +		writel_relaxed(CH_CMD_STOP, dch->base + CH_CMD);
++
++		/* Report the error to the client, as for a done transfer. */
++		if (!dch->desc->cyclic)
++			vchan_cookie_complete(vd);
 +	} else if (intr_flags & CH_STAT_INTR_DONE) {
 +		if (dch->desc->cyclic) {
 +			static ktime_t last_irq;
@@ -620,7 +629,7 @@ index 09403aca8..4522f4ea1 100644
  	spin_unlock(&dch->vc.lock);
  
  	return IRQ_HANDLED;
-@@ -511,12 +949,30 @@ static irqreturn_t d350_irq(int irq, void *data)
+@@ -511,12 +957,30 @@ static irqreturn_t d350_irq(int irq, void *data)
  static int d350_alloc_chan_resources(struct dma_chan *chan)
  {
  	struct d350_chan *dch = to_d350_chan(chan);
@@ -656,7 +665,7 @@ index 09403aca8..4522f4ea1 100644
  }
  
  static void d350_free_chan_resources(struct dma_chan *chan)
-@@ -528,10 +984,271 @@ static void d350_free_chan_resources(struct dma_chan *chan)
+@@ -528,10 +992,271 @@ static void d350_free_chan_resources(struct dma_chan *chan)
  	vchan_free_chan_resources(&dch->vc);
  }
  
@@ -928,7 +937,7 @@ index 09403aca8..4522f4ea1 100644
  	void __iomem *base;
  	u32 reg;
  	int ret, nchan, dw, aw, r, p;
-@@ -541,12 +1258,89 @@ static int d350_probe(struct platform_device *pdev)
+@@ -541,12 +1266,89 @@ static int d350_probe(struct platform_device *pdev)
  	if (IS_ERR(base))
  		return PTR_ERR(base);
  
@@ -1020,7 +1029,7 @@ index 09403aca8..4522f4ea1 100644
  
  	reg = readl_relaxed(base + DMAINFO + DMA_BUILDCFG0);
  	nchan = FIELD_GET(DMA_CFG_NUM_CHANNELS, reg) + 1;
-@@ -557,14 +1351,87 @@ static int d350_probe(struct platform_device *pdev)
+@@ -557,14 +1359,87 @@ static int d350_probe(struct platform_device *pdev)
  	coherent = device_get_dma_attr(dev) == DEV_DMA_COHERENT;
  
  	dmac = devm_kzalloc(dev, struct_size(dmac, channels, nchan), GFP_KERNEL);
@@ -1110,7 +1119,7 @@ index 09403aca8..4522f4ea1 100644
  	dev_dbg(dev, "DMA-350 r%dp%d with %d channels, %d requests\n", r, p, dmac->nchan, dmac->nreq);
  
  	dmac->dma.dev = dev;
-@@ -572,13 +1439,19 @@ static int d350_probe(struct platform_device *pdev)
+@@ -572,13 +1447,19 @@ static int d350_probe(struct platform_device *pdev)
  		dmac->dma.src_addr_widths |= BIT(i);
  		dmac->dma.dst_addr_widths |= BIT(i);
  	}
@@ -1131,7 +1140,7 @@ index 09403aca8..4522f4ea1 100644
  	dmac->dma.device_pause = d350_pause;
  	dmac->dma.device_resume = d350_resume;
  	dmac->dma.device_terminate_all = d350_terminate_all;
-@@ -604,10 +1477,21 @@ static int d350_probe(struct platform_device *pdev)
+@@ -604,10 +1485,21 @@ static int d350_probe(struct platform_device *pdev)
  			dev_warn(dev, "No command link support on channel %d\n", i);
  			continue;
  		}
@@ -1157,7 +1166,7 @@ index 09403aca8..4522f4ea1 100644
  
  		dch->has_wrap = FIELD_GET(CH_CFG_HAS_WRAP, reg);
  		dch->has_trig = FIELD_GET(CH_CFG_HAS_TRIGIN, reg) &
-@@ -632,32 +1516,108 @@ static int d350_probe(struct platform_device *pdev)
+@@ -632,32 +1524,108 @@ static int d350_probe(struct platform_device *pdev)
  		dmac->dma.device_prep_dma_memset = d350_prep_memset;
  	}
  
