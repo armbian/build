@@ -215,36 +215,14 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		set default=0
 		set timeout=${ISO_TIMEOUT}
 		set timeout_style=hidden
-		# Use serial only when com0 exists. Else grub prints errors, and the
-		# failed 'terminal_output gfxterm serial' leaves gfxterm off.
-		# x86: probe the scratch register of com0, as the grub serial driver does.
-		# BIOS: com0 is the first port in the BIOS data area. EFI: com0 is 0x3f8.
-		set armbian_serial=1
-		if [ "\$grub_cpu" = "x86_64" -o "\$grub_cpu" = "i386" ]; then
-		    set armbian_serial=0
-		    set armbian_com0=3f8
-		    if [ "\$grub_platform" = "pc" ]; then
-		        insmod memrw
-		        read_word -v armbian_com0 0x400
-		    fi
-		    set armbian_scrport=
-		    if [ "\$armbian_com0" = "3f8" ]; then set armbian_scrport=0x3ff; fi
-		    if [ "\$armbian_com0" = "2f8" ]; then set armbian_scrport=0x2ff; fi
-		    if [ "\$armbian_com0" = "3e8" ]; then set armbian_scrport=0x3ef; fi
-		    if [ "\$armbian_com0" = "2e8" ]; then set armbian_scrport=0x2ef; fi
-		    if [ -n "\$armbian_scrport" ]; then
-		        insmod iorw
-		        outb \$armbian_scrport 0x5a
-		        inb -v armbian_scr \$armbian_scrport
-		        if [ "\$armbian_scr" = "5a" ]; then
-		            set armbian_serial=1
-		        fi
-		    fi
-		fi
+		# Use serial only when com0 exists. grub probes the ports itself; in an
+		# 'if' condition it does not print the error. Without this, the failed
+		# 'terminal_output gfxterm serial' leaves gfxterm off.
 		insmod serial
-		if [ "\$armbian_serial" = "1" ]; then
-		    serial --unit=0 --speed=115200
-		    terminal_input console serial
+		set armbian_serial=0
+		if serial --unit=0 --speed=115200; then
+		    terminal_input --append serial
+		    set armbian_serial=1
 		fi
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
 		    # UEFI: not all_video. Its video_bochs sets the QEMU standard VGA behind the
@@ -286,13 +264,10 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	display_alert "Building standalone grub EFI" "${EXTENSION}" "info"
 	# TMPDIR=/tmp: grub-mkstandalone's mkdtemp otherwise inherits the host TMPDIR,
 	# a path that does not exist inside the chroot ("cannot make temporary directory").
-	# iorw exists only on x86. The cfg uses it only there.
-	declare grub_efi_x86_modules=""
-	[[ "${ARCH}" == "amd64" ]] && grub_efi_x86_modules=" iorw"
 	declare -a gm_args=(chroot "${MOUNT}" env TMPDIR=/tmp grub-mkstandalone
 		--format="${grub_efi_format}"
 		--output="/tmp/${efi_boot_name}"
-		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial terminal ls cat halt reboot${grub_efi_x86_modules}"
+		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial terminal ls cat halt reboot"
 		"boot/grub/grub.cfg=/tmp/image-output-iso-grub.cfg")
 	declare asset
 	for asset in "${grub_assets[@]}"; do
