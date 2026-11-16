@@ -215,9 +215,23 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		set default=0
 		set timeout=${ISO_TIMEOUT}
 		set timeout_style=hidden
+		# Use serial only when com0 exists. Else grub prints errors, and the
+		# failed 'terminal_output gfxterm serial' leaves gfxterm off.
+		# x86: probe the scratch register, as the grub serial driver does.
+		set armbian_serial=1
+		if [ "\$grub_cpu" = "x86_64" -o "\$grub_cpu" = "i386" ]; then
+		    insmod iorw
+		    outb 0x3ff 0x5a
+		    inb -v armbian_scr 0x3ff
+		    if [ "\$armbian_scr" != "5a" ]; then
+		        set armbian_serial=0
+		    fi
+		fi
 		insmod serial
-		serial --unit=0 --speed=115200
-		terminal_input console serial
+		if [ "\$armbian_serial" = "1" ]; then
+		    serial --unit=0 --speed=115200
+		    terminal_input console serial
+		fi
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
 		    # UEFI: not all_video. Its video_bochs sets the QEMU standard VGA behind the
 		    # firmware, and a kernel with only the EFI framebuffer shows garbage.
@@ -230,10 +244,13 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		    insmod gfxterm
 		    insmod png
 		    set gfxmode=auto
-		    terminal_output gfxterm serial
+		    terminal_output gfxterm
 		    background_image \$prefix/armbian.png
 		else
-		    terminal_output console serial
+		    terminal_output console
+		fi
+		if [ "\$armbian_serial" = "1" ]; then
+		    terminal_output --append serial
 		fi
 		menuentry "Armbian ${version} (live)" {
 		    set gfxpayload=keep
@@ -258,7 +275,7 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	declare -a gm_args=(chroot "${MOUNT}" env TMPDIR=/tmp grub-mkstandalone
 		--format="${grub_efi_format}"
 		--output="/tmp/${efi_boot_name}"
-		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial terminal ls cat halt reboot"
+		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial iorw terminal ls cat halt reboot"
 		"boot/grub/grub.cfg=/tmp/image-output-iso-grub.cfg")
 	declare asset
 	for asset in "${grub_assets[@]}"; do
