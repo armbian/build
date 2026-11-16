@@ -178,6 +178,12 @@ function install_armbian_nvidia_autodetect_helper() {
 			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
 		}
 
+		# Show a message on the Plymouth splash, if it runs.
+		splash() {
+			command -v plymouth > /dev/null 2>&1 && plymouth --ping 2> /dev/null || return 0
+			plymouth "$1" --text="$2" 2> /dev/null || true
+		}
+
 		# Driver packages with files on the system, also partly removed ones:
 		# NVIDIA repository, Ubuntu numbered and Debian names.
 		installed() {
@@ -228,6 +234,7 @@ function install_armbian_nvidia_autodetect_helper() {
 				[ -f "$MARK" ] || exit 0
 				pkgs=$(installed)
 				log "no NVIDIA hardware; removing ${pkgs:-the remaining dependencies}"
+				splash display-message "Removing NVIDIA drivers, please wait ..."
 				# A power cut during an earlier removal leaves dpkg interrupted.
 				dpkg --configure -a > /dev/null 2>&1 || true
 				# The purge can be done already: autoremove then cleans up.
@@ -239,6 +246,7 @@ function install_armbian_nvidia_autodetect_helper() {
 				else
 					log "removal failed; it runs again at the next shutdown"
 				fi
+				splash hide-message "Removing NVIDIA drivers, please wait ..."
 				;;
 		esac
 		exit 0
