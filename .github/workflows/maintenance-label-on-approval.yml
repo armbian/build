@@ -27,9 +27,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Validate here, at the point the value enters the job: everything below
-      # consumes it, starting with an action that parseInt()s it and then reads
-      # and writes labels. A check further down would run after those writes --
-      # and on the not-approved path would not run at all.
+      # consumes it and then reads and writes labels. A check further down
+      # would run after those writes.
       - id: pr
         run: |
           number="$(tr -d '[:space:]' < pr.txt)"
@@ -39,23 +38,52 @@ jobs:
           esac
           echo "number=${number}" >> "$GITHUB_OUTPUT"
 
+      # "Ready to merge" follows the review state: a committer approval adds it,
+      # a withdrawn approval or a change request removes it.
       - name: Label when approved
         id: approval
-        uses: j-fulbright/label-when-approved-action@911c622c75f8ea99ee00cdd66e2cd888bac530c6 # v1.2
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          label: 'Ready to merge'
-          require_committers_approval: 'true'
-          remove_label_when_approval_missing: 'true'
-          comment: '✅ This PR has been reviewed and approved — all set for merge!'
-          pullRequestNumber: ${{ steps.pr.outputs.number }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            const LABEL = "Ready to merge";
+
+            // Latest approval or change request of each committer (write or admin).
+            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number, per_page: 100 });
+            const permission = {};
+            const state = {};
+            for (const r of reviews) {
+              if (!r.user || !["APPROVED", "CHANGES_REQUESTED"].includes(r.state)) continue;
+              const login = r.user.login;
+              if (!(login in permission)) {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: login });
+                permission[login] = ["admin", "write"].includes(data.permission);
+              }
+              if (permission[login]) state[login] = r.state;
+            }
+            const states = Object.values(state);
+            const approved = states.includes("APPROVED") && !states.includes("CHANGES_REQUESTED");
+            core.info(`Committer reviews: ${JSON.stringify(state)} -> approved=${approved}`);
+            core.setOutput("isApproved", String(approved));
+
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: pull_number, per_page: 100 });
+            const has = labels.some(l => l.name === LABEL);
+            if (approved && !has) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: [LABEL] });
+              await github.rest.issues.createComment({ owner, repo, issue_number: pull_number,
+                body: "✅ This PR has been reviewed and approved — all set for merge!" });
+            } else if (!approved && has) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: LABEL });
+            }
 
       - name: Remove review-related labels
-        # Not just success(): the action exits 0 and reports isApproved=false when
-        # the approval does not come from a committer (require_committers_approval),
-        # and anyone with read access can approve a PR on a public repo. Without
-        # this gate a drive-by approval clears the review-tracking labels below
-        # while "Ready to merge" is (correctly) never added.
+        # Not just success(): the step exits 0 with isApproved=false when no
+        # committer approves, and anyone with read access can approve a PR on a
+        # public repo. Without this gate a drive-by approval clears the
+        # review-tracking labels below.
         if: ${{ success() && steps.approval.outputs.isApproved == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
