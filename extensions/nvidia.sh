@@ -173,6 +173,8 @@ function install_armbian_nvidia_autodetect_helper() {
 		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
 		# Kept until the removal completes, so a failed removal runs again.
 		MARK=/var/lib/armbian/nvidia-remove
+		# nvidia-settings autostart fails without the driver. Mask it until the removal.
+		AUTOSTART='/etc/systemd/user/app-nvidia\x2dsettings\x2dautostart@autostart.service'
 
 		log() {
 			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
@@ -204,10 +206,12 @@ function install_armbian_nvidia_autodetect_helper() {
 						rm -f "$BLACKLIST"
 						log "NVIDIA hardware found; driver enabled"
 					fi
-					rm -f "$MARK"
+					rm -f "$MARK" "$AUTOSTART"
 					modprobe nvidia_drm modeset=1 2> /dev/null || true
 					exit 0
 				fi
+				mkdir -p "${AUTOSTART%/*}"
+				ln -sf /dev/null "$AUTOSTART"
 				mkdir -p /etc/modprobe.d
 				cat > "$BLACKLIST" <<- EOF
 					# Installed by armbian-nvidia-autodetect: no NVIDIA GPU on this host.
