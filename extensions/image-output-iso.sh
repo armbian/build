@@ -38,7 +38,7 @@
 #   SKIP_ISO=yes       - do nothing
 #   ISO_VOLID="..."    - ISO9660 volume id (max 32 chars, default ARMBIAN)
 #   ISO_COMP="zstd"    - squashfs compressor (zstd|xz|gzip)
-#   ISO_TIMEOUT=1      - grub menu seconds (0 = boot immediately; >0 shows the splash)
+#   ISO_TIMEOUT=1      - grub wait in seconds; the menu is hidden, Esc shows it (0 = no wait)
 #   ISO_KEEP_IMG=no    - keep the .img alongside the .iso (default: drop it)
 #
 
@@ -214,6 +214,7 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	cat > "${MOUNT}/tmp/image-output-iso-grub.cfg" <<- GRUBCFG
 		set default=0
 		set timeout=${ISO_TIMEOUT}
+		set timeout_style=hidden
 		insmod serial
 		serial --unit=0 --speed=115200
 		terminal_input console serial
