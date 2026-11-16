@@ -462,7 +462,7 @@ function prepare_partitions() {
 	##
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
-	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> "${SDCARD}/etc/fstab"
+	echo "tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0" >> "${SDCARD}/etc/fstab"
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
 		*if you created your own partitions, this would be a good time to format them*
