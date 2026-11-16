@@ -359,7 +359,7 @@ function prepare_partitions() {
 			fi
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
 			physical_root_part_uuid="$(blkid -s UUID -o value "$physical_rootdevice")"
-			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks" >> "${SDCARD}/etc/crypttab"
+			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks,initramfs" >> "${SDCARD}/etc/crypttab"
 			run_host_command_logged cat "${SDCARD}/etc/crypttab"
 		fi
 
