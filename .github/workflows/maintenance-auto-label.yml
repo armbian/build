@@ -1,7 +1,7 @@
 name: "Maintenance: Auto-label PR"
 
 # Sets labels automatically based on:
-# - PR size (job: label-size)
+# - PR size from the changed lines (job: label-size)
 # - File categories using .github/labeler config (job: label-category)
 # - PR creation date for quarterly tracking (job: label-by-date)
 # - Removes "Ready to merge" label on PR update (job: label-remove)
@@ -19,7 +19,10 @@ permissions:
 jobs:
   label-remove:
     name: "Remove Ready to merge"
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -64,26 +67,39 @@ jobs:
   label-size:
     name: "Size Label"
     runs-on: ubuntu-latest
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
 
     steps:
-      # Automatically adds size labels based on total changed lines
+      # Size from the PR totals: the files API returns only 30 files per page.
       - name: Label by size
-        uses: pascalgn/size-label-action@56b489b027932ec0cf60438a1a5f1a19c8fc71ff # v0.5.7
-        env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          sizes: >
-            {
-              "0": "small",
-              "50": "medium",
-              "250": "large"
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const lines = pr.additions + pr.deletions;
+            const label = lines >= 250 ? "size/large" : lines >= 50 ? "size/medium" : "size/small";
+            core.info(`PR #${pr.number}: ${lines} changed lines -> ${label}`);
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: pr.number, per_page: 100 });
+            for (const l of labels) {
+              if (l.name.startsWith("size/") && l.name !== label) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: l.name });
+              }
+            }
+            if (!labels.some(l => l.name === label)) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [label] });
             }
 
   label-by-date:
     name: "Date label (Quarters)"
     runs-on: ubuntu-latest
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
 
     steps:
       # Determines the label (02, 05, 08, 11) based on PR creation month
