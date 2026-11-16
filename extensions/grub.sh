@@ -392,11 +392,11 @@ configure_grub() {
 		esac
 		# grub.cfg can hold password hashes: keep the copy private.
 		umask 077
-		tmp="$cfg.quiet"
+		tmp="$(mktemp "$cfg.quiet.XXXXXX")" || exit 0
 		trap 'rm -f "$tmp"' EXIT
 		# grub-mkconfig writes more to <cfg>.new after this script, at its own offset.
-		# Keep the length: change "echo" to "#   " before a linux or initrd line.
-		awk 'NR > 1 { if (prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd)/) sub(/echo/, "#   ", prev); print prev }
+		# Keep the length: change "echo" to "#   " before a linux, initrd or devicetree line.
+		awk 'NR > 1 { if (prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd|devicetree)/) sub(/echo/, "#   ", prev); print prev }
 			{ prev = $0 }
 			END { if (NR) print prev }' "$cfg" > "$tmp"
 		[ "$(wc -c < "$tmp")" -eq "$(wc -c < "$cfg")" ] || exit 0
