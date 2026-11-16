@@ -219,9 +219,14 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		serial --unit=0 --speed=115200
 		terminal_input console serial
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
-		    # UEFI only: all_video would add video_bochs. It sets the QEMU standard VGA
-		    # behind the firmware, and a kernel with only the EFI framebuffer shows garbage.
-		    insmod efi_gop
+		    # UEFI: not all_video. Its video_bochs sets the QEMU standard VGA behind the
+		    # firmware, and a kernel with only the EFI framebuffer shows garbage.
+		    # BIOS (amd64): efi_gop does not exist, use vbe.
+		    if [ "\$grub_platform" = "efi" ]; then
+		        insmod efi_gop
+		    else
+		        insmod vbe
+		    fi
 		    insmod gfxterm
 		    insmod png
 		    set gfxmode=auto
