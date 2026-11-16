@@ -372,6 +372,33 @@ configure_grub() {
 		GRUB_DISABLE_LINUX_UUID=false          # Be explicit about wanting UUID
 	grubCfgFrag
 
+	# Silent boot: 10_linux prints "Loading Linux ..." and "Loading initial ramdisk ..."
+	# before each linux/initrd line. Debian always does; Ubuntu does with GRUB_DISABLE_SUBMENU=y.
+	# This last grub.d script removes these lines from grub.cfg.new when the cmdline has "quiet".
+	# update-grub runs it on every kernel and GRUB upgrade.
+	cat <<- 'grubQuietLoading' > "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
+		#!/bin/sh
+		# Armbian: with "quiet" on the kernel cmdline, remove the GRUB loading messages.
+		set -e
+		case " ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX} " in
+			*" quiet "*) ;;
+			*) exit 0 ;;
+		esac
+		# grub-mkconfig -o writes the output of each script to <cfg>.new.
+		cfg="$(readlink /proc/$$/fd/1 || true)"
+		case "$cfg" in
+			*.new) [ -f "$cfg" ] || exit 0 ;;
+			*) exit 0 ;; # output to a terminal or a pipe
+		esac
+		# Remove an echo line only when a linux or initrd line follows it.
+		awk 'NR > 1 && !(prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd)/) { print prev }
+			{ prev = $0 }
+			END { if (NR) print prev }' "$cfg" > "$cfg.quiet"
+		cat "$cfg.quiet" > "$cfg"
+		rm -f "$cfg.quiet"
+	grubQuietLoading
+	chmod 0755 "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
+
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
 		cat <<- grubCfgFragHostSide >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 			GRUB_DISABLE_OS_PROBER=${UEFI_GRUB_DISABLE_OS_PROBER}
