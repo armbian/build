@@ -374,11 +374,11 @@ configure_grub() {
 
 	# Silent boot: 10_linux prints "Loading Linux ..." and "Loading initial ramdisk ..."
 	# before each linux/initrd line. Debian always does; Ubuntu does with GRUB_DISABLE_SUBMENU=y.
-	# This last grub.d script removes these lines from grub.cfg.new when the cmdline has "quiet".
+	# This last grub.d script turns them into comments in grub.cfg.new when the cmdline has "quiet".
 	# update-grub runs it on every kernel and GRUB upgrade.
 	cat <<- 'grubQuietLoading' > "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
 		#!/bin/sh
-		# Armbian: with "quiet" on the kernel cmdline, remove the GRUB loading messages.
+		# Armbian: with "quiet" on the kernel cmdline, hide the GRUB loading messages.
 		set -e
 		case " ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX} " in
 			*" quiet "*) ;;
@@ -390,12 +390,17 @@ configure_grub() {
 			*.new) [ -f "$cfg" ] || exit 0 ;;
 			*) exit 0 ;; # output to a terminal or a pipe
 		esac
-		# Remove an echo line only when a linux or initrd line follows it.
-		awk 'NR > 1 && !(prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd)/) { print prev }
+		# grub.cfg can hold password hashes: keep the copy private.
+		umask 077
+		tmp="$cfg.quiet"
+		trap 'rm -f "$tmp"' EXIT
+		# grub-mkconfig writes more to <cfg>.new after this script, at its own offset.
+		# Keep the length: change "echo" to "#   " before a linux or initrd line.
+		awk 'NR > 1 { if (prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd)/) sub(/echo/, "#   ", prev); print prev }
 			{ prev = $0 }
-			END { if (NR) print prev }' "$cfg" > "$cfg.quiet"
-		cat "$cfg.quiet" > "$cfg"
-		rm -f "$cfg.quiet"
+			END { if (NR) print prev }' "$cfg" > "$tmp"
+		[ "$(wc -c < "$tmp")" -eq "$(wc -c < "$cfg")" ] || exit 0
+		cat "$tmp" > "$cfg"
 	grubQuietLoading
 	chmod 0755 "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
 
