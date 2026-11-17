@@ -8,27 +8,15 @@ permissions:
   contents: read
 
 jobs:
-  label:
+  pr:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    # One job per PR branch at a time: each job reads the reviews after the
-    # earlier job has written its label. Job level: a skipped run must not
-    # replace a pending one.
-    concurrency:
-      group: label-on-approval-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
-      issues: write
-      pull-requests: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
 
     steps:
-      # Default branch (trusted): the shared label logic is never PR-authored code.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       # The listener runs on pull_request_review (fork-controlled), so its
       # artifact is untrusted: download it into RUNNER_TEMP, never the checkout.
       - name: Download PR number artifact from upstream run
@@ -51,13 +39,34 @@ jobs:
           esac
           echo "number=${number}" >> "$GITHUB_OUTPUT"
 
+  label:
+    needs: pr
+    # Same group as the push job in maintenance-auto-label.yml: one
+    # "Ready to merge" sync per PR at a time, so each sync reads the state
+    # after the earlier sync has written its label. A newer pending sync
+    # replaces an older one; it reads the live state, so nothing is lost.
+    concurrency:
+      group: ready-label-${{ needs.pr.outputs.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      # Default branch (trusted): the shared label logic is never PR-authored code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       # "Ready to merge" follows the review state: a committer approval of the
       # current head adds it, a withdrawn approval or a change request removes it.
       - name: Label when approved
         id: approval
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ needs.pr.outputs.number }}
         with:
           script: |
             const { syncOne } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/ready-label.js`);
@@ -73,7 +82,7 @@ jobs:
         if: ${{ success() && steps.approval.outputs.isApproved == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ needs.pr.outputs.number }}
         with:
           script: |
             const { owner, repo } = context.repo;
