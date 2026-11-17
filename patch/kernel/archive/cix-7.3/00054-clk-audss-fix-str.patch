@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Sat, 10 Oct 2026 14:33:20 +0800
+Subject: clk: cix audss: fix str
+
+---
+ drivers/clk/cix/clk-sky1-audss.c | 36 ++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/drivers/clk/cix/clk-sky1-audss.c b/drivers/clk/cix/clk-sky1-audss.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/cix/clk-sky1-audss.c
++++ b/drivers/clk/cix/clk-sky1-audss.c
+@@ -9,6 +9,7 @@
+ #include <linux/device.h>
+ #include <linux/device/bus.h>
+ #include <linux/fwnode.h>
++#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+@@ -28,6 +29,20 @@
+ #define SKY1_AUDSS_CLK_PARENTS_CNT		4
+ #define SKY1_AUDSS_NUM_CLKS			(CLK_MCLK4 + 1)
+ 
++/*
++ * RCSU (audio subsystem reset/clock/status unit) at 0x07000000.
++ * REMAP@0x34 = 0x20000000 : audio-ss address-window remap.
++ * TIMEOUT@0x1000 = 0x80000078 : enable (bit31) + count(0x78).  Without this
++ * the audio bus is unusable after a suspend power cycle and CRU (0x07110000)
++ * register accesses hang (resume stalls at the regmap restore).
++ */
++#define SKY1_AUDSS_RCSU_ADDR			0x07000000
++#define SKY1_AUDSS_RCSU_LEN			0x10000
++#define SKY1_AUDSS_RCSU_REMAP			0x34
++#define SKY1_AUDSS_RCSU_REMAP_VAL		0x20000000
++#define SKY1_AUDSS_RCSU_TIMEOUT			0x1000
++#define SKY1_AUDSS_RCSU_TIMEOUT_VAL		0x80000078
++
+ static u32 sky1_reg_save[][2] = {
+ 	{ INFO_HIFI0,  0 },
+ 	{ INFO_CLK_GATE,  0 },
+@@ -541,6 +556,7 @@ static const struct regmap_config sky1_audss_regmap_config = {
+ struct sky1_audss_clks_priv {
+ 	struct device *dev;
+ 	struct regmap *regmap_cru;
++	void __iomem *rcsu_base;
+ 	struct reset_control *rst_noc;
+ 	struct clk *clks[SKY1_AUDSS_CLK_PARENTS_CNT];
+ 	const struct sky1_audss_clks_devtype_data *devtype_data;
+@@ -1195,6 +1211,19 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Map the RCSU and initialize REMAP + TIMEOUT.  Without TIMEOUT the
++	 * audio bus is unusable after a suspend power cycle (CRU accesses hang).
++	 */
++	priv->rcsu_base = devm_ioremap(dev, SKY1_AUDSS_RCSU_ADDR,
++				       SKY1_AUDSS_RCSU_LEN);
++	if (!priv->rcsu_base)
++		return dev_err_probe(dev, -ENOMEM, "failed to map RCSU\n");
++	writel(SKY1_AUDSS_RCSU_REMAP_VAL,
++	       priv->rcsu_base + SKY1_AUDSS_RCSU_REMAP);
++	writel(SKY1_AUDSS_RCSU_TIMEOUT_VAL,
++	       priv->rcsu_base + SKY1_AUDSS_RCSU_TIMEOUT);
++
+ 	pm_runtime_get_noresume(dev);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+@@ -1349,6 +1378,13 @@ static int __maybe_unused sky1_audss_clk_runtime_resume(struct device *dev)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Re-arm RCSU REMAP + TIMEOUT after a power cycle, before touching the
++	 * CRU: without TIMEOUT the CRU register restore below hangs the bus.
++	 */
++	writel(SKY1_AUDSS_RCSU_REMAP_VAL, priv->rcsu_base + SKY1_AUDSS_RCSU_REMAP);
++	writel(SKY1_AUDSS_RCSU_TIMEOUT_VAL, priv->rcsu_base + SKY1_AUDSS_RCSU_TIMEOUT);
++
+ 	spin_lock_irqsave(&priv->lock, flags);
+ 	for (i = 0; i < devtype_data->reg_save_size; i++)
+ 		regmap_write(priv->regmap_cru,
+-- 
+Cixtech
+

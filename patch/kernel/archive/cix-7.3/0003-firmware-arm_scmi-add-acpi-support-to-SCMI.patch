@@ -1,26 +1,25 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
 Date: Wed, 18 Mar 2026 14:29:38 +0800
-Subject: [PATCH] firmware: arm_scmi: add acpi support to SCMI
-
+Subject: firmware: arm_scmi: add acpi support to SCMI
 Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
 
 ---
- drivers/firmware/arm_scmi/bus.c               | 25 +++---
- drivers/firmware/arm_scmi/common.h            | 13 +--
- drivers/firmware/arm_scmi/driver.c            | 47 +++++-----
+ drivers/firmware/arm_scmi/bus.c               | 31 ++---
+ drivers/firmware/arm_scmi/common.h            | 11 ++-
+ drivers/firmware/arm_scmi/driver.c            | 51 ++++++-----
  drivers/firmware/arm_scmi/shmem.c             | 88 ++++++++++++++++---
- .../firmware/arm_scmi/transports/mailbox.c    | 40 +++++----
+ .../firmware/arm_scmi/transports/mailbox.c    | 48 +++++----
  drivers/firmware/arm_scmi/transports/optee.c  | 17 ++--
  drivers/firmware/arm_scmi/transports/smc.c    |  8 +-
  drivers/firmware/arm_scmi/transports/virtio.c |  4 +-
- 8 files changed, 162 insertions(+), 80 deletions(-)
+ 8 files changed, 180 insertions(+), 78 deletions(-)
 
 diff --git a/drivers/firmware/arm_scmi/bus.c b/drivers/firmware/arm_scmi/bus.c
-index e060edbe7..a760fba59 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/bus.c
 +++ b/drivers/firmware/arm_scmi/bus.c
-@@ -9,7 +9,8 @@
+@@ -9,9 +9,11 @@
  
  #include <linux/types.h>
  #include <linux/module.h>
@@ -29,16 +28,11 @@ index e060edbe7..a760fba59 100644
 +#include <linux/property.h>
  #include <linux/kernel.h>
  #include <linux/slab.h>
++#include <linux/of.h>
  #include <linux/device.h>
-@@ -429,15 +430,15 @@ static void scmi_device_release(struct device *dev)
- 	struct scmi_device *scmi_dev = to_scmi_dev(dev);
  
- 	scmi_device_release_resources(scmi_dev);
--	of_node_put(dev->of_node);
-+	fwnode_handle_put(dev->fwnode);
- 	kfree_const(scmi_dev->name);
- 	kfree(scmi_dev);
- }
+ #include "common.h"
+@@ -436,8 +438,8 @@ static void scmi_device_release(struct device *dev)
  
  static void __scmi_device_destroy(struct scmi_device *scmi_dev)
  {
@@ -49,7 +43,7 @@ index e060edbe7..a760fba59 100644
  		 dev_name(&scmi_dev->dev), scmi_dev->protocol_id,
  		 scmi_dev->name);
  
-@@ -447,7 +448,7 @@ static void __scmi_device_destroy(struct scmi_device *scmi_dev)
+@@ -447,7 +449,7 @@ static void __scmi_device_destroy(struct scmi_device *scmi_dev)
  }
  
  static struct scmi_device *
@@ -58,16 +52,23 @@ index e060edbe7..a760fba59 100644
  		     int protocol, const char *name)
  {
  	int id, retval;
-@@ -495,7 +496,7 @@ __scmi_device_create(struct device_node *np, struct device *parent,
+@@ -495,7 +497,14 @@ __scmi_device_create(struct device_node *np, struct device *parent,
  
  	scmi_dev->id = id;
  	scmi_dev->dev.parent = parent;
 -	device_set_node(&scmi_dev->dev, of_fwnode_handle(of_node_get(np)));
-+	device_set_node(&scmi_dev->dev, fwnode_handle_get(np));
++	/*
++	 * scmi_device_release() drops a reference to dev->of_node; take one
++	 * here for OF nodes.  ACPI fwnodes leave dev->of_node NULL and
++	 * of_node_put(NULL) is a no-op.
++	 */
++	if (is_of_node(np))
++		of_node_get(to_of_node(np));
++	device_set_node(&scmi_dev->dev, np);
  	scmi_dev->dev.bus = &scmi_bus_type;
  	scmi_dev->dev.release = scmi_device_release;
  	dev_set_name(&scmi_dev->dev, "scmi_dev.%d", id);
-@@ -504,8 +505,8 @@ __scmi_device_create(struct device_node *np, struct device *parent,
+@@ -504,8 +513,8 @@ __scmi_device_create(struct device_node *np, struct device *parent,
  	if (retval)
  		goto put_dev;
  
@@ -78,7 +79,7 @@ index e060edbe7..a760fba59 100644
  
  	return scmi_dev;
  put_dev:
-@@ -521,15 +522,15 @@ __scmi_device_create(struct device_node *np, struct device *parent,
+@@ -521,15 +530,15 @@ __scmi_device_create(struct device_node *np, struct device *parent,
  }
  
  static struct scmi_device *
@@ -97,7 +98,7 @@ index e060edbe7..a760fba59 100644
  
  	return sdev;
  }
-@@ -557,7 +558,7 @@ _scmi_device_create(struct device_node *np, struct device *parent,
+@@ -557,7 +566,7 @@ _scmi_device_create(struct device_node *np, struct device *parent,
   *	   could have been potentially created for a whole protocol, unless no
   *	   device was found to have been requested for that specific protocol.
   */
@@ -107,7 +108,7 @@ index e060edbe7..a760fba59 100644
  				       const char *name)
  {
 diff --git a/drivers/firmware/arm_scmi/common.h b/drivers/firmware/arm_scmi/common.h
-index fe8c22cfb..fe1778110 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/common.h
 +++ b/drivers/firmware/arm_scmi/common.h
 @@ -152,7 +152,7 @@ extern const struct bus_type scmi_bus_type;
@@ -138,16 +139,14 @@ index fe8c22cfb..fe1778110 100644
  static void __tag##_dev_free(void *data)				       \
  {									       \
  	struct platform_device *spdev = data;				       \
-@@ -649,7 +650,8 @@ static int __tag##_probe(struct platform_device *pdev)			       \
+@@ -649,6 +650,7 @@ static int __tag##_probe(struct platform_device *pdev)			       \
  		goto err_mem;						       \
  	}								       \
  									       \
--	device_set_of_node_from_dev(&spdev->dev, dev);			       \
-+	device_set_node(&spdev->dev, fwnode_handle_get(dev->fwnode));	       \
-+	dev_set_of_node_reused(&spdev->dev);				       \
++	spdev->dev.fwnode = dev->fwnode;			            \
+ 	device_set_of_node_from_dev(&spdev->dev, dev);			       \
  									       \
  	strans.supplier = supplier;					       \
- 	memcpy(&strans.desc, &(__desc), sizeof(strans.desc));		       \
 @@ -678,7 +680,8 @@ err_mem:								       \
  static struct platform_driver __drv = {					       \
  	.driver = {							       \
@@ -159,7 +158,7 @@ index fe8c22cfb..fe1778110 100644
  	.probe = __tag##_probe,						       \
  }
 diff --git a/drivers/firmware/arm_scmi/driver.c b/drivers/firmware/arm_scmi/driver.c
-index a666ad39a..90ea120a9 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/driver.c
 +++ b/drivers/firmware/arm_scmi/driver.c
 @@ -16,6 +16,7 @@
@@ -197,7 +196,7 @@ index a666ad39a..90ea120a9 100644
  		cinfo = idr_find(idr, SCMI_PROTOCOL_BASE);
  		if (unlikely(!cinfo)) /* Possible only if platform has no Rx */
  			return -EINVAL;
-@@ -2785,7 +2786,7 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
+@@ -2785,19 +2786,21 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
  	snprintf(name, sizeof(name), SCMI_TRANSPORT_DEVNAME_PREFIX "_%s_%02X",
  		 idx ? "rx" : "tx", prot_id);
  	/* Create a uniquely named, dedicated transport device for this chan */
@@ -206,7 +205,29 @@ index a666ad39a..90ea120a9 100644
  	if (!tdev) {
  		dev_err(info->dev,
  			"failed to create transport device (%s)\n", name);
-@@ -2831,14 +2832,14 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
+ 		devm_kfree(info->dev, cinfo);
+ 		return -EINVAL;
+ 	}
++	fwnode_handle_get(fwnode);
+ 
+ 	cinfo->id = prot_id;
+ 	cinfo->dev = &tdev->dev;
+ 	cinfo->handle = &info->handle;
+ 	ret = info->desc->ops->chan_setup(cinfo, info->dev, tx);
+ 	if (ret) {
++		fwnode_handle_put(fwnode);
+ 		scmi_device_destroy(info->dev, prot_id, name);
+ 		devm_kfree(info->dev, cinfo);
+ 		return ret;
+@@ -2821,6 +2824,7 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
+ 		/* Destroy channel and device only if created by this call. */
+ 		if (tdev) {
+ 			info->desc->ops->chan_free(prot_id, cinfo, idr);
++			fwnode_handle_put(fwnode);
+ 			scmi_device_destroy(info->dev, prot_id, name);
+ 			devm_kfree(info->dev, cinfo);
+ 		}
+@@ -2831,14 +2835,14 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
  }
  
  static inline int
@@ -224,7 +245,7 @@ index a666ad39a..90ea120a9 100644
  		if (ret && ret != -ENOMEM)
  			ret = 0;
  	}
-@@ -2871,17 +2872,17 @@ scmi_txrx_setup(struct scmi_info *info, struct device_node *of_node,
+@@ -2871,17 +2875,17 @@ scmi_txrx_setup(struct scmi_info *info, struct device_node *of_node,
  static int scmi_channels_setup(struct scmi_info *info)
  {
  	int ret;
@@ -245,7 +266,15 @@ index a666ad39a..90ea120a9 100644
  			continue;
  
  		if (!FIELD_FIT(MSG_PROTOCOL_ID_MASK, prot_id)) {
-@@ -2969,7 +2970,7 @@ static int scmi_bus_notifier(struct notifier_block *nb,
+@@ -2906,6 +2910,7 @@ static int scmi_chan_destroy(int id, void *p, void *data)
+ 		struct scmi_info *info = handle_to_scmi_info(cinfo->handle);
+ 		struct scmi_device *sdev = to_scmi_dev(cinfo->dev);
+ 
++		fwnode_handle_put(cinfo->dev->fwnode);
+ 		scmi_device_destroy(info->dev, cinfo->id, sdev->name);
+ 		cinfo->dev = NULL;
+ 	}
+@@ -2969,7 +2974,7 @@ static int scmi_bus_notifier(struct notifier_block *nb,
  static int scmi_device_request_notifier(struct notifier_block *nb,
  					unsigned long action, void *data)
  {
@@ -254,7 +283,7 @@ index a666ad39a..90ea120a9 100644
  	struct scmi_device_id *id_table = data;
  	struct scmi_info *info = req_nb_to_scmi_info(nb);
  
-@@ -3072,13 +3073,13 @@ static struct scmi_debug_info *scmi_debugfs_common_setup(struct scmi_info *info)
+@@ -3072,13 +3077,13 @@ static struct scmi_debug_info *scmi_debugfs_common_setup(struct scmi_info *info)
  	if (!dbg)
  		return NULL;
  
@@ -270,7 +299,7 @@ index a666ad39a..90ea120a9 100644
  	dbg->type = kstrdup(c_ptr, GFP_KERNEL);
  	if (!dbg->type) {
  		kfree(dbg->name);
-@@ -3184,17 +3185,17 @@ static const struct scmi_desc *scmi_transport_setup(struct device *dev)
+@@ -3184,17 +3189,17 @@ static const struct scmi_desc *scmi_transport_setup(struct device *dev)
  
  	dev_info(dev, "Using %s\n", dev_driver_string(trans->supplier));
  
@@ -291,7 +320,7 @@ index a666ad39a..90ea120a9 100644
  				   &trans->desc.max_msg);
  	if (ret && ret != -EINVAL)
  		dev_err(dev, "Malformed arm,max-msg DT property.\n");
-@@ -3208,7 +3209,7 @@ static const struct scmi_desc *scmi_transport_setup(struct device *dev)
+@@ -3208,7 +3213,7 @@ static const struct scmi_desc *scmi_transport_setup(struct device *dev)
  		 trans->desc.max_msg);
  
  	/* System wide atomic threshold for atomic ops .. if any */
@@ -300,7 +329,7 @@ index a666ad39a..90ea120a9 100644
  				  &trans->desc.atomic_threshold))
  		dev_info(dev,
  			 "SCMI System wide atomic threshold set to %u us\n",
-@@ -3238,7 +3239,7 @@ static int scmi_probe(struct platform_device *pdev)
+@@ -3238,7 +3243,7 @@ static int scmi_probe(struct platform_device *pdev)
  	struct scmi_info *info;
  	bool coex = IS_ENABLED(CONFIG_ARM_SCMI_RAW_MODE_SUPPORT_COEX);
  	struct device *dev = &pdev->dev;
@@ -309,7 +338,7 @@ index a666ad39a..90ea120a9 100644
  
  	desc = scmi_transport_setup(dev);
  	if (!desc) {
-@@ -3352,10 +3353,10 @@ static int scmi_probe(struct platform_device *pdev)
+@@ -3352,10 +3357,10 @@ static int scmi_probe(struct platform_device *pdev)
  
  	scmi_enable_matching_quirks(info);
  
@@ -322,7 +351,7 @@ index a666ad39a..90ea120a9 100644
  			continue;
  
  		if (!FIELD_FIT(MSG_PROTOCOL_ID_MASK, prot_id)) {
-@@ -3381,7 +3382,7 @@ static int scmi_probe(struct platform_device *pdev)
+@@ -3381,7 +3386,7 @@ static int scmi_probe(struct platform_device *pdev)
  			continue;
  		}
  
@@ -331,7 +360,7 @@ index a666ad39a..90ea120a9 100644
  		scmi_create_protocol_devices(child, info, prot_id, NULL);
  	}
  
-@@ -3409,7 +3410,7 @@ static void scmi_remove(struct platform_device *pdev)
+@@ -3409,7 +3414,7 @@ static void scmi_remove(struct platform_device *pdev)
  {
  	int id;
  	struct scmi_info *info = platform_get_drvdata(pdev);
@@ -340,7 +369,7 @@ index a666ad39a..90ea120a9 100644
  
  	if (IS_ENABLED(CONFIG_ARM_SCMI_RAW_MODE_SUPPORT))
  		scmi_raw_mode_cleanup(info->raw);
-@@ -3434,7 +3435,7 @@ static void scmi_remove(struct platform_device *pdev)
+@@ -3434,7 +3439,7 @@ static void scmi_remove(struct platform_device *pdev)
  	mutex_unlock(&info->protocols_mtx);
  
  	idr_for_each_entry(&info->active_protocols, child, id)
@@ -350,7 +379,7 @@ index a666ad39a..90ea120a9 100644
  
  	bus_unregister_notifier(&scmi_bus_type, &info->bus_nb);
 diff --git a/drivers/firmware/arm_scmi/shmem.c b/drivers/firmware/arm_scmi/shmem.c
-index dadb37557..4f858e740 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/shmem.c
 +++ b/drivers/firmware/arm_scmi/shmem.c
 @@ -9,6 +9,8 @@
@@ -467,7 +496,7 @@ index dadb37557..4f858e740 100644
  	case 4:
  		*ops = &shmem_io_ops32;
 diff --git a/drivers/firmware/arm_scmi/transports/mailbox.c b/drivers/firmware/arm_scmi/transports/mailbox.c
-index 308736c3e..d6bb85747 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/transports/mailbox.c
 +++ b/drivers/firmware/arm_scmi/transports/mailbox.c
 @@ -6,12 +6,14 @@
@@ -485,7 +514,7 @@ index 308736c3e..d6bb85747 100644
  #include <linux/slab.h>
  
  #include "../common.h"
-@@ -77,21 +79,22 @@ static void rx_callback(struct mbox_client *cl, void *m)
+@@ -77,21 +79,30 @@ static void rx_callback(struct mbox_client *cl, void *m)
  		      core->shmem->read_header(smbox->shmem), NULL);
  }
  
@@ -493,6 +522,7 @@ index 308736c3e..d6bb85747 100644
 +static bool mailbox_chan_available(struct fwnode_handle *fwnode, int idx)
  {
  	int num_mb;
++	int ret;
 +	struct fwnode_reference_args fwnode_args;
  
  	/*
@@ -507,12 +537,19 @@ index 308736c3e..d6bb85747 100644
  
 -	return !of_parse_phandle_with_args(of_node, "mboxes",
 -					   "#mbox-cells", idx, NULL);
-+	return !fwnode_property_get_reference_args(fwnode, "mboxes",
-+					   "#mbox-cells", 1, idx, &fwnode_args);
++	ret = fwnode_property_get_reference_args(fwnode, "mboxes",
++						 "#mbox-cells", 1, idx,
++						 &fwnode_args);
++	if (ret)
++		return false;
++
++	fwnode_handle_put(fwnode_args.fwnode);
++
++	return true;
  }
  
  /**
-@@ -116,10 +119,10 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
+@@ -116,10 +127,10 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
  				 int *p2a_chan, int *p2a_rx_chan)
  {
  	int num_mb, num_sh, ret = 0;
@@ -526,7 +563,7 @@ index 308736c3e..d6bb85747 100644
  	dev_dbg(cdev, "Found %d mboxes and %d shmems !\n", num_mb, num_sh);
  
  	/* Bail out if mboxes and shmem descriptors are inconsistent */
-@@ -127,20 +130,20 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
+@@ -127,20 +138,20 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
  	    (num_mb == 1 && num_sh != 1) || (num_mb == 3 && num_sh != 2) ||
  	    (num_mb == 4 && num_sh != 2)) {
  		dev_warn(cdev,
@@ -554,7 +591,7 @@ index 308736c3e..d6bb85747 100644
  			ret = -EINVAL;
  		}
  	}
-@@ -391,8 +394,15 @@ static const struct of_device_id scmi_of_match[] = {
+@@ -391,8 +402,15 @@ static const struct of_device_id scmi_of_match[] = {
  };
  MODULE_DEVICE_TABLE(of, scmi_of_match);
  
@@ -572,7 +609,7 @@ index 308736c3e..d6bb85747 100644
  
  MODULE_AUTHOR("Sudeep Holla <sudeep.holla@arm.com>");
 diff --git a/drivers/firmware/arm_scmi/transports/optee.c b/drivers/firmware/arm_scmi/transports/optee.c
-index dbe32e141..8ccea62cc 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/transports/optee.c
 +++ b/drivers/firmware/arm_scmi/transports/optee.c
 @@ -314,12 +314,19 @@ static int invoke_process_msg_channel(struct scmi_optee_channel *channel, size_t
@@ -609,7 +646,7 @@ index dbe32e141..8ccea62cc 100644
  static int scmi_optee_service_probe(struct tee_client_device *scmi_pta)
  {
 diff --git a/drivers/firmware/arm_scmi/transports/smc.c b/drivers/firmware/arm_scmi/transports/smc.c
-index 1fce3ccde..f104317f2 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/transports/smc.c
 +++ b/drivers/firmware/arm_scmi/transports/smc.c
 @@ -84,10 +84,10 @@ static irqreturn_t smc_msg_done_isr(int irq, void *data)
@@ -636,7 +673,7 @@ index 1fce3ccde..f104317f2 100644
  
  MODULE_AUTHOR("Peng Fan <peng.fan@nxp.com>");
 diff --git a/drivers/firmware/arm_scmi/transports/virtio.c b/drivers/firmware/arm_scmi/transports/virtio.c
-index 3282d8271..9ff736257 100644
+index 111111111111..222222222222 100644
 --- a/drivers/firmware/arm_scmi/transports/virtio.c
 +++ b/drivers/firmware/arm_scmi/transports/virtio.c
 @@ -375,7 +375,7 @@ static unsigned int virtio_get_max_msg(struct scmi_chan_info *base_cinfo)
@@ -657,3 +694,6 @@ index 3282d8271..9ff736257 100644
  
  static int scmi_vio_probe(struct virtio_device *vdev)
  {
+-- 
+Cixtech
+

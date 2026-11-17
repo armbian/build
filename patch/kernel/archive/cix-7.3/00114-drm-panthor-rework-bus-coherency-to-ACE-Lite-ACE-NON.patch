@@ -1,10 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
 Date: Fri, 10 Jul 2026 19:30:15 +0800
-Subject: [PATCH] drm/panthor: rework bus coherency to ACE-Lite/ACE/NONE modes
-
+Subject: drm/panthor: rework bus coherency to ACE-Lite/ACE/NONE modes
 Replace the single 'coherent' bool with an explicit coherency mode:
-
 - Sky1 uses ACE-Lite (the GPU is an RN-I on the CHI fabric; L2 evictions
   route through HN-F/SLC, making write-back data visible to non-snooping
   masters without NC memory attributes).
@@ -13,19 +11,18 @@ Replace the single 'coherent' bool with an explicit coherency mode:
   contents in time.
 - Set the SHAREABLE_CACHE bit in GPU_COHERENCY_PROTOCOL when the hardware
   advertises it.
-
 Co-Authored-By: Claude <noreply@anthropic.com>
 
 ---
  drivers/gpu/drm/panthor/panthor_device.h   | 25 ++++++++++-
  drivers/gpu/drm/panthor/panthor_gem.c      |  2 +-
- drivers/gpu/drm/panthor/panthor_gpu.c      | 50 ++++++++++++++++------
+ drivers/gpu/drm/panthor/panthor_gpu.c      | 48 +++++++++++++++-------
  drivers/gpu/drm/panthor/panthor_gpu_regs.h |  1 +
  drivers/gpu/drm/panthor/panthor_mmu.c      | 34 +++++++++------
- 5 files changed, 83 insertions(+), 29 deletions(-)
+ 5 files changed, 80 insertions(+), 30 deletions(-)
 
 diff --git a/drivers/gpu/drm/panthor/panthor_device.h b/drivers/gpu/drm/panthor/panthor_device.h
-index 8e94f0d46..99ab1eb67 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/panthor/panthor_device.h
 +++ b/drivers/gpu/drm/panthor/panthor_device.h
 @@ -20,6 +20,27 @@
@@ -68,7 +65,7 @@ index 8e94f0d46..99ab1eb67 100644
  	/** @gpu_info: GPU information. */
  	struct drm_panthor_gpu_info gpu_info;
 diff --git a/drivers/gpu/drm/panthor/panthor_gem.c b/drivers/gpu/drm/panthor/panthor_gem.c
-index 72908be5e..f926b1fb1 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/panthor/panthor_gem.c
 +++ b/drivers/gpu/drm/panthor/panthor_gem.c
 @@ -107,7 +107,7 @@ should_map_wc(struct panthor_gem_object *bo)
@@ -81,17 +78,17 @@ index 72908be5e..f926b1fb1 100644
  
  	/* Cached mappings are explicitly requested, so no write-combine. */
 diff --git a/drivers/gpu/drm/panthor/panthor_gpu.c b/drivers/gpu/drm/panthor/panthor_gpu.c
-index 3dc60b2b3..976064f2f 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/panthor/panthor_gpu.c
 +++ b/drivers/gpu/drm/panthor/panthor_gpu.c
-@@ -21,6 +21,7 @@
+@@ -19,6 +19,7 @@
+ 
+ #include "panthor_device.h"
  #include "panthor_gpu.h"
++#include "panthor_sky1.h"
  #include "panthor_gpu_regs.h"
  #include "panthor_hw.h"
-+#include "panthor_sky1.h"
  
- #define CREATE_TRACE_POINTS
- #include "panthor_trace.h"
 @@ -59,8 +60,16 @@ struct panthor_gpu {
  
  static void panthor_gpu_coherency_set(struct panthor_device *ptdev)
@@ -111,16 +108,12 @@ index 3dc60b2b3..976064f2f 100644
  }
  
  static void panthor_gpu_l2_config_set(struct panthor_device *ptdev)
-@@ -465,22 +474,35 @@ int panthor_gpu_coherency_init(struct panthor_device *ptdev)
+@@ -464,23 +473,32 @@ int panthor_gpu_coherency_init(struct panthor_device *ptdev)
+ 	BUILD_BUG_ON(GPU_COHERENCY_NONE != DRM_PANTHOR_GPU_COHERENCY_NONE);
  	BUILD_BUG_ON(GPU_COHERENCY_ACE_LITE != DRM_PANTHOR_GPU_COHERENCY_ACE_LITE);
  	BUILD_BUG_ON(GPU_COHERENCY_ACE != DRM_PANTHOR_GPU_COHERENCY_ACE);
- 
--	/* Start with no coherency, and update it if the device is flagged coherent. */
--	ptdev->gpu_info.selected_coherency = GPU_COHERENCY_NONE;
--	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
 +	bool dma_coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
- 
--	if (!ptdev->coherent)
++
 +	/*
 +	 * Sky1 SoC: The GPU hardware supports full ACE (128/256-bit AMBA 4
 +	 * ACE master), but the platform uses ACE-Lite (DT system-coherency=0).
@@ -136,10 +129,12 @@ index 3dc60b2b3..976064f2f 100644
 +	} else {
 +		ptdev->coherency_mode = PANTHOR_COHERENCY_ACE_LITE;
 +	}
-+
-+	/* The mode values match the GPU_COHERENCY_* encoding reported to userspace. */
-+	ptdev->gpu_info.selected_coherency = ptdev->coherency_mode;
-+
+ 
+-	/* Start with no coherency, and update it if the device is flagged coherent. */
+-	ptdev->gpu_info.selected_coherency = GPU_COHERENCY_NONE;
+-	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
+-
+-	if (!ptdev->coherent)
 +	if (ptdev->coherency_mode == PANTHOR_COHERENCY_NONE)
  		return 0;
  
@@ -160,7 +155,7 @@ index 3dc60b2b3..976064f2f 100644
  	return -ENOTSUPP;
  }
 diff --git a/drivers/gpu/drm/panthor/panthor_gpu_regs.h b/drivers/gpu/drm/panthor/panthor_gpu_regs.h
-index 4c5b95379..1960bf591 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/panthor/panthor_gpu_regs.h
 +++ b/drivers/gpu/drm/panthor/panthor_gpu_regs.h
 @@ -115,5 +115,6 @@
@@ -171,7 +166,7 @@ index 4c5b95379..1960bf591 100644
  
  #endif /* __PANTHOR_GPU_REGS_H__ */
 diff --git a/drivers/gpu/drm/panthor/panthor_mmu.c b/drivers/gpu/drm/panthor/panthor_mmu.c
-index d9440897f..ced5d4679 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/panthor/panthor_mmu.c
 +++ b/drivers/gpu/drm/panthor/panthor_mmu.c
 @@ -795,7 +795,7 @@ int panthor_vm_active(struct panthor_vm *vm)
@@ -248,3 +243,6 @@ index d9440897f..ced5d4679 100644
  
  	mutex_lock(&ptdev->mmu->vm.lock);
  	list_add_tail(&vm->node, &ptdev->mmu->vm.list);
+-- 
+Cixtech
+

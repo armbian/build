@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Tue, 27 Oct 2026 14:00:00 +0800
+Subject: acpi: supply the cell count old CIX firmware omits on SCMI
+ nodes
+
+---
+ drivers/acpi/internal.h  |  2 +
+ drivers/acpi/property.c  |  2 +-
+ drivers/acpi/sta_quirk.c | 50 +++++++++-
+ 3 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/acpi/internal.h b/drivers/acpi/internal.h
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/internal.h
++++ b/drivers/acpi/internal.h
+@@ -131,6 +131,8 @@ bool acpi_device_is_first_physical_node(struct acpi_device *adev,
+ int acpi_bus_register_early_device(int type);
+ bool acpi_sta_override_firmware_quirk(struct acpi_device *adev,
+ 				       unsigned long long *status);
++unsigned int acpi_cells_override_firmware_quirk(struct fwnode_handle *fwnode,
++						const char *cells_prop);
+ 
+ /* --------------------------------------------------------------------------
+                      Device Matching and Notification
+diff --git a/drivers/acpi/property.c b/drivers/acpi/property.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/property.c
++++ b/drivers/acpi/property.c
+@@ -857,7 +857,7 @@ static unsigned int acpi_fwnode_get_args_count(struct fwnode_handle *fwnode,
+ 
+ 	ret = acpi_data_get_property(data, nargs_prop, ACPI_TYPE_INTEGER, &obj);
+ 	if (ret)
+-		return 0;
++		return acpi_cells_override_firmware_quirk(fwnode, nargs_prop);
+ 
+ 	return obj->integer.value;
+ }
+diff --git a/drivers/acpi/sta_quirk.c b/drivers/acpi/sta_quirk.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/sta_quirk.c
++++ b/drivers/acpi/sta_quirk.c
+@@ -1,12 +1,14 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * ACPI _STA overrides for firmware bugs (non-arch-specific).
++ * ACPI overrides for firmware bugs (non-arch-specific).
+  *
+  * CIX: unhide SCMI protocol child devices (CIXHA008/CIXHA009) that old
+- * firmware leaves at _STA 0 under CIXHA006.
++ * firmware leaves at _STA 0 under CIXHA006, and supply the cell count that
++ * old firmware omits on the SCMI performance protocol node.
+  */
+ 
+ #include <linux/acpi.h>
++#include <linux/string.h>
+ #include <acpi/acpi_bus.h>
+ 
+ #include "internal.h"
+@@ -34,3 +36,47 @@ bool acpi_sta_override_firmware_quirk(struct acpi_device *adev,
+ 	*status = ACPI_STA_DEFAULT;
+ 	return true;
+ }
++
++/*
++ * Old CIX firmware describes the SCMI performance protocol node (CIXHA008)
++ * without "#power-domain-cells", even though consumers encode the domain
++ * index right after the reference:
++ *
++ *	Package () { "power-domains", Package () { \_SB.SCMI.DVFS, 8 } }
++ *
++ * acpi_get_ref_args() takes the argument count from the provider and thus
++ * resolves it to zero, so the index is dropped and every consumer ends up
++ * on domain 0 (gpu_core).  Report the single cell the binding requires,
++ * which is also what firmware built after the ACPI2.0 migration declares
++ * explicitly.
++ */
++static const struct cix_cells_quirk {
++	const char *hid;
++	const char *prop;
++	unsigned int cells;
++} cix_cells_quirk[] = {
++	{ "CIXHA008", "#power-domain-cells", 1 },
++};
++
++unsigned int acpi_cells_override_firmware_quirk(struct fwnode_handle *fwnode,
++						const char *cells_prop)
++{
++	struct acpi_device *adev = to_acpi_device_node(fwnode);
++	const char *hid;
++	int i;
++
++	if (!adev || !cells_prop)
++		return 0;
++
++	hid = acpi_device_hid(adev);
++	if (!hid)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(cix_cells_quirk); i++) {
++		if (!strcmp(hid, cix_cells_quirk[i].hid) &&
++		    !strcmp(cells_prop, cix_cells_quirk[i].prop))
++			return cix_cells_quirk[i].cells;
++	}
++
++	return 0;
++}
+-- 
+Cixtech
+
