@@ -5,15 +5,15 @@ Subject: pinctrl: sky1: add acpi support
 
 ---
  drivers/pinctrl/Makefile                |   1 +
- drivers/pinctrl/cix/pinctrl-sky1-base.c | 972 ++++++----
- drivers/pinctrl/cix/pinctrl-sky1.c      | 912 +++++----
+ drivers/pinctrl/cix/pinctrl-sky1-base.c | 974 ++++++----
+ drivers/pinctrl/cix/pinctrl-sky1.c      | 912 ++++-----
  drivers/pinctrl/cix/pinctrl-sky1.h      |  62 +-
  drivers/pinctrl/core.c                  |  26 +-
  drivers/pinctrl/core.h                  |   3 +
  drivers/pinctrl/pinctrl-acpi.c          | 774 ++++++++
  drivers/pinctrl/pinctrl-acpi.h          | 105 +
  include/linux/pinctrl/pinctrl.h         |  17 +
- 9 files changed, 1982 insertions(+), 890 deletions(-)
+ 9 files changed, 1985 insertions(+), 889 deletions(-)
 
 diff --git a/drivers/pinctrl/Makefile b/drivers/pinctrl/Makefile
 index 111111111111..222222222222 100644
@@ -451,70 +451,34 @@ index 111111111111..222222222222 100644
  }
  
 -static int sky1_pctrl_get_groups_count(struct pinctrl_dev *pctldev)
--{
--	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
--
--	return spctl->info->npins;
--}
--
--static const char *sky1_pctrl_get_group_name(struct pinctrl_dev *pctldev,
--					      unsigned int group)
--{
--	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
--
--	return spctl->groups[group].name;
--}
--
--static int sky1_pctrl_get_group_pins(struct pinctrl_dev *pctldev,
--				      unsigned int group,
--				      const unsigned int **pins,
--				      unsigned int *num_pins)
--{
--	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
--
--	*pins = (unsigned int *)&spctl->groups[group].pin;
--	*num_pins = 1;
--
--	return 0;
--}
--
--static void sky1_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_file *s,
--		   unsigned int offset)
 +static void sky1_acpi_free_map(struct pinctrl_dev *pctldev,
 +			       struct pinctrl_map *map,
 +			       unsigned int num_maps)
  {
--	seq_printf(s, "%s", dev_name(pctldev->dev));
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-
+-	return spctl->info->npins;
 +	kfree(map);
  }
  
- static const struct pinctrl_ops sky1_pctrl_ops = {
--	.dt_node_to_map = sky1_pctrl_dt_node_to_map,
--	.dt_free_map = sky1_dt_free_map,
--	.get_groups_count = sky1_pctrl_get_groups_count,
--	.get_group_name = sky1_pctrl_get_group_name,
--	.get_group_pins = sky1_pctrl_get_group_pins,
+-static const char *sky1_pctrl_get_group_name(struct pinctrl_dev *pctldev,
+-					      unsigned int group)
++static const struct pinctrl_ops sky1_pctrl_ops = {
 +	.get_groups_count = pinctrl_generic_get_group_count,
 +	.get_group_name = pinctrl_generic_get_group_name,
 +	.get_group_pins = pinctrl_generic_get_group_pins,
- 	.pin_dbg_show = sky1_pin_dbg_show,
++	.pin_dbg_show = sky1_pin_dbg_show,
 +	.dt_node_to_map = sky1_dt_node_to_map,
 +	.acpi_node_to_map = sky1_acpi_node_to_map,
 +	.dt_free_map = sky1_dt_free_map,
 +	.acpi_free_map = sky1_acpi_free_map,
- };
- 
- static int sky1_pmx_set_one_pin(struct sky1_pinctrl *spctl,
--				    unsigned int pin, unsigned char muxval)
++};
++
++static int sky1_pmx_set_one_pin(struct sky1_pinctrl *spctl,
 +				    struct sky1_pin *pin)
  {
- 	u32 reg_val;
--	void __iomem *pin_reg;
--
--	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
--	reg_val = readl(pin_reg);
--	reg_val &= ~SKY1_MUX_MASK;
--	reg_val |= muxval << SKY1_MUX_SHIFT;
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
++	u32 reg_val;
 +	u32 *pin_reg;
 +
 +	pin_reg = spctl->base + pin->offset;
@@ -525,29 +489,29 @@ index 111111111111..222222222222 100644
 +	} else {
 +		reg_val = pin->configs & (SKY1_MUX_MASK|SKY1_CONF_MASK);
 +	}
- 	writel(reg_val, pin_reg);
++	writel(reg_val, pin_reg);
  
- 	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
--		pin * SKY1_PIN_SIZE, reg_val);
+-	return spctl->groups[group].name;
++	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
 +		pin->offset, reg_val);
- 	return 0;
++	return 0;
  }
  
--static int sky1_pmx_set_mux(struct pinctrl_dev *pctldev,
--			    unsigned int function,
--			    unsigned int group)
+-static int sky1_pctrl_get_group_pins(struct pinctrl_dev *pctldev,
+-				      unsigned int group,
+-				      const unsigned int **pins,
+-				      unsigned int *num_pins)
 +static int sky1_pmx_set(struct pinctrl_dev *pctldev, unsigned selector,
 +		       unsigned int group)
  {
--	bool ret;
  	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
--	struct sky1_pinctrl_group *g =
--		(struct sky1_pinctrl_group *)spctl->groups + group;
 +	const struct function_desc *func;
 +	struct group_desc *grp;
 +	struct sky1_pin *pin;
 +	int i, err;
-+
+ 
+-	*pins = (unsigned int *)&spctl->groups[group].pin;
+-	*num_pins = 1;
 +	/*
 +	 * Configure the mux mode for each pin in the group for a specific
 +	 * function.
@@ -556,14 +520,16 @@ index 111111111111..222222222222 100644
 +	if (!grp)
 +		return -EINVAL;
  
--	ret = sky1_pctrl_is_function_valid(spctl, g->pin, function);
--	if (!ret) {
--		dev_err(spctl->dev, "invalid function %d on group %d .\n",
--				function, group);
+-	return 0;
+-}
 +	func = pinmux_generic_get_function(pctldev, selector);
 +	if (!func)
- 		return -EINVAL;
-+
++		return -EINVAL;
+ 
+-static void sky1_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_file *s,
+-		   unsigned int offset)
+-{
+-	seq_printf(s, "%s", dev_name(pctldev->dev));
 +	dev_dbg(spctl->dev, "enable function %d group %s\n",
 +		selector, grp->grp.name);
 +
@@ -575,45 +541,68 @@ index 111111111111..222222222222 100644
 +		err = sky1_pmx_set_one_pin(spctl, pin);
 +		if (err)
 +			return err;
- 	}
- 
--	sky1_pmx_set_one_pin(spctl, g->pin, function);
- 	return 0;
++	}
++
++	return 0;
  }
  
--static int sky1_pmx_get_funcs_cnt(struct pinctrl_dev *pctldev)
+-static const struct pinctrl_ops sky1_pctrl_ops = {
+-	.dt_node_to_map = sky1_pctrl_dt_node_to_map,
+-	.dt_free_map = sky1_dt_free_map,
+-	.get_groups_count = sky1_pctrl_get_groups_count,
+-	.get_group_name = sky1_pctrl_get_group_name,
+-	.get_group_pins = sky1_pctrl_get_group_pins,
+-	.pin_dbg_show = sky1_pin_dbg_show,
 +struct pinmux_ops sky1_pmx_ops = {
 +	.get_functions_count = pinmux_generic_get_function_count,
 +	.get_function_name = pinmux_generic_get_function_name,
 +	.get_function_groups = pinmux_generic_get_function_groups,
 +	.set_mux = sky1_pmx_set,
-+};
-+
+ };
+ 
+-static int sky1_pmx_set_one_pin(struct sky1_pinctrl *spctl,
+-				    unsigned int pin, unsigned char muxval)
 +static int sky1_pinconf_get(struct pinctrl_dev *pctldev,
 +			   unsigned int pin_id, unsigned long *config)
  {
--	return ARRAY_SIZE(sky1_gpio_functions);
+-	u32 reg_val;
+-	void __iomem *pin_reg;
 +	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
-+
+ 
+-	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
+-	reg_val = readl(pin_reg);
+-	reg_val &= ~SKY1_MUX_MASK;
+-	reg_val |= muxval << SKY1_MUX_SHIFT;
+-	writel(reg_val, pin_reg);
 +	if (spctl->pin_regs[pin_id] == -1)
 +		return -EINVAL;
 +	*config = readl(spctl->base + spctl->pin_regs[pin_id]);
-+
-+	return 0;
+ 
+-	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
+-		pin * SKY1_PIN_SIZE, reg_val);
+ 	return 0;
  }
  
--static const char *sky1_pmx_get_func_name(struct pinctrl_dev *pctldev,
--					   unsigned int selector)
+-static int sky1_pmx_set_mux(struct pinctrl_dev *pctldev,
+-			    unsigned int function,
+-			    unsigned int group)
 +static int sky1_pinconf_set(struct pinctrl_dev *pctldev,
 +			   unsigned int pin_id, unsigned long *configs,
 +			   unsigned int num_configs)
  {
--	return sky1_gpio_functions[selector];
-+	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	bool ret;
+ 	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	struct sky1_pinctrl_group *g =
+-		(struct sky1_pinctrl_group *)spctl->groups + group;
 +	u32 reg_val;
 +	u32 *pin_reg;
 +	int i;
-+
+ 
+-	ret = sky1_pctrl_is_function_valid(spctl, g->pin, function);
+-	if (!ret) {
+-		dev_err(spctl->dev, "invalid function %d on group %d .\n",
+-				function, group);
+-		return -EINVAL;
 +	pin_reg = spctl->base + spctl->pin_regs[pin_id];
 +
 +	for(i = 0; i < num_configs; i++) {
@@ -624,20 +613,18 @@ index 111111111111..222222222222 100644
 +
 +		dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
 +			spctl->pin_regs[pin_id], reg_val);
-+	}
-+
-+	return 0;
+ 	}
+ 
+-	sky1_pmx_set_one_pin(spctl, g->pin, function);
+ 	return 0;
  }
  
--static int sky1_pmx_get_func_groups(struct pinctrl_dev *pctldev,
--				     unsigned int function,
--				     const char * const **groups,
--				     unsigned int * const num_groups)
+-static int sky1_pmx_get_funcs_cnt(struct pinctrl_dev *pctldev)
 +static void sky1_pinconf_dbg_show(struct pinctrl_dev *pctldev,
 +				   struct seq_file *s, unsigned int pin_id)
  {
- 	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
--	const struct sky1_pinctrl_soc_info *info = spctl->info;
+-	return ARRAY_SIZE(sky1_gpio_functions);
++	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
 +	u32 config;
 +	u32 *pin_reg;
 +
@@ -645,24 +632,19 @@ index 111111111111..222222222222 100644
 +		seq_puts(s, "N/A");
 +		return;
 +	}
- 
--	*groups = spctl->grp_names;
--	*num_groups = info->npins;
++
 +	pin_reg = spctl->base + spctl->pin_regs[pin_id];
 +	config = readl(pin_reg) & SKY1_CONF_MASK;
- 
--	return 0;
++
 +	seq_printf(s, "0x%x", config);
  }
  
--static const struct pinmux_ops sky1_pmx_ops = {
--	.get_functions_count = sky1_pmx_get_funcs_cnt,
--	.get_function_groups = sky1_pmx_get_func_groups,
--	.get_function_name = sky1_pmx_get_func_name,
--	.set_mux = sky1_pmx_set_mux,
+-static const char *sky1_pmx_get_func_name(struct pinctrl_dev *pctldev,
+-					   unsigned int selector)
 +static void sky1_pinconf_group_dbg_show(struct pinctrl_dev *pctldev,
 +					  struct seq_file *s, unsigned int group)
-+{
+ {
+-	return sky1_gpio_functions[selector];
 +	struct group_desc *grp;
 +	unsigned long config;
 +	const char *name;
@@ -682,17 +664,19 @@ index 111111111111..222222222222 100644
 +			return;
 +		seq_printf(s, "  %s: 0x%lx\n", name, config);
 +	}
-+}
-+
+ }
+ 
+-static int sky1_pmx_get_func_groups(struct pinctrl_dev *pctldev,
+-				     unsigned int function,
+-				     const char * const **groups,
+-				     unsigned int * const num_groups)
 +static const struct pinconf_ops sky1_pinconf_ops = {
 +	.pin_config_get = sky1_pinconf_get,
 +	.pin_config_set = sky1_pinconf_set,
 +	.pin_config_dbg_show = sky1_pinconf_dbg_show,
 +	.pin_config_group_dbg_show = sky1_pinconf_group_dbg_show,
- };
- 
--static int sky1_pconf_set_pull_select(struct sky1_pinctrl *spctl,
--		unsigned int pin, bool enable, bool isup)
++};
++
 +/*
 + * Each pin represented in sky1,pins consists of
 + * a number of u32 OFFSET and a number of u32 CONFIGS,
@@ -709,44 +693,38 @@ index 111111111111..222222222222 100644
 +				       const __be32 **list_p,
 +				       struct device_node *np)
  {
--	u32 reg_val, reg_pullsel = 0;
--	void __iomem *pin_reg;
--
--	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
--	reg_val = readl(pin_reg);
--	reg_val &= ~SKY1_PULLCONF_MASK;
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
 +	const __be32 *list = *list_p;
 +	unsigned int configs0, configs1;
-+	const struct sky1_pinctrl_soc_info *info = spctl->info;
+ 	const struct sky1_pinctrl_soc_info *info = spctl->info;
  
--	if (!enable)
--		goto update;
+-	*groups = spctl->grp_names;
+-	*num_groups = info->npins;
 +	pin->offset = be32_to_cpu(*list++);
 +	*pin_id = pin->offset / 4;
 +	pin->pin_id = *pin_id;
  
--	if (isup)
--		reg_pullsel = BIT(SKY1_PULLUP_BIT);
--	else
--		reg_pullsel = BIT(SKY1_PULLDN_BIT);
+-	return 0;
+-}
 +	configs0 = be32_to_cpu(*list++);
 +	configs1 = be32_to_cpu(*list++);
 +	pin->configs =  (((configs0 & PADS_FUNCS_MASK) << PADS_FUNCS_BITS) | (configs1 & PADS_CONFS_MASK));
 +	spctl->pin_regs[*pin_id] = pin->offset;
  
--update:
--	reg_val |= reg_pullsel;
--	writel(reg_val, pin_reg);
+-static const struct pinmux_ops sky1_pmx_ops = {
+-	.get_functions_count = sky1_pmx_get_funcs_cnt,
+-	.get_function_groups = sky1_pmx_get_func_groups,
+-	.get_function_name = sky1_pmx_get_func_name,
+-	.set_mux = sky1_pmx_set_mux,
+-};
 +	*list_p = list;
- 
--	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
--		pin * SKY1_PIN_SIZE, reg_val);
--	return 0;
++
 +	dev_dbg(spctl->dev, "%s: 0x%x 0x%08lx", info->pins[*pin_id].name,
 +		pin->offset, pin->configs);
- }
++}
  
--static int sky1_ds_to_index(unsigned char driving)
+-static int sky1_pconf_set_pull_select(struct sky1_pinctrl *spctl,
+-		unsigned int pin, bool enable, bool isup)
 +static int sky1_pinctrl_parse_groups(struct device_node *np,
 +				    struct sky1_pinctrl *spctl,
 +				    const char *grp_name,
@@ -754,17 +732,20 @@ index 111111111111..222222222222 100644
 +					    struct sky1_pin *pin_data,
 +					    unsigned int num_pins)
  {
+-	u32 reg_val, reg_pullsel = 0;
+-	void __iomem *pin_reg;
 +	struct sky1_pin *pin;
 +	int size;
 +	const __be32 *list;
- 	int i;
++	int i;
  
--	for (i = 0; i < sizeof(sky1_ds_table); i++)
--		if (driving == sky1_ds_table[i])
--			return i;
--	return SKY1_DEFAULT_DS_VAL;
+-	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
+-	reg_val = readl(pin_reg);
+-	reg_val &= ~SKY1_PULLCONF_MASK;
 +	dev_dbg(spctl->dev, "group: %pOFn\n", np);
-+
+ 
+-	if (!enable)
+-		goto update;
 +	list = of_get_property(np, "sky1,pins", &size);
 +	if (!list) {
 +		list = of_get_property(np, "pinmux", &size);
@@ -774,29 +755,42 @@ index 111111111111..222222222222 100644
 +			return -EINVAL;
 +		}
 +	}
-+
+ 
+-	if (isup)
+-		reg_pullsel = BIT(SKY1_PULLUP_BIT);
+-	else
+-		reg_pullsel = BIT(SKY1_PULLDN_BIT);
 +	if (!size || size % SKY1_PIN_SIZE) {
 +		dev_err(spctl->dev, "Invalid sky1,pins or pins property in node %pOF\n", np);
 +		return -EINVAL;
 +	}
-+
+ 
+-update:
+-	reg_val |= reg_pullsel;
+-	writel(reg_val, pin_reg);
 +	for (i = 0; i < num_pins; i++) {
 +		pin = &pin_data[i];
 +		sky1_pinctrl_parse_pin(spctl, &pin_array[i],
 +				           pin, &list, np);
 +	}
-+
-+	return 0;
+ 
+-	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
+-		pin * SKY1_PIN_SIZE, reg_val);
+ 	return 0;
  }
  
--static int sky1_pconf_set_driving(struct sky1_pinctrl *spctl,
--		unsigned int pin, unsigned char driving)
+-static int sky1_ds_to_index(unsigned char driving)
 +static int sky1_pinctrl_parse_functions(struct device_node *np,
 +				       struct sky1_pinctrl *spctl,
 +				       u32 index)
  {
--	unsigned int reg_val, val;
--	void __iomem *pin_reg;
+-	int i;
+-
+-	for (i = 0; i < sizeof(sky1_ds_table); i++)
+-		if (driving == sky1_ds_table[i])
+-			return i;
+-	return SKY1_DEFAULT_DS_VAL;
+-}
 +	struct pinctrl_dev *pctl = spctl->pctl;
 +	struct device_node *child;
 +	struct sky1_pin *pin_data;
@@ -805,7 +799,12 @@ index 111111111111..222222222222 100644
 +	unsigned int num_groups;
 +	unsigned int i = 0;
 +	int ret;
-+
+ 
+-static int sky1_pconf_set_driving(struct sky1_pinctrl *spctl,
+-		unsigned int pin, unsigned char driving)
+-{
+-	unsigned int reg_val, val;
+-	void __iomem *pin_reg;
 +	dev_dbg(pctl->dev, "parse function(%d): %pOFn\n", index, np);
  
 -	if (pin >= spctl->info->npins)
@@ -1099,7 +1098,7 @@ index 111111111111..222222222222 100644
  	}
  
  	return 0;
-@@ -508,7 +716,6 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+@@ -508,7 +720,6 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
  {
  	struct pinctrl_desc *sky1_pinctrl_desc;
  	struct sky1_pinctrl *spctl;
@@ -1107,7 +1106,7 @@ index 111111111111..222222222222 100644
  	int ret, i;
  
  	if (!info || !info->pins || !info->npins) {
-@@ -521,8 +728,15 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+@@ -521,8 +732,15 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
  	if (!spctl)
  		return -ENOMEM;
  
@@ -1125,7 +1124,7 @@ index 111111111111..222222222222 100644
  
  	spctl->base = devm_platform_ioremap_resource(pdev, 0);
  	if (IS_ERR(spctl->base))
-@@ -533,25 +747,19 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+@@ -533,25 +751,19 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
  	if (!sky1_pinctrl_desc)
  		return -ENOMEM;
  
@@ -1157,7 +1156,7 @@ index 111111111111..222222222222 100644
  	ret = devm_pinctrl_register_and_init(&pdev->dev,
  					     sky1_pinctrl_desc, spctl,
  					     &spctl->pctl);
-@@ -560,22 +768,18 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+@@ -560,22 +772,18 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
  		return ret;
  	}
  
@@ -1191,7 +1190,7 @@ index 111111111111..222222222222 100644
  
  	return pinctrl_enable(spctl->pctl);
  }
-@@ -583,5 +787,5 @@ EXPORT_SYMBOL_GPL(sky1_base_pinctrl_probe);
+@@ -583,5 +791,5 @@ EXPORT_SYMBOL_GPL(sky1_base_pinctrl_probe);
  
  
  MODULE_AUTHOR("Jerry Zhu <Jerry.Zhu@cixtech.com>");
@@ -2271,7 +2270,7 @@ index 111111111111..222222222222 100644
  
  static bool pinctrl_dummy_state;
  
-@@ -1099,9 +1101,15 @@ static struct pinctrl *create_pinctrl(struct device *dev,
+@@ -1112,9 +1114,15 @@ static struct pinctrl *create_pinctrl(struct device *dev,
  		return ERR_PTR(-ENOMEM);
  	p->dev = dev;
  	INIT_LIST_HEAD(&p->states);
@@ -2289,7 +2288,7 @@ index 111111111111..222222222222 100644
  	if (ret < 0) {
  		kfree(p);
  		return ERR_PTR(ret);
-@@ -1225,7 +1233,10 @@ static void pinctrl_free(struct pinctrl *p, bool inlist)
+@@ -1238,7 +1246,10 @@ static void pinctrl_free(struct pinctrl *p, bool inlist)
  		kfree(state);
  	}
  
@@ -2301,7 +2300,7 @@ index 111111111111..222222222222 100644
  
  	if (inlist)
  		list_del(&p->node);
-@@ -2218,14 +2229,15 @@ int pinctrl_enable(struct pinctrl_dev *pctldev)
+@@ -2249,14 +2260,15 @@ int pinctrl_enable(struct pinctrl_dev *pctldev)
  {
  	int error;
  
@@ -3276,5 +3275,5 @@ index 111111111111..222222222222 100644
  
  /**
 -- 
-Cixtech
+Armbian
 
