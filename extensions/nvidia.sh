@@ -173,8 +173,9 @@ function install_armbian_nvidia_autodetect_helper() {
 		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
 		# Kept until the removal completes, so a failed removal runs again.
 		MARK=/var/lib/armbian/nvidia-remove
-		# nvidia-settings autostart fails without the driver. Mask it until the removal.
-		AUTOSTART='/etc/systemd/user/app-nvidia\x2dsettings\x2dautostart@autostart.service'
+		# nvidia-settings autostart fails without the driver. Mask it at each boot without
+		# an NVIDIA GPU. /run is lost at shutdown. Units of the administrator in /etc win.
+		AUTOSTART='/run/systemd/user/app-nvidia\x2dsettings\x2dautostart@autostart.service'
 
 		log() {
 			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
@@ -207,13 +208,10 @@ function install_armbian_nvidia_autodetect_helper() {
 						log "NVIDIA hardware found; driver enabled"
 					fi
 					rm -f "$MARK"
-					# Remove only the mask of this helper, not a unit of the administrator.
-					[ "$(readlink "$AUTOSTART")" = /dev/null ] && rm -f "$AUTOSTART"
 					modprobe nvidia_drm modeset=1 2> /dev/null || true
 					exit 0
 				fi
 				mkdir -p "${AUTOSTART%/*}"
-				# Do not replace a unit of the administrator.
 				[ -e "$AUTOSTART" ] || [ -L "$AUTOSTART" ] || ln -s /dev/null "$AUTOSTART"
 				mkdir -p /etc/modprobe.d
 				cat > "$BLACKLIST" <<- EOF
