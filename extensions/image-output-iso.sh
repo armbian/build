@@ -215,9 +215,15 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		set default=0
 		set timeout=${ISO_TIMEOUT}
 		set timeout_style=hidden
+		# Use serial only when com0 exists. grub probes the ports itself; in an
+		# 'if' condition it does not print the error. Without this, the failed
+		# 'terminal_output gfxterm serial' leaves gfxterm off.
 		insmod serial
-		serial --unit=0 --speed=115200
-		terminal_input console serial
+		set armbian_serial=0
+		if serial --unit=0 --speed=115200; then
+		    terminal_input --append serial
+		    set armbian_serial=1
+		fi
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
 		    # UEFI: not all_video. Its video_bochs sets the QEMU standard VGA behind the
 		    # firmware, and a kernel with only the EFI framebuffer shows garbage.
@@ -230,10 +236,13 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		    insmod gfxterm
 		    insmod png
 		    set gfxmode=auto
-		    terminal_output gfxterm serial
+		    terminal_output gfxterm
 		    background_image \$prefix/armbian.png
 		else
-		    terminal_output console serial
+		    terminal_output console
+		fi
+		if [ "\$armbian_serial" = "1" ]; then
+		    terminal_output --append serial
 		fi
 		menuentry "Armbian ${version} (live)" {
 		    set gfxpayload=keep
