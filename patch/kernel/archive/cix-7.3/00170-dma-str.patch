@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Sat, 10 Oct 2026 14:36:23 +0800
+Subject: dma350: add str support
+
+---
+ drivers/dma/arm-dma350.c | 156 +++++++---
+ 1 file changed, 121 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/dma/arm-dma350.c b/drivers/dma/arm-dma350.c
+index 111111111111..222222222222 100644
+--- a/drivers/dma/arm-dma350.c
++++ b/drivers/dma/arm-dma350.c
+@@ -273,6 +273,7 @@ struct d350 {
+ 	/* Remote control regmap (e.g., AUDSS CRU for interrupt routing) */
+ 	struct regmap *remote_ctrl;
+ 
++	bool coherent;
+ 	int nchan;
+ 	int nreq;
+ 	struct d350_chan channels[] __counted_by(nchan);
+@@ -293,6 +294,46 @@ static inline struct d350 *to_d350(struct dma_device *dma)
+ 	return container_of(dma, struct d350, dma);
+ }
+ 
++/*
++ * Route channel IRQ to the AP via AUDSS CRU AP_IRQ (Sky1).
++ * CRU 0x54 is not part of audss clk reg_save and is cleared across S3 /
++ * AUDSS power cycles; re-arm before starting transfers (was only done once
++ * at alloc_chan_resources, so DP audio hung with hw_ptr stuck after resume).
++ */
++static void d350_enable_ap_irq(struct d350 *dmac, int chan_id)
++{
++	if (!dmac->remote_ctrl || chan_id < 0 || chan_id >= dmac->nchan)
++		return;
++
++	regmap_update_bits(dmac->remote_ctrl, AUDSS_CRU_AP_IRQ,
++			   BIT(chan_id), BIT(chan_id));
++}
++
++static void d350_restore_ap_irq_all(struct d350 *dmac)
++{
++	int i;
++
++	if (!dmac->remote_ctrl)
++		return;
++
++	for (i = 0; i < dmac->nchan; i++)
++		d350_enable_ap_irq(dmac, i);
++}
++
++static void d350_restore_linkattr_all(struct d350 *dmac)
++{
++	int i;
++	u32 reg;
++
++	reg = FIELD_PREP(CH_LINK_SHAREATTR,
++			 dmac->coherent ? SHAREATTR_ISH : SHAREATTR_OSH);
++	reg |= FIELD_PREP(CH_LINK_MEMATTR,
++			  dmac->coherent ? MEMATTR_WB : MEMATTR_NC);
++
++	for (i = 0; i < dmac->nchan; i++)
++		writel_relaxed(reg, dmac->channels[i].base + CH_LINKATTR);
++}
++
+ /* Translate CPU address to DMA-350 view */
+ static inline dma_addr_t d350_translate_addr(struct d350 *dmac, dma_addr_t addr)
+ {
+@@ -960,12 +1001,9 @@ static int d350_alloc_chan_resources(struct dma_chan *chan)
+ 	 * On Sky1, this sets bit N in AUDSS_CRU_AP_IRQ to route channel N
+ 	 * interrupts to the application processor.
+ 	 */
+-	if (dmac->remote_ctrl) {
+-		regmap_update_bits(dmac->remote_ctrl, AUDSS_CRU_AP_IRQ,
+-				   BIT(chan_id), BIT(chan_id));
+-		dev_dbg(chan->device->dev, "Enabled IRQ routing for channel %d\n",
+-			chan_id);
+-	}
++	d350_enable_ap_irq(dmac, chan_id);
++	dev_dbg(chan->device->dev, "Enabled IRQ routing for channel %d\n",
++		chan_id);
+ 
+ 	return 0;
+ }
+@@ -986,9 +1024,13 @@ static int d350_device_config(struct dma_chan *chan,
+ 			      struct dma_slave_config *config)
+ {
+ 	struct d350_chan *dch = to_d350_chan(chan);
++	struct d350 *dmac = to_d350(chan->device);
+ 
+ 	memcpy(&dch->slave_cfg, config, sizeof(*config));
+ 
++	/* Re-arm AUDSS IRQ routing (cleared across suspend / CRU restore). */
++	d350_enable_ap_irq(dmac, dch->vc.chan.chan_id);
++
+ 	if (config->direction == DMA_MEM_TO_DEV) {
+ 		dch->dev_addr = config->dst_addr;
+ 		dch->dir = DMA_MEM_TO_DEV;
+@@ -1181,6 +1223,12 @@ static struct dma_async_tx_descriptor *d350_prep_dma_cyclic(
+ 	dev_dbg(dev, "prep_dma_cyclic: chan=%d dir=%d buf=%pad len=%zu period=%zu periods=%zu\n",
+ 		dch->vc.chan.chan_id, dir, &buf_addr, buf_len, period_len, num_periods);
+ 
++	/*
++	 * Match BSP behaviour: rewrite AUDSS AP_IRQ on every cyclic prep so
++	 * playback after S3 still delivers DMA completion IRQs to the AP.
++	 */
++	d350_enable_ap_irq(dmac, dch->vc.chan.chan_id);
++
+ 	/* Get device address and transfer size from slave config */
+ 	if (dir == DMA_MEM_TO_DEV) {
+ 		dev_addr = d350_translate_addr(dmac, dch->slave_cfg.dst_addr);
+@@ -1244,6 +1292,7 @@ static int d350_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct d350 *dmac;
+ 	struct clk *clk;
++	struct reset_control *rst = NULL;
+ 	void __iomem *base;
+ 	u32 reg;
+ 	int ret, nchan, dw, aw, r, p;
+@@ -1296,35 +1345,31 @@ static int d350_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	/* Get and deassert reset (optional - some platforms may not have one) */
+-	{
+-		struct reset_control *rst;
+-
+-		rst = devm_reset_control_get_optional_exclusive(dev, "dma_reset");
+-		if (IS_ERR(rst)) {
+-			ret = PTR_ERR(rst);
+-			dev_err(dev, "Failed to get reset: %d\n", ret);
+-			goto err_pm_put;
+-		}
+-		/*
+-		 * Under ACPI, the audio reset controller (CIXH6062)
+-		 * registers lookup entries during its probe.  If we
+-		 * got NULL, it hasn't probed yet — defer.
+-		 */
+-		if (!rst && has_acpi_companion(dev)) {
+-			dev_info(dev, "waiting for audio reset controller\n");
+-			ret = -EPROBE_DEFER;
++	rst = devm_reset_control_get_optional_exclusive(dev, "dma_reset");
++	if (IS_ERR(rst)) {
++		ret = PTR_ERR(rst);
++		dev_err(dev, "Failed to get reset: %d\n", ret);
++		goto err_pm_put;
++	}
++	/*
++	 * Under ACPI, the audio reset controller (CIXH6062)
++	 * registers lookup entries during its probe.  If we
++	 * got NULL, it hasn't probed yet — defer.
++	 */
++	if (!rst && has_acpi_companion(dev)) {
++		dev_info(dev, "waiting for audio reset controller\n");
++		ret = -EPROBE_DEFER;
++		goto err_pm_put;
++	}
++	if (rst) {
++		dev_dbg(dev, "DMA-350 probe: deasserting reset\n");
++		ret = reset_control_deassert(rst);
++		if (ret) {
++			dev_err(dev, "Failed to deassert reset: %d\n", ret);
+ 			goto err_pm_put;
+ 		}
+-		if (rst) {
+-			dev_dbg(dev, "DMA-350 probe: deasserting reset\n");
+-			ret = reset_control_deassert(rst);
+-			if (ret) {
+-				dev_err(dev, "Failed to deassert reset: %d\n", ret);
+-				goto err_pm_put;
+-			}
+-			/* Small delay after reset deassert */
+-			usleep_range(10, 20);
+-		}
++		/* Small delay after reset deassert */
++		usleep_range(10, 20);
+ 	}
+ 
+ 	reg = readl_relaxed(base + DMAINFO + IIDR);
+@@ -1353,7 +1398,9 @@ static int d350_probe(struct platform_device *pdev)
+ 
+ 	dmac->nchan = nchan;
+ 	dmac->clk = clk;
++	dmac->rst = rst;
+ 	dmac->base = base;
++	dmac->coherent = coherent;
+ 	platform_set_drvdata(pdev, dmac);
+ 
+ 	/* Initialize reserved memory region if specified in DT */
+@@ -1577,13 +1624,52 @@ static int __maybe_unused d350_runtime_suspend(struct device *dev)
+ static int __maybe_unused d350_runtime_resume(struct device *dev)
+ {
+ 	struct d350 *dmac = dev_get_drvdata(dev);
++	int ret;
++
++	if (!dmac)
++		return 0;
++
++	if (dmac->clk) {
++		ret = clk_prepare_enable(dmac->clk);
++		if (ret)
++			return ret;
++	}
++
++	/*
++	 * After S3 / AUDSS NOC reset the DMAC HW state is lost. Only
++	 * re-enabling the clock leaves the controller in a bad state: starting
++	 * DP (I2S+DMA) can hang the shared AUDSS fabric so HDA MMIO returns
++	 * 0xad00beef and panics in azx_get_pos_lpib. Pulse reset and restore
++	 * link attrs / IRQ enables like the Sky1 BSP driver did.
++	 */
++	if (dmac->rst) {
++		reset_control_assert(dmac->rst);
++		udelay(2);
++		reset_control_deassert(dmac->rst);
++		usleep_range(10, 20);
++		d350_restore_linkattr_all(dmac);
++	}
++
++	if (dmac->base)
++		writel_relaxed(DMA_NSEC_INTREN_ANY, dmac->base + DMA_NSEC_INTREN);
++
++	d350_restore_ap_irq_all(dmac);
+ 
+-	if (dmac && dmac->clk)
+-		return clk_prepare_enable(dmac->clk);
+ 	return 0;
+ }
+ 
++static int __maybe_unused d350_system_suspend(struct device *dev)
++{
++	return pm_runtime_force_suspend(dev);
++}
++
++static int __maybe_unused d350_system_resume(struct device *dev)
++{
++	return pm_runtime_force_resume(dev);
++}
++
+ static const struct dev_pm_ops d350_pm_ops = {
++	SET_SYSTEM_SLEEP_PM_OPS(d350_system_suspend, d350_system_resume)
+ 	SET_RUNTIME_PM_OPS(d350_runtime_suspend, d350_runtime_resume, NULL)
+ };
+ 
+-- 
+Cixtech
+

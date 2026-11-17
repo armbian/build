@@ -1,10 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: "wuyi.shen" <wuyi.shen@cixtech.com>
 Date: Mon, 30 Mar 2026 17:00:27 +0800
-Subject: [PATCH] drm: linlondp: merge updates from 26q2
-
+Subject: drm: linlondp: merge updates from 26q2
 This commit cherry-picks the following commits from 26q2:
-
 - VO: DPTSW-22606: Stop KMS poll before DP PM teardown
 - DPTSW-23684: use aperture_remove_all_conflicting_devices to disable uefi fb
 - DPTSW-24293: drm/cix: linlon display cluster bring-up
@@ -37,10 +35,6 @@ This commit cherry-picks the following commits from 26q2:
 - DPTSW-26233: linlon-dp: drop stale pre-blank when no display connected When linlondp_cluster_pm_resume, there is no display connected, linlondp_pm_conn_fp_match() report dismatched directly.
 
 ---
- .../amd/display/amdgpu_dm/amdgpu_dm_trace.h   |   4 +-
- .../drm/arm/display/include/malidp_utils.h    |   3 +-
- .../gpu/drm/arm/display/komeda/komeda_kms.h   |   2 +-
- .../gpu/drm/arm/display/komeda/komeda_plane.c |   2 +-
  drivers/gpu/drm/cix/Kconfig                   |   6 -
  drivers/gpu/drm/cix/dptx/trilin_dptx.c        | 363 +++++++----
  drivers/gpu/drm/cix/dptx/trilin_dptx.h        |  34 +-
@@ -68,83 +62,10 @@ This commit cherry-picks the following commits from 26q2:
  .../drm/cix/linlon-dp/linlondp_private_obj.c  |  26 +-
  .../gpu/drm/cix/linlon-dp/linlondp_utils.h    |   3 +-
  .../drm/cix/linlon-dp/linlondp_wb_connector.c |   7 +-
- drivers/gpu/drm/drm_atomic_helper.c           |   2 +-
- drivers/gpu/drm/drm_framebuffer.c             |   2 +-
- drivers/gpu/drm/drm_mode_config.c             |   2 +-
- drivers/gpu/drm/drm_plane.c                   |   4 +-
- drivers/gpu/drm/imx/ipuv3/ipuv3-crtc.c        |   2 +-
- 36 files changed, 2492 insertions(+), 592 deletions(-)
- create mode 100644 drivers/gpu/drm/cix/linlon-dp/linlondp_cluster.c
- create mode 100644 drivers/gpu/drm/cix/linlon-dp/linlondp_pm.c
- create mode 100644 drivers/gpu/drm/cix/linlon-dp/linlondp_pm.h
+ 27 files changed, 2480 insertions(+), 581 deletions(-)
 
-diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_trace.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_trace.h
-index f33a2c1e0..941bffe28 100644
---- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_trace.h
-+++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_trace.h
-@@ -179,7 +179,7 @@ TRACE_EVENT(amdgpu_dm_crtc_atomic_check,
- 			     __field(bool, async_flip)
- 			     __field(bool, vrr_enabled)
- 			     __field(bool, self_refresh_active)
--			     __field(u32, plane_mask)
-+			     __field(u64, plane_mask)
- 			     __field(u32, connector_mask)
- 			     __field(u32, encoder_mask)
- 	    ),
-@@ -209,7 +209,7 @@ TRACE_EVENT(amdgpu_dm_crtc_atomic_check,
- 	    TP_printk("crtc_id=%u crtc_state=%p state=%p commit=%p changed("
- 		      "planes=%d mode=%d active=%d conn=%d zpos=%d color_mgmt=%d) "
- 		      "state(enable=%d active=%d async_flip=%d vrr_enabled=%d "
--		      "self_refresh_active=%d no_vblank=%d) mask(plane=%x conn=%x "
-+		      "self_refresh_active=%d no_vblank=%d) mask(plane=%llx conn=%x "
- 		      "enc=%x)",
- 		      __entry->crtc_id, __entry->crtc_state, __entry->state,
- 		      __entry->commit, __entry->planes_changed,
-diff --git a/drivers/gpu/drm/arm/display/include/malidp_utils.h b/drivers/gpu/drm/arm/display/include/malidp_utils.h
-index 9f83baac6..eaf54fd7d 100644
---- a/drivers/gpu/drm/arm/display/include/malidp_utils.h
-+++ b/drivers/gpu/drm/arm/display/include/malidp_utils.h
-@@ -7,10 +7,11 @@
- #ifndef _MALIDP_UTILS_
- #define _MALIDP_UTILS_
- 
-+#include <linux/bits.h>
- #include <linux/delay.h>
- #include <linux/errno.h>
- 
--#define has_bit(nr, mask)	(BIT(nr) & (mask))
-+#define has_bit(nr, mask)	(BIT_ULL(nr) & (mask))
- #define has_bits(bits, mask)	(((bits) & (mask)) == (bits))
- 
- #define dp_wait_cond(__cond, __tries, __min_range, __max_range)	\
-diff --git a/drivers/gpu/drm/arm/display/komeda/komeda_kms.h b/drivers/gpu/drm/arm/display/komeda/komeda_kms.h
-index 83e61c408..fb93fee05 100644
---- a/drivers/gpu/drm/arm/display/komeda/komeda_kms.h
-+++ b/drivers/gpu/drm/arm/display/komeda/komeda_kms.h
-@@ -77,7 +77,7 @@ struct komeda_crtc {
- 	struct komeda_pipeline *slave;
- 
- 	/** @slave_planes: komeda slave planes mask */
--	u32 slave_planes;
-+	u64 slave_planes;
- 
- 	/** @wb_conn: komeda write back connector */
- 	struct komeda_wb_connector *wb_conn;
-diff --git a/drivers/gpu/drm/arm/display/komeda/komeda_plane.c b/drivers/gpu/drm/arm/display/komeda/komeda_plane.c
-index 57a4a0c7d..f42a7be4d 100644
---- a/drivers/gpu/drm/arm/display/komeda/komeda_plane.c
-+++ b/drivers/gpu/drm/arm/display/komeda/komeda_plane.c
-@@ -224,7 +224,7 @@ komeda_set_crtc_plane_mask(struct komeda_kms_dev *kms,
- 		kcrtc = &kms->crtcs[i];
- 
- 		if (pipe == kcrtc->slave)
--			kcrtc->slave_planes |= BIT(drm_plane_index(plane));
-+			kcrtc->slave_planes |= drm_plane_mask(plane);
- 	}
- }
- 
 diff --git a/drivers/gpu/drm/cix/Kconfig b/drivers/gpu/drm/cix/Kconfig
-index c826b9dec..5aebb80ea 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/Kconfig
 +++ b/drivers/gpu/drm/cix/Kconfig
 @@ -46,10 +46,4 @@ config DRM_CIX_EDP_PANEL
@@ -159,7 +80,7 @@ index c826b9dec..5aebb80ea 100644
 -
  source "drivers/gpu/drm/cix/dptx/Kconfig"
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
-index 4bba9bbbe..7d38df011 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
 +++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
 @@ -103,6 +103,46 @@ u32 trilin_phy_read(struct trilin_dp *dp, int offset)
@@ -845,7 +766,7 @@ index 4bba9bbbe..7d38df011 100644
  	dp->max_rate = DP_HIGH_BIT_RATE3;
  	dp->max_streams = 2;
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.h b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
-index 64941c1ae..54f7d13d3 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_dptx.h
 +++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
 @@ -175,10 +175,10 @@ union phy_configure_opts;
@@ -964,7 +885,7 @@ index 64941c1ae..54f7d13d3 100644
  //---------------------------------------------------------
  #endif /* _TRILIN_DPTX_H_ */
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_cix.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_cix.c
-index c0b0135d7..bce86f05a 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_dptx_cix.c
 +++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_cix.c
 @@ -35,7 +35,6 @@
@@ -1278,7 +1199,7 @@ index c0b0135d7..bce86f05a 100644
 -#endif
  MODULE_ALIAS("platform:trilin-dptx-cix");
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm.c b/drivers/gpu/drm/cix/dptx/trilin_drm.c
-index 56eba7f5e..09653d78c 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_drm.c
 +++ b/drivers/gpu/drm/cix/dptx/trilin_drm.c
 @@ -20,6 +20,8 @@
@@ -1627,7 +1548,7 @@ index 56eba7f5e..09653d78c 100644
  	 * Some of the properties below require access to state, like bpc.
  	 */
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm_mst.c b/drivers/gpu/drm/cix/dptx/trilin_drm_mst.c
-index ddb581a27..5a7a7fd8d 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_drm_mst.c
 +++ b/drivers/gpu/drm/cix/dptx/trilin_drm_mst.c
 @@ -31,9 +31,8 @@
@@ -1842,7 +1763,7 @@ index ddb581a27..5a7a7fd8d 100644
  					   conn_base_id);
  	if (ret) {
 diff --git a/drivers/gpu/drm/cix/dptx/trilin_edp_phy.c b/drivers/gpu/drm/cix/dptx/trilin_edp_phy.c
-index 82d5cbb6e..03ab11a68 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/dptx/trilin_edp_phy.c
 +++ b/drivers/gpu/drm/cix/dptx/trilin_edp_phy.c
 @@ -1181,6 +1181,6 @@ trilin_phy_error_t trilin_edp_phy_register(struct trilin_dp *dp)
@@ -1854,7 +1775,7 @@ index 82d5cbb6e..03ab11a68 100644
  	return trilin_phy_error_none;
  }
 diff --git a/drivers/gpu/drm/cix/linlon-dp/Makefile b/drivers/gpu/drm/cix/linlon-dp/Makefile
-index b9e9f816e..8b6991001 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/Makefile
 +++ b/drivers/gpu/drm/cix/linlon-dp/Makefile
 @@ -6,6 +6,8 @@ ccflags-y := \
@@ -1867,7 +1788,7 @@ index b9e9f816e..8b6991001 100644
      linlondp_format_caps.o \
      linlondp_color_mgmt.o \
 diff --git a/drivers/gpu/drm/cix/linlon-dp/include/linlondp_utils.h b/drivers/gpu/drm/cix/linlon-dp/include/linlondp_utils.h
-index a3f3a852e..8e3ce1aaa 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/include/linlondp_utils.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/include/linlondp_utils.h
 @@ -7,10 +7,11 @@
@@ -1885,7 +1806,7 @@ index a3f3a852e..8e3ce1aaa 100644
  #define dp_wait_cond(__cond, __tries, __min_range, __max_range) \
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_cluster.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_cluster.c
 new file mode 100644
-index 000000000..30750de57
+index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_cluster.c
 @@ -0,0 +1,570 @@
@@ -2460,7 +2381,7 @@ index 000000000..30750de57
 +	},
 +};
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_crtc.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_crtc.c
-index fee74a6cc..36caedd59 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_crtc.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_crtc.c
 @@ -101,17 +101,19 @@ static int linlondp_crtc_atomic_check(struct drm_crtc *crtc,
@@ -2748,7 +2669,7 @@ index fee74a6cc..36caedd59 100644
  
  	return 0;
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.c
-index 16412dcd6..d9e9a9196 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.c
 @@ -794,6 +794,11 @@ int linlondp_dev_resume(struct linlondp_dev *mdev)
@@ -2776,7 +2697,7 @@ index 16412dcd6..d9e9a9196 100644
  
  	if (mdev->iommu && mdev->funcs->disconnect_iommu)
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.h
-index 3b444d8a5..445428c01 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_dev.h
 @@ -290,8 +290,13 @@ void linlondp_dev_destroy(struct linlondp_dev *mdev);
@@ -2796,7 +2717,7 @@ index 3b444d8a5..445428c01 100644
  int linlondp_dev_resume(struct linlondp_dev *mdev);
  int linlondp_dev_suspend(struct linlondp_dev *mdev);
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_drv.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_drv.c
-index ded568db7..a3a6b0316 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_drv.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_drv.c
 @@ -6,30 +6,81 @@
@@ -3190,7 +3111,7 @@ index ded568db7..a3a6b0316 100644
  MODULE_DESCRIPTION("Linlondp KMS driver");
  MODULE_AUTHOR("ARMChina");
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_event.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_event.c
-index 84573de48..2f61ebb21 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_event.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_event.c
 @@ -111,11 +111,12 @@ static bool is_new_frame(struct linlondp_events *a)
@@ -3209,7 +3130,7 @@ index 84573de48..2f61ebb21 100644
  	u64 evts_mask = evts->global | evts->pipes[0] | evts->pipes[1];
  
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.c
-index 3ef5af718..05ac4eb1f 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.c
 @@ -12,6 +12,9 @@
@@ -3264,7 +3185,7 @@ index 3ef5af718..05ac4eb1f 100644
  
  	supported = linlondp_format_mod_supported(&mdev->fmt_tbl, layer_type,
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.h
-index 0b8b87a01..a680e1b4a 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_framebuffer.h
 @@ -42,7 +42,8 @@ int linlondp_fb_check_src_coords(const struct linlondp_fb *kfb, u32 src_x,
@@ -3279,7 +3200,7 @@ index 0b8b87a01..a680e1b4a 100644
  
  #endif
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.c
-index fe6ab5a49..54316d9dd 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.c
 @@ -6,6 +6,7 @@
@@ -3910,7 +3831,7 @@ index fe6ab5a49..54316d9dd 100644
  	linlondp_kms_cleanup_private_objs(kms);
  	drm->dev_private = NULL;
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.h
-index 6405ab68e..393e17dbb 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_kms.h
 @@ -8,6 +8,7 @@
@@ -4001,7 +3922,7 @@ index 6405ab68e..393e17dbb 100644
 +
  #endif /*_LINLONDP_KMS_H_*/
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline.h
-index 211fe75b8..3a4ab311e 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline.h
 @@ -14,6 +14,9 @@
@@ -4063,7 +3984,7 @@ index 211fe75b8..3a4ab311e 100644
  struct linlondp_pipeline_state *
  linlondp_pipeline_get_old_state(struct linlondp_pipeline *pipe,
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline_state.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline_state.c
-index 2664840ca..476d782ff 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline_state.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_pipeline_state.c
 @@ -255,6 +255,9 @@ linlondp_component_get_avail_scaler(struct linlondp_component *c,
@@ -4494,7 +4415,7 @@ index 2664840ca..476d782ff 100644
  		st = linlondp_pipeline_get_new_state(pipe, drm_st);
  	else
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_plane.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_plane.c
-index 1622868ec..53392507a 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_plane.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_plane.c
 @@ -22,7 +22,7 @@ static int linlondp_plane_init_data_flow(struct drm_plane_state *st,
@@ -4621,7 +4542,7 @@ index 1622868ec..53392507a 100644
  
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.c
 new file mode 100644
-index 000000000..8bc9c05ec
+index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.c
 @@ -0,0 +1,321 @@
@@ -4948,7 +4869,7 @@ index 000000000..8bc9c05ec
 +}
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.h
 new file mode 100644
-index 000000000..0e1b25c38
+index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_pm.h
 @@ -0,0 +1,51 @@
@@ -5004,7 +4925,7 @@ index 000000000..0e1b25c38
 +
 +#endif /* _LINLONDP_PM_H_ */
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_private_obj.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_private_obj.c
-index 04625f362..83141e3b0 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_private_obj.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_private_obj.c
 @@ -364,8 +364,8 @@ static int linlondp_pipeline_obj_add(struct linlondp_kms_dev *kms,
@@ -5048,7 +4969,7 @@ index 04625f362..83141e3b0 100644
  {
  	struct drm_mode_config *config = &kms->base.mode_config;
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_utils.h b/drivers/gpu/drm/cix/linlon-dp/linlondp_utils.h
-index a3b04f660..07b0adeda 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_utils.h
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_utils.h
 @@ -7,10 +7,11 @@
@@ -5065,7 +4986,7 @@ index a3b04f660..07b0adeda 100644
  
  #define dp_wait_cond(__cond, __tries, __min_range, __max_range) \
 diff --git a/drivers/gpu/drm/cix/linlon-dp/linlondp_wb_connector.c b/drivers/gpu/drm/cix/linlon-dp/linlondp_wb_connector.c
-index 3d6ba7994..106c73188 100644
+index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/cix/linlon-dp/linlondp_wb_connector.c
 +++ b/drivers/gpu/drm/cix/linlon-dp/linlondp_wb_connector.c
 @@ -76,10 +76,11 @@ static int linlondp_wb_encoder_atomic_check(struct drm_encoder *encoder,
@@ -5091,70 +5012,6 @@ index 3d6ba7994..106c73188 100644
  	struct linlondp_wb_connector *kwb_conn;
  	struct drm_writeback_connector *wb_conn;
  	struct drm_display_info *info;
-diff --git a/drivers/gpu/drm/drm_atomic_helper.c b/drivers/gpu/drm/drm_atomic_helper.c
-index 285aac355..38aa19651 100644
---- a/drivers/gpu/drm/drm_atomic_helper.c
-+++ b/drivers/gpu/drm/drm_atomic_helper.c
-@@ -3103,7 +3103,7 @@ drm_atomic_helper_commit_planes_on_crtc(struct drm_crtc_state *old_crtc_state)
- 	struct drm_crtc_state *new_crtc_state =
- 		drm_atomic_get_new_crtc_state(old_state, crtc);
- 	struct drm_plane *plane;
--	unsigned int plane_mask;
-+	u64 plane_mask;
- 
- 	plane_mask = old_crtc_state->plane_mask;
- 	plane_mask |= new_crtc_state->plane_mask;
-diff --git a/drivers/gpu/drm/drm_framebuffer.c b/drivers/gpu/drm/drm_framebuffer.c
-index d32aceb6c..2684220ef 100644
---- a/drivers/gpu/drm/drm_framebuffer.c
-+++ b/drivers/gpu/drm/drm_framebuffer.c
-@@ -1005,7 +1005,7 @@ static int atomic_remove_fb(struct drm_framebuffer *fb)
- 	struct drm_connector *conn __maybe_unused;
- 	struct drm_connector_state *conn_state;
- 	int i, ret;
--	unsigned plane_mask;
-+	u64 plane_mask;
- 	bool disable_crtcs = false;
- 
- retry_disable:
-diff --git a/drivers/gpu/drm/drm_mode_config.c b/drivers/gpu/drm/drm_mode_config.c
-index 366f6d821..c371ce644 100644
---- a/drivers/gpu/drm/drm_mode_config.c
-+++ b/drivers/gpu/drm/drm_mode_config.c
-@@ -882,7 +882,7 @@ void drm_mode_config_validate(struct drm_device *dev)
- 	struct drm_encoder *encoder;
- 	struct drm_crtc *crtc;
- 	struct drm_plane *plane;
--	u32 primary_with_crtc = 0, cursor_with_crtc = 0;
-+	u64 primary_with_crtc = 0, cursor_with_crtc = 0;
- 	unsigned int num_primary = 0;
- 
- 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
-diff --git a/drivers/gpu/drm/drm_plane.c b/drivers/gpu/drm/drm_plane.c
-index 46adef2a3..0f707eacd 100644
---- a/drivers/gpu/drm/drm_plane.c
-+++ b/drivers/gpu/drm/drm_plane.c
-@@ -375,8 +375,8 @@ static int __drm_universal_plane_init(struct drm_device *dev,
- 	unsigned int format_modifier_count = 0;
- 	int ret;
- 
--	/* plane index is used with 32bit bitmasks */
--	if (WARN_ON(config->num_total_plane >= 32))
-+	/* plane index is used with 64bit bitmasks (see drm_plane_mask) */
-+	if (WARN_ON(config->num_total_plane >= 64))
- 		return -EINVAL;
- 
- 	/*
-diff --git a/drivers/gpu/drm/imx/ipuv3/ipuv3-crtc.c b/drivers/gpu/drm/imx/ipuv3/ipuv3-crtc.c
-index 1405e50ee..9c7b3f61a 100644
---- a/drivers/gpu/drm/imx/ipuv3/ipuv3-crtc.c
-+++ b/drivers/gpu/drm/imx/ipuv3/ipuv3-crtc.c
-@@ -230,7 +230,7 @@ static int ipu_crtc_atomic_check(struct drm_crtc *crtc,
- {
- 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
- 									  crtc);
--	u32 primary_plane_mask = drm_plane_mask(crtc->primary);
-+	u64 primary_plane_mask = drm_plane_mask(crtc->primary);
- 
- 	if (crtc_state->active && (primary_plane_mask & crtc_state->plane_mask) == 0)
- 		return -EINVAL;
+-- 
+Cixtech
+
