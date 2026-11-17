@@ -12,6 +12,8 @@
 
 const LABEL = "Ready to merge";
 const COMMENT = "✅ This PR has been reviewed and approved — all set for merge!";
+// Removed on approval. "Work in progress" is owned by maintenance-label-wip.yml.
+const REVIEW_LABELS = ["Needs review", "Backlog", "Can be closed?", "Help needed", "Needs Documentation"];
 
 // Latest approval or change request of each committer.
 // An approval counts only for the current head.
@@ -41,6 +43,8 @@ async function evaluate(github, owner, repo, number) {
 }
 
 // Add or remove the label to match the review state. Returns true when approved.
+// On approval, also remove the review labels: a newer pending run can replace
+// this run in the concurrency group, so every caller does the full cleanup.
 async function syncOne({ github, core, owner, repo, number }) {
   const { approved, head, state } = await evaluate(github, owner, repo, number);
   core.info(`PR #${number} @ ${head}: committer reviews ${JSON.stringify(state)} -> approved=${approved}`);
@@ -70,6 +74,17 @@ async function syncOne({ github, core, owner, repo, number }) {
     await github.rest.issues.createComment({ owner, repo, issue_number: number, body: COMMENT });
   } else if (!approved && has) {
     await remove();
+  }
+  if (approved) {
+    for (const name of REVIEW_LABELS) {
+      if (!labels.some(l => l.name === name)) continue;
+      try {
+        await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name });
+        core.info(`Removed label "${name}"`);
+      } catch (e) {
+        if (e.status !== 404) throw e;
+      }
+    }
   }
   return approved;
 }
