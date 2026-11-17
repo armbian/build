@@ -206,12 +206,15 @@ function install_armbian_nvidia_autodetect_helper() {
 						rm -f "$BLACKLIST"
 						log "NVIDIA hardware found; driver enabled"
 					fi
-					rm -f "$MARK" "$AUTOSTART"
+					rm -f "$MARK"
+					# Remove only the mask of this helper, not a unit of the administrator.
+					[ "$(readlink "$AUTOSTART")" = /dev/null ] && rm -f "$AUTOSTART"
 					modprobe nvidia_drm modeset=1 2> /dev/null || true
 					exit 0
 				fi
 				mkdir -p "${AUTOSTART%/*}"
-				ln -sf /dev/null "$AUTOSTART"
+				# Do not replace a unit of the administrator.
+				[ -e "$AUTOSTART" ] || [ -L "$AUTOSTART" ] || ln -s /dev/null "$AUTOSTART"
 				mkdir -p /etc/modprobe.d
 				cat > "$BLACKLIST" <<- EOF
 					# Installed by armbian-nvidia-autodetect: no NVIDIA GPU on this host.
