@@ -611,7 +611,8 @@ function install_distribution_agnostic() {
 
 	# don't fail if OpenSSH is missing, e.g. if dropbear is installed instead
 	if [[ -f "${SDCARD}"/etc/ssh/sshd_config ]]; then
-		# permit root login via SSH for the first boot
+		# permit root login via SSH for the first boot; armbian-firstlogin sets
+		# prohibit-password once the regular user has been created
 		sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
 		# enable PubkeyAuthentication
 		sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
