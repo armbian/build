@@ -7,6 +7,8 @@
 // Used by:
 //   - maintenance-label-on-approval.yml (after a review)
 //   - maintenance-auto-label.yml        (after a push)
+// Both callers run in concurrency group ready-label-<PR number>, so only
+// one sync per PR runs at a time.
 
 const LABEL = "Ready to merge";
 const COMMENT = "✅ This PR has been reviewed and approved — all set for merge!";
