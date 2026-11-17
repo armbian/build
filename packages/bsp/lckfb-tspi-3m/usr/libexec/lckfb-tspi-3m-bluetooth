@@ -1,0 +1,52 @@
+#!/bin/sh
+# LCKFB TaishanPi 3M, vendor kernel: attach the AP6256 Bluetooth on ttyS6.
+#
+# The vendor kernel has no serdev driver for this chip. hciattach loads its
+# firmware over the UART, and the firmware lives only as long as the chip
+# has power. The rfkill switch "bt_default" is that power: when a desktop
+# turns Bluetooth off and on again, the chip comes back empty while the old
+# hciattach still holds the port, and every HCI command times out.
+#
+# So follow the switch: release the port when it goes off, attach again
+# when it comes back. An attach to a chip in an unknown state (a restart of
+# this service) fails to reset it, so power-cycle the chip first then.
+
+TTY=/dev/ttyS6
+RF=
+for r in /sys/class/rfkill/rfkill*; do
+	[ "$(cat "$r/name" 2>/dev/null)" = bt_default ] && RF=$r
+done
+[ -n "$RF" ] || { echo "no bt_default rfkill switch"; exit 1; }
+
+powered() { [ "$(cat "$RF/state")" = 1 ]; }
+
+if powered; then fresh=no; else fresh=yes; fi
+rfkill unblock bluetooth
+
+while :; do
+	while ! powered; do
+		sleep 0.5
+		fresh=yes
+	done
+	if [ "$fresh" = no ]; then
+		echo 0 > "$RF/state"
+		sleep 1
+		echo 1 > "$RF/state"
+	fi
+	sleep 1
+	hciattach -n -s 115200 "$TTY" bcm43xx 1500000 &
+	pid=$!
+	while powered && kill -0 "$pid" 2>/dev/null; do
+		sleep 0.5
+	done
+	if powered; then
+		# hciattach gave up with the chip powered; let systemd start
+		# this again, which power-cycles the chip
+		wait "$pid"
+		exit 1
+	fi
+	echo "Bluetooth switched off, releasing $TTY"
+	kill "$pid" 2>/dev/null
+	wait "$pid" 2>/dev/null
+	fresh=yes
+done

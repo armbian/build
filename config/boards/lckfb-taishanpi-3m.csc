@@ -41,8 +41,9 @@ function post_family_config__lckfb_taishanpi_3m_use_mainline_uboot() {
 }
 
 # The vendor kernel has no serdev for the AP6256 Bluetooth on UART6: power
-# it up through rfkill and load its firmware with hciattach. Edge uses the
-# mainline brcm,bcm4345c5 serdev node instead.
+# it up through rfkill and load its firmware with hciattach, again each time
+# the rfkill switch comes back on (lckfb-tspi-3m-bluetooth in the board
+# support files). Edge uses the mainline brcm,bcm4345c5 serdev node instead.
 function post_family_tweaks_bsp__lckfb_taishanpi_3m_bluetooth() {
 	[[ "${BRANCH}" == vendor* ]] || return 0
 	display_alert "$BOARD" "Installing AP6256 Bluetooth service (vendor kernel)" "info"
@@ -55,9 +56,7 @@ function post_family_tweaks_bsp__lckfb_taishanpi_3m_bluetooth() {
 
 		[Service]
 		Type=simple
-		ExecStartPre=/usr/sbin/rfkill unblock bluetooth
-		ExecStartPre=/bin/sh -c 'for r in /sys/class/rfkill/rfkill*; do [ "$(cat $r/name)" = bt_default ] && echo 1 > $r/state; done; sleep 1'
-		ExecStart=/usr/bin/hciattach -n -s 115200 /dev/ttyS6 bcm43xx 1500000
+		ExecStart=/usr/libexec/lckfb-tspi-3m-bluetooth
 		Restart=on-failure
 		RestartSec=5
 
