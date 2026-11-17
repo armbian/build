@@ -149,7 +149,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 # module: the kernel loads it on request. List both; the alias fits every kernel.
 function pre_update_initramfs__cryptroot_adiantum_modules() {
 	[[ "${CRYPTROOT_CIPHER} ${CRYPTROOT_PARAMETERS}" == *adiantum* ]] || return 0
-	local mod modules="${SDCARD}/etc/initramfs-tools/modules"
+	local mod modules="${MOUNT}/etc/initramfs-tools/modules"
 	for mod in adiantum xchacha12; do
 		grep -qx "$mod" "$modules" 2> /dev/null || echo "$mod" >> "$modules"
 	done
