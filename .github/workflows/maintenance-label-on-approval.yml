@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# One run per PR branch at a time: each run reads the reviews after the
+# earlier run has written its label.
+concurrency:
+  group: label-on-approval-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
 jobs:
   label:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -56,7 +62,7 @@ jobs:
             // A dismissal clears the reviewer's state; an older approval does not return.
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
             const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number, per_page: 100 });
-            const permission = {};
+            const permission = Object.create(null);
             const state = {};
             for (const r of reviews) {
               if (!r.user || !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(r.state)) continue;
@@ -77,12 +83,28 @@ jobs:
 
             const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: pull_number, per_page: 100 });
             const has = labels.some(l => l.name === LABEL);
+            const removeLabel = async () => {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: LABEL });
+              } catch (e) {
+                if (e.status !== 404) throw e;  // the push workflow removed it first
+              }
+            };
             if (approved && !has) {
               await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: [LABEL] });
+              // A push between the first read and addLabels finds no label to remove.
+              // Check the head again: a later push sees the label and removes it.
+              const { data: now } = await github.rest.pulls.get({ owner, repo, pull_number });
+              if (now.head.sha !== pr.head.sha) {
+                core.info(`Head moved ${pr.head.sha} -> ${now.head.sha}, approval is stale`);
+                await removeLabel();
+                core.setOutput("isApproved", "false");
+                return;
+              }
               await github.rest.issues.createComment({ owner, repo, issue_number: pull_number,
                 body: "✅ This PR has been reviewed and approved — all set for merge!" });
             } else if (!approved && has) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: LABEL });
+              await removeLabel();
             }
 
       - name: Remove review-related labels
