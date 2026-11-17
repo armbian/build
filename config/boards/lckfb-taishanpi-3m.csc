@@ -91,6 +91,10 @@ function post_family_tweaks_bsp__lckfb_taishanpi_3m_board_files() {
 function post_customize_image__lckfb_taishanpi_3m_board_services() {
 	chroot_sdcard systemctl --no-reload enable lckfb-tspi-3m-screen.service
 	chroot_sdcard systemctl --global enable lckfb-tspi-3m-call-audio.service
+	# Desktop images: a font with Chinese, Japanese and Korean glyphs. The
+	# images have none, so such text shows as empty boxes: web pages, file
+	# names, and the text messages of the 4G module.
+	[[ "${BUILD_DESKTOP}" == "yes" ]] && chroot_sdcard_apt_get_install fonts-noto-cjk
 	# GNOME images: a dialer and an SMS app for the 4G module, and a camera
 	# app on the vendor kernel, where the MIPI camera works
 	if [[ "${BUILD_DESKTOP}" == "yes" && "${DESKTOP_ENVIRONMENT}" == "gnome" ]]; then
