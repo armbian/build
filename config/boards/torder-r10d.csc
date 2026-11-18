@@ -33,6 +33,10 @@ function post_family_tweaks_bsp__torder_r10d_install_bsp_files() {
 	install -m 644 "${SRC}/packages/bsp/rockchip/60-media.rules" "${destination}/etc/udev/rules.d/"
 	install -m 755 "${SRC}/packages/bsp/rk3399/hciattach_opi" "${destination}/usr/bin/"
 	install -m 755 "${SRC}/packages/bsp/torder-r10d/torder-r10d-bluetooth" "${destination}/usr/bin/"
+	# hciattach_opi does the Bluetooth vendor init. Keep the kernel from doing it too.
+	add_file_from_stdin_to_bsp_destination "/etc/modprobe.d/sprdbt_tty.conf" <<- 'SPRDBT'
+		options sprdbt_tty vendor_init=0
+	SPRDBT
 	install -m 755 "${SRC}/packages/bsp/torder-r10d/torder-r10d-wifi-address" "${destination}/usr/bin/"
 	install -m 644 "${SRC}/packages/bsp/torder-r10d/70-torder-r10d-wifi.rules" "${destination}/etc/udev/rules.d/"
 	install -d "${destination}/usr/lib/firmware"
