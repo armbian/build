@@ -392,11 +392,11 @@ write_uboot_platform_ufs() {
 	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
 
 	if [[ -f $1/idbloader.img && -f $1/u-boot.itb ]]; then
-		${logging_prelude} dd if=$1/idbloader.img of=$2 bs=4096 seek=8 conv=notrunc,fsync status=none
+		${logging_prelude} dd if=$1/idbloader.img of=$2 bs=4096 seek=8 conv=notrunc,fsync status=none || return 1
 		${logging_prelude} dd if=$1/u-boot.itb of=$3 bs=4096 seek=2048 conv=notrunc,fsync status=none
 	else
 		echo "write_uboot_platform_ufs: no idbloader.img + u-boot.itb pair in $1; board hook must override."
-		exit 1
+		return 1
 	fi
 }
 
