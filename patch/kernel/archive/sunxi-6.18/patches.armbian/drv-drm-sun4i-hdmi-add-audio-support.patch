@@ -16,13 +16,18 @@ the drm_edid API changes.
 
 Signed-off-by: Stefan Mavrodiev <stefan@olimex.com>
 Signed-off-by: The-going <48602507+The-going@users.noreply.github.com>
+[D.R.racer: A10 fixes: poll only the AUDIO_CTRL reset bit and write
+ AUDIO_FMT and STAT0 in full, as the A10 does not reset them to 0;
+ unregister the dmaengine PCM before the DAI component, so the DMA
+ channel is released at every HDMI disable]
+Assisted-by: Claude:claude-opus-5-5
 ---
  drivers/gpu/drm/sun4i/Kconfig            |  11 +
  drivers/gpu/drm/sun4i/Makefile           |   3 +
  drivers/gpu/drm/sun4i/sun4i_hdmi.h       |  36 +
- drivers/gpu/drm/sun4i/sun4i_hdmi_audio.c | 450 ++++++++++
+ drivers/gpu/drm/sun4i/sun4i_hdmi_audio.c | 452 ++++++++++
  drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c   |  34 +-
- 5 files changed, 523 insertions(+), 11 deletions(-)
+ 5 files changed, 525 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/gpu/drm/sun4i/Kconfig b/drivers/gpu/drm/sun4i/Kconfig
 index 111111111111..222222222222 100644
@@ -133,7 +138,7 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/gpu/drm/sun4i/sun4i_hdmi_audio.c
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,452 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (C) 2020 Olimex Ltd.
@@ -218,7 +223,8 @@ index 000000000000..111111111111
 +		     SUN4I_HDMI_AUDIO_CTRL_RESET);
 +	ret = regmap_read_poll_timeout(hdmi->regmap,
 +				       SUN4I_HDMI_AUDIO_CTRL_REG,
-+				       reg, !reg, 100, 50000);
++				       reg, !(reg & SUN4I_HDMI_AUDIO_CTRL_RESET),
++				       100, 50000);
 +	if (ret < 0) {
 +		DRM_ERROR("Failed to reset HDMI Audio\n");
 +		return ret;
@@ -334,10 +340,9 @@ index 000000000000..111111111111
 +		return -EINVAL;
 +	}
 +
-+	regmap_update_bits(hdmi->regmap,
-+			   SUN4I_HDMI_AUDIO_STAT0_REG,
-+			   SUN4I_HDMI_AUDIO_STAT0_FREQ_MASK,
-+			   SUN4I_HDMI_AUDIO_STAT0_FREQ(val));
++	/* Write the whole channel status: the A10 does not reset it to 0 */
++	regmap_write(hdmi->regmap, SUN4I_HDMI_AUDIO_STAT0_REG,
++		     SUN4I_HDMI_AUDIO_STAT0_FREQ(val));
 +
 +	return 0;
 +}
@@ -352,15 +357,10 @@ index 000000000000..111111111111
 +
 +	hdmi->audio.channels = channels;
 +
-+	regmap_update_bits(hdmi->regmap,
-+			   SUN4I_HDMI_AUDIO_FMT_REG,
-+			   SUN4I_HDMI_AUDIO_FMT_LAYOUT,
-+			   (channels > 2) ? SUN4I_HDMI_AUDIO_FMT_LAYOUT : 0);
-+
-+	regmap_update_bits(hdmi->regmap,
-+			   SUN4I_HDMI_AUDIO_FMT_REG,
-+			   SUN4I_HDMI_AUDIO_FMT_CH_CFG_MASK,
-+			   SUN4I_HDMI_AUDIO_FMT_CH_CFG(channels));
++	/* Write the whole format: the A10 does not reset it to 0 */
++	regmap_write(hdmi->regmap, SUN4I_HDMI_AUDIO_FMT_REG,
++		     ((channels > 2) ? SUN4I_HDMI_AUDIO_FMT_LAYOUT : 0) |
++		     SUN4I_HDMI_AUDIO_FMT_CH_CFG(channels));
 +
 +	regmap_write(hdmi->regmap, SUN4I_HDMI_AUDIO_PCM_REG, 0x76543210);
 +
@@ -560,7 +560,9 @@ index 000000000000..111111111111
 +	return 0;
 +
 +unregister_component:
++	snd_dmaengine_pcm_unregister(hdmi->dev);
 +	snd_soc_unregister_component(hdmi->dev);
++	return ret;
 +unregister_pcm:
 +	snd_dmaengine_pcm_unregister(hdmi->dev);
 +	return ret;
@@ -579,8 +581,13 @@ index 000000000000..111111111111
 +	data = snd_soc_card_get_drvdata(card);
 +
 +	snd_soc_unregister_card(card);
-+	snd_soc_unregister_component(hdmi->dev);
++	/*
++	 * The PCM first: snd_soc_unregister_component() removes every component
++	 * of the device, after which snd_dmaengine_pcm_unregister() no longer
++	 * finds its own and never releases the DMA channel.
++	 */
 +	snd_dmaengine_pcm_unregister(hdmi->dev);
++	snd_soc_unregister_component(hdmi->dev);
 +
 +	dev_set_drvdata(hdmi->dev, data);
 +}
