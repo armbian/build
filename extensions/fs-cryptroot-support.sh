@@ -42,7 +42,11 @@ function prepare_root_device__250_encrypt_root_device() {
 		display_alert "Extension: ${EXTENSION}: configuring LUKS autounlock" ""
 		declare -g cryptroot_autounlock_key_file=$(mktemp)
 		openssl rand -base64 32 > "$cryptroot_autounlock_key_file"
-		cryptsetup luksFormat "${cryptroot_cipher_args[@]}" $CRYPTROOT_PARAMETERS "$rootdevice" "$cryptroot_autounlock_key_file"
+		# The key file is random: a slow key derivation adds no strength. luksFormat
+		# times the derivation on the build host, so a slow board would spend seconds
+		# unlocking at every boot. Use the PBKDF2 minimum.
+		cryptsetup luksFormat "${cryptroot_cipher_args[@]}" $CRYPTROOT_PARAMETERS --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+			"$rootdevice" "$cryptroot_autounlock_key_file"
 		cryptroot_open_mapper
 	else # CRYPTROOT_PASSPHRASE case
 		display_alert "Extension: ${EXTENSION}: configuring LUKS password" ""
