@@ -96,23 +96,8 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 
 fi
 
-# Smaller initramfs: GRUB reads it through the firmware, which is slow from USB.
-# - zstd: smaller than gzip, and faster to unpack.
-# - MODULES=dep: only the drivers of this machine. The image ships an initramfs
-#   with most drivers. The first boot makes it again with MODULES=dep.
-function post_family_tweaks__uefi_initramfs() {
-	display_alert "${BOARDFAMILY}" "initramfs: zstd, MODULES=dep after the first boot" "info"
-	echo "COMPRESS=zstd" > "${SDCARD}"/etc/initramfs-tools/conf.d/armbian-uefi.conf
-	install -Dm755 "$SRC/packages/bsp/uefi/armbian-initramfs-dep" "${SDCARD}/usr/lib/armbian/armbian-initramfs-dep"
-	install -Dm644 "$SRC/packages/bsp/uefi/armbian-initramfs-dep.service" "${SDCARD}/usr/lib/systemd/system/armbian-initramfs-dep.service"
-	chroot_sdcard systemctl --no-reload enable armbian-initramfs-dep.service
-}
-
-# After the image initramfs is made: with MODULES=dep in the build, it would
-# only have the drivers of the build host.
-function pre_umount_final_image__uefi_initramfs_dep() {
-	echo "MODULES=dep" >> "${MOUNT}"/etc/initramfs-tools/conf.d/armbian-uefi.conf
-}
+# shellcheck source=config/sources/families/include/uefi_initramfs.inc
+source "${BASH_SOURCE%/*}/uefi_initramfs.inc"
 
 function pre_customize_image__disable_few_armbian_services() {
 	display_alert "Disabling Armbian services that are not needed for UEFI" "${BOARD}" "info"
