@@ -32,16 +32,25 @@ function extension_prepare_config__prepare_cryptroot() {
 function prepare_root_device__250_encrypt_root_device() {
 	# We encrypt the rootdevice (currently a loop device) and return the new mapped rootdevice
 	check_loop_device "$rootdevice"
-	display_alert "Extension: ${EXTENSION}: Encrypting root partition with LUKS..." "cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice" ""
+	# A family can set a default cipher, for example Adiantum for CPUs without AES
+	# instructions. A --cipher in CRYPTROOT_PARAMETERS comes later and wins.
+	declare -a cryptroot_cipher_args=()
+	[[ -n "${CRYPTROOT_CIPHER}" ]] && cryptroot_cipher_args+=(--cipher "${CRYPTROOT_CIPHER}")
+	[[ -n "${CRYPTROOT_KEY_SIZE}" ]] && cryptroot_cipher_args+=(--key-size "${CRYPTROOT_KEY_SIZE}")
+	display_alert "Extension: ${EXTENSION}: Encrypting root partition with LUKS..." "cryptsetup luksFormat ${cryptroot_cipher_args[*]} $CRYPTROOT_PARAMETERS $rootdevice" ""
 	if [[ $CRYPTROOT_AUTOUNLOCK == "yes" ]]; then
 		display_alert "Extension: ${EXTENSION}: configuring LUKS autounlock" ""
 		declare -g cryptroot_autounlock_key_file=$(mktemp)
 		openssl rand -base64 32 > "$cryptroot_autounlock_key_file"
-		cryptsetup luksFormat $CRYPTROOT_PARAMETERS "$rootdevice" "$cryptroot_autounlock_key_file"
+		# The key file is random: a slow key derivation adds no strength. luksFormat
+		# times the derivation on the build host, so a slow board would spend seconds
+		# unlocking at every boot. Use the PBKDF2 minimum.
+		cryptsetup luksFormat "${cryptroot_cipher_args[@]}" $CRYPTROOT_PARAMETERS --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+			"$rootdevice" "$cryptroot_autounlock_key_file"
 		cryptroot_open_mapper
 	else # CRYPTROOT_PASSPHRASE case
 		display_alert "Extension: ${EXTENSION}: configuring LUKS password" ""
-		echo -n "$CRYPTROOT_PASSPHRASE" | cryptsetup luksFormat $CRYPTROOT_PARAMETERS "$rootdevice" -
+		echo -n "$CRYPTROOT_PASSPHRASE" | cryptsetup luksFormat "${cryptroot_cipher_args[@]}" $CRYPTROOT_PARAMETERS "$rootdevice" -
 		cryptroot_open_mapper
 	fi
 	add_cleanup_handler cleanup_cryptroot
@@ -138,6 +147,17 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 			# cat "${DROPBEAR_DIR}"/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
 		fi
 	fi
+}
+
+# The cryptsetup-initramfs hook adds the "adiantum" module, but not the XChaCha12
+# module: the kernel loads it on request. List both; the alias fits every kernel.
+function pre_update_initramfs__cryptroot_adiantum_modules() {
+	[[ "${CRYPTROOT_CIPHER} ${CRYPTROOT_PARAMETERS}" == *adiantum* ]] || return 0
+	local mod modules="${MOUNT}/etc/initramfs-tools/modules"
+	for mod in adiantum xchacha12; do
+		grep -qx "$mod" "$modules" 2> /dev/null || echo "$mod" >> "$modules"
+	done
+	display_alert "Extension: ${EXTENSION}: Adiantum modules for the initramfs" "adiantum xchacha12" "info"
 }
 
 function post_umount_final_image__export_private_key() {

@@ -13,13 +13,13 @@ BOOTCONFIG="graperain-g3568-v2-rk3568_defconfig"
 IMAGE_PARTITION_TABLE="gpt"
 MODULES="ledtrig_netdev"
 
-# Mainline U-Boot
+# Mainline U-Boot (v2027.01+)
 function post_family_config__graperain_g3568_v2_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.07"
-	declare -g BOOTPATCHDIR="v2026.07/board_${BOARD}"
+	declare -g BOOTBRANCH="tag:v2027.01-rc2"
+	declare -g BOOTPATCHDIR="v2027.01" # board is upstream; avoid inheriting legacy u-boot-rockchip64 patches
 
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 

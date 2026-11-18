@@ -19,8 +19,9 @@ KEY=/etc/rootfs.key
 NEW=/etc/rootfs.key.new
 OLD=/etc/rootfs.key.old
 # As the build (CRYPTROOT_PARAMETERS): argon2 can run out of memory in the
-# initramfs on small boards. The keyfile is random, so pbkdf2 is enough.
-PBKDF="--pbkdf pbkdf2"
+# initramfs on small boards. The keyfile is random, so pbkdf2 is enough, and
+# the minimum cost: a slow derivation adds no strength, only boot time.
+PBKDF="--pbkdf pbkdf2 --pbkdf-force-iterations 1000"
 
 opens() { cryptsetup open --test-passphrase --key-file "$2" "$1" 2> /dev/null; }
 
@@ -108,8 +109,24 @@ main() {
 	# 1. New keyfile. Keep the old key valid until the initramfs has the new one.
 	umask 077
 	if [[ ! -f "$OLD" ]]; then
-		[[ -s "$NEW" ]] || head -c 64 /dev/urandom > "$NEW"
-		sync "$NEW"
+		# Write it complete or not at all: a short key is a weak key.
+		if [[ $(stat -c %s "$NEW" 2> /dev/null) != 64 ]]; then
+			# An older run can have enrolled a short key. Remove its slot first.
+			if [[ -f "$NEW" ]] && opens "$dev" "$NEW"; then
+				# Never replace the only key that still opens the device.
+				if ! opens "$dev" "$KEY"; then
+					echo "$KEY does not open $dev, but $NEW does. Stopped."
+					return 1
+				fi
+				if ! cmp -s "$NEW" "$KEY"; then
+					echo "Removing a short keyfile from $dev"
+					cryptsetup luksRemoveKey "$dev" "$NEW" || return 1
+				fi
+			fi
+			head -c 64 /dev/urandom > "$NEW.tmp" && sync "$NEW.tmp" && mv "$NEW.tmp" "$NEW" || return 1
+		fi
+		# Sync the directory too: the rename must survive a power loss before luksAddKey.
+		sync "$NEW" /etc || return 1
 		if ! opens "$dev" "$NEW"; then
 			echo "Adding the new keyfile to $dev"
 			cryptsetup luksAddKey $PBKDF --key-file "$KEY" "$dev" "$NEW" || return 1

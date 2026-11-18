@@ -532,7 +532,7 @@ function board_side_bsp_cli_postinst_finish() {
 	fi
 
 	# Reload services
-	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service > /dev/null 2>&1
+	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service armbian-console-loglevel.service > /dev/null 2>&1
 }
 
 # Helper to add files, from stdin, to the bsp-cli package.

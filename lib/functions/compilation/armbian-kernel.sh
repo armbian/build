@@ -606,7 +606,15 @@ function armbian_kernel_config__enable_docker_support() {
 	# Keyring and resource management
 	opts_y+=("PERSISTENT_KEYRINGS") # Enables persistent keyring support
 	opts_m+=("RESOURCE_COUNTERS")   # Enables resource counters support in cgroups
-	opts_y+=("RT_GROUP_SCHED")      # Enables real-time group scheduling
+	# Real-time group scheduling. When active, systemd's cgroups get no RT time, so
+	# rtkit cannot give PipeWire real-time priority (audio dropouts). From 6.16, keep it
+	# built but off by default (rt_group_sched=1 turns it on). Before, leave it out.
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.16; then
+		opts_y+=("RT_GROUP_SCHED")
+		opts_y+=("RT_GROUP_SCHED_DEFAULT_DISABLED")
+	else
+		opts_n+=("RT_GROUP_SCHED")
+	fi
 	# Security features
 	opts_y+=("SECURITY_APPARMOR") # Enables AppArmor security module support
 	opts_y+=("SECCOMP")           # Enables seccomp (secure computing) support

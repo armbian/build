@@ -33,6 +33,10 @@ function post_family_tweaks_bsp__orangepi3b() {
 	install -m 755 $SRC/packages/bsp/rk3399/hciattach_opi $destination/usr/bin
 	install -m 755 $SRC/packages/bsp/orangepi3b/orangepi3b-sprd-bluetooth $destination/usr/bin/
 	cp $SRC/packages/bsp/orangepi3b/orangepi3b-sprd-bluetooth.service $destination/lib/systemd/system/
+	# hciattach_opi does the Bluetooth vendor init. Keep the kernel from doing it too.
+	add_file_from_stdin_to_bsp_destination "/etc/modprobe.d/sprdbt_tty.conf" <<- 'SPRDBT'
+		options sprdbt_tty vendor_init=0
+	SPRDBT
 
 	return 0
 }
