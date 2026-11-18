@@ -18,6 +18,7 @@ const LABEL = "Work in progress";
 // Returns { wip, reviewDecision, unresolved } for a single PR.
 async function evaluate(github, owner, repo, number) {
   let reviewDecision = null;
+  let changesRequested = false;
   let unresolved = 0;
   let after = null;
 
@@ -27,6 +28,9 @@ async function evaluate(github, owner, repo, number) {
         repository(owner:$owner, name:$repo) {
           pullRequest(number:$number) {
             reviewDecision
+            latestOpinionatedReviews(first:100, writersOnly:true) {
+              nodes { state }
+            }
             reviewThreads(first:100, after:$after) {
               nodes { isResolved }
               pageInfo { hasNextPage endCursor }
@@ -37,6 +41,10 @@ async function evaluate(github, owner, repo, number) {
     const data = await github.graphql(query, { owner, repo, number, after });
     const pr = data.repository.pullRequest;
     reviewDecision = pr.reviewDecision;
+    // reviewDecision is null when the branch does not require reviews.
+    // Then use the latest review of each committer.
+    changesRequested = reviewDecision === "CHANGES_REQUESTED" ||
+      (reviewDecision === null && pr.latestOpinionatedReviews.nodes.some(r => r.state === "CHANGES_REQUESTED"));
     for (const t of pr.reviewThreads.nodes) {
       if (!t.isResolved) unresolved++;
     }
@@ -45,7 +53,7 @@ async function evaluate(github, owner, repo, number) {
       : null;
   } while (after);
 
-  return { wip: reviewDecision === "CHANGES_REQUESTED" || unresolved > 0, reviewDecision, unresolved };
+  return { wip: changesRequested || unresolved > 0, reviewDecision, unresolved };
 }
 
 // Add or remove the label on one PR to match its evaluated state.

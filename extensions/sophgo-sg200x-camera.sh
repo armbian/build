@@ -24,7 +24,7 @@
 
 declare -g SG200X_CAMERA_REPO="${SG200X_CAMERA_REPO:-https://github.com/leafpmpmp/sg200x-camera-dkms}"
 # Pinned; a mutable branch ref would break kernel build caching.
-declare -g SG200X_CAMERA_REF="${SG200X_CAMERA_REF:-commit:2c1ebd5470b44b10f5fbf28f05c438aafb7e5f06}"
+declare -g SG200X_CAMERA_REF="${SG200X_CAMERA_REF:-commit:bb7cd89f65db393ea74a258da2cb4f4e234af31f}"
 
 # Set the path of the pinned camera sources. The sources are fetched only when
 # the kernel builds, see below.

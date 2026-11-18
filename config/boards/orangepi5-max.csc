@@ -51,6 +51,12 @@ function post_family_tweaks__orangepi5max_naming_audios() {
 	return 0
 }
 
+function post_family_config__orangepi5max_bluetooth_packages() {
+	[[ "$BRANCH" != vendor* ]] && return 0
+	add_packages_to_image rfkill bluez
+	return 0
+}
+
 function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 	[[ "$BRANCH" != vendor* ]] && return 0
 	display_alert "$BOARD" "Installing ap6611s-bluetooth.service" "info"

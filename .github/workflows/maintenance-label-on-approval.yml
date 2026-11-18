@@ -8,80 +8,68 @@ permissions:
   contents: read
 
 jobs:
-  label:
+  pr:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
-      issues: write
-      pull-requests: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
 
     steps:
+      # The listener runs on pull_request_review (fork-controlled), so its
+      # artifact is untrusted: download it into RUNNER_TEMP, never the checkout.
       - name: Download PR number artifact from upstream run
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: pr-number-${{ github.event.workflow_run.id }}   # same unique name
-          path: .
+          path: ${{ runner.temp }}/listener
           run-id: ${{ github.event.workflow_run.id }}           # ← CRITICAL: fetch from the upstream run
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Validate here, at the point the value enters the job: everything below
-      # consumes it, starting with an action that parseInt()s it and then reads
-      # and writes labels. A check further down would run after those writes --
-      # and on the not-approved path would not run at all.
+      # consumes it and then reads and writes labels. A check further down
+      # would run after those writes.
       - id: pr
         run: |
-          number="$(tr -d '[:space:]' < pr.txt)"
+          number="$(tr -d '[:space:]' < "${RUNNER_TEMP}/listener/pr.txt")"
           case "${number}" in
             '' | *[!0-9]*) echo "::error::pr.txt is not a PR number: '${number}'"; exit 1 ;;
             0*)            echo "::error::pr.txt is not a canonical PR number: '${number}'"; exit 1 ;;
           esac
           echo "number=${number}" >> "$GITHUB_OUTPUT"
 
-      - name: Label when approved
-        id: approval
-        uses: j-fulbright/label-when-approved-action@911c622c75f8ea99ee00cdd66e2cd888bac530c6 # v1.2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          label: 'Ready to merge'
-          require_committers_approval: 'true'
-          remove_label_when_approval_missing: 'true'
-          comment: '✅ This PR has been reviewed and approved — all set for merge!'
-          pullRequestNumber: ${{ steps.pr.outputs.number }}
+  label:
+    needs: pr
+    # Same group as the push job in maintenance-auto-label.yml: one
+    # "Ready to merge" sync per PR at a time, so each sync reads the state
+    # after the earlier sync has written its label. A newer pending sync
+    # replaces an older one; it reads the live state, so nothing is lost.
+    concurrency:
+      group: ready-label-${{ needs.pr.outputs.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
 
-      - name: Remove review-related labels
-        # Not just success(): the action exits 0 and reports isApproved=false when
-        # the approval does not come from a committer (require_committers_approval),
-        # and anyone with read access can approve a PR on a public repo. Without
-        # this gate a drive-by approval clears the review-tracking labels below
-        # while "Ready to merge" is (correctly) never added.
-        if: ${{ success() && steps.approval.outputs.isApproved == 'true' }}
+    steps:
+      # Default branch (trusted): the shared label logic is never PR-authored code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # "Ready to merge" follows the review state: a committer approval of the
+      # current head adds it, a withdrawn approval or a change request removes it.
+      # A committer approval also removes the review labels ("Needs review" etc).
+      - name: Label when approved
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ needs.pr.outputs.number }}
         with:
           script: |
-            const { owner, repo } = context.repo;
-            // Belt and braces: the `pr` step above already rejects anything that
-            // is not canonical digits. Kept because Number.parseInt takes the
-            // longest valid prefix, so "123abc" and "1e3" would coerce to 123 and
-            // 1 and sail past an isInteger check if that gate ever moved.
-            const raw = (process.env.PR_NUMBER || "").trim();
-            if (!/^[1-9][0-9]*$/.test(raw)) {
-              core.setFailed(`Invalid PR number in PR_NUMBER: ${JSON.stringify(raw)}`);
-              return;
-            }
-            const issue_number = Number(raw);
-            // "Work in progress" is owned by maintenance-label-wip.yml (synced from
-            // review decision + unresolved conversations), so it is not removed here.
-            const labelsToRemove = ["Needs review", "Backlog", "Can be closed?", "Help needed", "Needs Documentation"];
+            const { syncOne } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/ready-label.js`);
+            await syncOne({ github, core, owner: context.repo.owner, repo: context.repo.repo,
+              number: Number(process.env.PR_NUMBER) });
 
-            for (const name of labelsToRemove) {
-              try {
-                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
-                core.info(`Removed label "${name}"`);
-              } catch (e) {
-                core.warning(`Could not remove label "${name}": ${e.message}`);
-              }
-            }

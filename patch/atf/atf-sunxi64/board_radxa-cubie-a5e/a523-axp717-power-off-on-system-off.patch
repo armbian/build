@@ -1,0 +1,256 @@
+From eec5d1cc15e724dd73d08210880677c4f8c1a47a Mon Sep 17 00:00:00 2001
+From: serg987 <50438876+serg987@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 00:39:10 -0500
+Subject: [PATCH] feat(allwinner): a523: power off the AXP717 PMIC on
+ SYSTEM_OFF
+
+On the A523 sunxi_power_down() is an empty stub, so PSCI SYSTEM_OFF only
+turns the CPU cores off and every board rail stays powered. On the Radxa
+Cubie A5E this leaves the board drawing 0.81 A after "poweroff", while
+the vendor BSP gets down to 0.02 A.
+
+Probe the AXP717 on R_I2C0 using the U-Boot DTB, as the H616 port does,
+and set REG27[0] (soft power off, AXP717C datasheet section 6.14.2.23)
+in sunxi_power_down(). The AXP323 CPU rail PMIC found next to it on
+these boards is enabled from an AXP717 rail and follows it down.
+
+For that, teach sunxi_init_platform_r_twi() about the A523:
+- R_TWI0 uses pin function 2 on PL0/PL1, and its bus gate and reset bits
+  live in R_PRCM register 0x19c, like on the H616.
+- The R_PIO uses the newer register layout: 4-bit drive strength fields
+  and the pull registers at offset 0x24 instead of 0x1c.
+- There is no RSB controller, so requests for it are refused.
+
+Only the I2C driver is added to the BL31 build, fdt_wrappers.c is not
+needed. The debug build of BL31 is close to the SRAM A2 limit, so avoid
+growing it more than necessary.
+
+Tested on a Radxa Cubie A5E (AXP717 + AXP323): BL31 logs "PMIC: found
+AXP717", and "poweroff" now leaves the board at 0.000 A, instead of
+0.81 A.
+
+Change-Id: I7a9737403f10ce597cfb7c31d74525b75c6b2524
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Signed-off-by: serg987 <50438876+serg987@users.noreply.github.com>
+---
+ plat/allwinner/common/sunxi_common.c     |  32 ++++--
+ plat/allwinner/sun55i_a523/platform.mk   |   3 +
+ plat/allwinner/sun55i_a523/sunxi_power.c | 121 ++++++++++++++++++++++-
+ 3 files changed, 145 insertions(+), 11 deletions(-)
+
+diff --git a/plat/allwinner/common/sunxi_common.c b/plat/allwinner/common/sunxi_common.c
+index 62f4fcb..ffb37db 100644
+--- a/plat/allwinner/common/sunxi_common.c
++++ b/plat/allwinner/common/sunxi_common.c
+@@ -111,6 +111,7 @@ int sunxi_init_platform_r_twi(uint16_t socid, bool use_rsb)
+ 	uint32_t pin_func = 0x77;
+ 	uint32_t device_bit;
+ 	unsigned int reset_offset = 0xb0;
++	bool new_pio_layout = false;
+ 
+ 	switch (socid) {
+ 	case SUNXI_SOC_H5:
+@@ -129,26 +130,43 @@ int sunxi_init_platform_r_twi(uint16_t socid, bool use_rsb)
+ 		pin_func = use_rsb ? 0x22 : 0x33;
+ 		device_bit = use_rsb ? BIT(3) : BIT(6);
+ 		break;
++	case SUNXI_SOC_A523:
++		/* No RSB; R_TWI0 is function 2 on PL0/PL1. */
++		if (use_rsb)
++			return -ENODEV;
++		pin_func = 0x22;
++		device_bit = BIT(16);
++		reset_offset = 0x19c;
++		new_pio_layout = true;
++		break;
+ 	default:
+ 		INFO("R_I2C/RSB on Allwinner 0x%x SoC not supported\n", socid);
+ 		return -ENODEV;
+ 	}
+ 
+ 	/* un-gate R_PIO clock */
+-	if (socid != SUNXI_SOC_H6 && socid != SUNXI_SOC_H616)
++	if (socid != SUNXI_SOC_H6 && socid != SUNXI_SOC_H616 &&
++	    socid != SUNXI_SOC_A523)
+ 		mmio_setbits_32(SUNXI_R_PRCM_BASE + 0x28, BIT(0));
+ 
+ 	/* switch pins PL0 and PL1 to the desired function */
+ 	mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x00, 0xffU, pin_func);
+ 
+-	/* level 2 drive strength */
+-	mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x14, 0x0fU, 0xaU);
+-
+-	/* set both pins to pull-up */
+-	mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x1c, 0x0fU, 0x5U);
++	if (new_pio_layout) {
++		/* 4-bit drive fields: level 2 drive strength */
++		mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x14, 0xffU, 0x22U);
++		/* pull registers start at 0x24: both pins pull-up */
++		mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x24, 0x0fU, 0x5U);
++	} else {
++		/* level 2 drive strength */
++		mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x14, 0x0fU, 0xaU);
++		/* set both pins to pull-up */
++		mmio_clrsetbits_32(SUNXI_R_PIO_BASE + 0x1c, 0x0fU, 0x5U);
++	}
+ 
+ 	/* un-gate clock */
+-	if (socid != SUNXI_SOC_H6 && socid != SUNXI_SOC_H616)
++	if (socid != SUNXI_SOC_H6 && socid != SUNXI_SOC_H616 &&
++	    socid != SUNXI_SOC_A523)
+ 		mmio_setbits_32(SUNXI_R_PRCM_BASE + 0x28, device_bit);
+ 	else
+ 		mmio_setbits_32(SUNXI_R_PRCM_BASE + reset_offset, BIT(0));
+diff --git a/plat/allwinner/sun55i_a523/platform.mk b/plat/allwinner/sun55i_a523/platform.mk
+index de8cdeb..39da2b7 100644
+--- a/plat/allwinner/sun55i_a523/platform.mk
++++ b/plat/allwinner/sun55i_a523/platform.mk
+@@ -21,5 +21,8 @@ SUNXI_PSCI_USE_NATIVE   :=      1
+ include plat/allwinner/common/allwinner-common.mk
+ include plat/allwinner/common/allwinner-common-a55.mk
+ 
++# PMIC (AXP717 on R_I2C0) access for system power-off
++BL31_SOURCES		+=	drivers/mentor/i2c/mi2cv.c
++
+ # Put NOBITS memory in the first 64K of SRAM A2, overwriting U-Boot's SPL.
+ SEPARATE_NOBITS_REGION	:=	1
+diff --git a/plat/allwinner/sun55i_a523/sunxi_power.c b/plat/allwinner/sun55i_a523/sunxi_power.c
+index 34e4df8..bd49b00 100644
+--- a/plat/allwinner/sun55i_a523/sunxi_power.c
++++ b/plat/allwinner/sun55i_a523/sunxi_power.c
+@@ -4,17 +4,130 @@
+  * SPDX-License-Identifier: BSD-3-Clause
+  */
+ 
+-#include <platform_def.h>
++#include <errno.h>
++
++#include <common/debug.h>
++#include <drivers/allwinner/axp.h>
++#include <drivers/mentor/mi2cv.h>
++#include <lib/mmio.h>
++#include <libfdt.h>
++
++#include <sunxi_def.h>
+ #include <sunxi_mmap.h>
+-#include <sunxi_cpucfg.h>
+ #include <sunxi_private.h>
+ 
+-int sunxi_pmic_setup(uint16_t socid, const void *fdt)
++/*
++ * The A523 boards pair an AXP717 (main PMIC) with an AXP323 (CPU rail), both
++ * on R_I2C0. The AXP323 is enabled from an AXP717 rail on the known designs,
++ * so switching off the AXP717 powers down the whole board.
++ */
++
++static enum pmic_type {
++	UNKNOWN,
++	AXP717,
++} pmic;
++
++static uint16_t pmic_bus_addr;
++
++int axp_read(uint8_t reg)
++{
++	uint8_t val = 0;
++	int ret;
++
++	ret = i2c_write(pmic_bus_addr, 0, 0, &reg, 1);
++	if (ret == 0) {
++		ret = i2c_read(pmic_bus_addr, 0, 0, &val, 1);
++	}
++	if (ret) {
++		ERROR("PMIC: Cannot read PMIC register %02x\n", reg);
++		return ret;
++	}
++
++	return val;
++}
++
++int axp_write(uint8_t reg, uint8_t val)
++{
++	int ret;
++
++	ret = i2c_write(pmic_bus_addr, reg, 1, &val, 1);
++	if (ret) {
++		ERROR("PMIC: Cannot write PMIC register %02x\n", reg);
++	}
++
++	return ret;
++}
++
++static int pmic_bus_init(void)
+ {
+-	/* PMIC not yet supported */
++	int ret;
++
++	ret = sunxi_init_platform_r_twi(SUNXI_SOC_A523, false);
++	if (ret) {
++		INFO("Could not init platform bus: %d\n", ret);
++		return ret;
++	}
++
++	i2c_init((void *)SUNXI_R_I2C_BASE);
++
+ 	return 0;
+ }
+ 
++int sunxi_pmic_setup(uint16_t socid, const void *fdt)
++{
++	const fdt32_t *reg;
++	int node, len, ret;
++
++	if (fdt == NULL) {
++		return -ENODEV;
++	}
++
++	/* The A523 has no RSB controller: the PMIC is always on R_I2C0. */
++	node = fdt_node_offset_by_compatible(fdt, 0, "x-powers,axp717");
++	if (node < 0) {
++		INFO("PMIC: No known PMIC in DT, skipping setup.\n");
++		return -ENODEV;
++	}
++
++	reg = fdt_getprop(fdt, node, "reg", &len);
++	if (reg == NULL || len < (int)sizeof(*reg)) {
++		ERROR("PMIC: PMIC DT node does not contain reg property.\n");
++		return -EINVAL;
++	}
++
++	pmic_bus_addr = fdt32_to_cpu(*reg);
++
++	INFO("Probing for PMIC on I2C:\n");
++
++	ret = pmic_bus_init();
++	if (ret) {
++		return ret;
++	}
++
++	/* The version register is not implemented on the AXP717. */
++	ret = axp_read(0x03);
++	if (ret >= 0 && (ret & 0xcf) == 0xcf) {
++		INFO("PMIC: found AXP717\n");
++		/* no regulators to set up, U-Boot takes care of this */
++		pmic = AXP717;
++		return 0;
++	}
++
++	INFO("Incompatible or unknown PMIC found.\n");
++	return -ENODEV;
++}
++
+ void sunxi_power_down(void)
+ {
++	if (pmic != AXP717) {
++		return;
++	}
++
++	/* Re-initialise after rich OS might have used it. */
++	if (pmic_bus_init()) {
++		return;
++	}
++
++	/* REG27[0]: soft power off (AXP717 datasheet, section 6.14.2.23) */
++	axp_setbits(0x27, BIT(0));
+ }

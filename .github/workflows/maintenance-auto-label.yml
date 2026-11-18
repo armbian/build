@@ -1,14 +1,19 @@
 name: "Maintenance: Auto-label PR"
 
 # Sets labels automatically based on:
-# - PR size (job: label-size)
+# - PR size from the changed lines (job: label-size)
 # - File categories using .github/labeler config (job: label-category)
 # - PR creation date for quarterly tracking (job: label-by-date)
-# - Removes "Ready to merge" label on PR update (job: label-remove)
+# - Syncs "Ready to merge" with the approvals of the new head (job: label-remove)
 
 run-name: 'Set labels - PR #${{ github.event.pull_request.number }} ("${{ github.event.pull_request.title }}")'
 
 on: pull_request_target
+
+# One run per PR at a time: a newer pending run replaces an older one.
+concurrency:
+  group: auto-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 # Grant required permissions globally
 permissions:
@@ -18,32 +23,34 @@ permissions:
 
 jobs:
   label-remove:
-    name: "Remove Ready to merge"
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    name: "Sync Ready to merge"
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
+    # Same group as the approval job in maintenance-label-on-approval.yml:
+    # one "Ready to merge" sync per PR at a time.
+    concurrency:
+      group: ready-label-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout the pull request
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Base branch (pull_request_target): the shared label logic is trusted code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # only here so `gh` can resolve the repo from the git remote; no
-          # authenticated git commands run, so don't leave the token behind
           persist-credentials: false
 
-      - name: Check for label using GH CLI
-        id: check
-        run: |
-          gh pr view ${{ github.event.pull_request.number }} --json labels -q '.labels[].name' | grep -q 'Ready to merge' && echo "has_label=true" >> $GITHUB_OUTPUT || echo "has_label=false" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Remove "Ready to merge" label
-        if: steps.check.outputs.has_label == 'true'
-        uses: PauMAVA/add-remove-label-action@d1dae9b1a6c5b44b7740a3e7f64723fe7c9619d3 # v1.0.3
+      # A push makes earlier approvals stale. Reconcile with the current head
+      # instead of removing the label: this run can wait in the queue while a
+      # committer approves the new head.
+      - name: Sync "Ready to merge"
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          add: ""
-          remove: "Ready to merge"
+          script: |
+            const { syncOne } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/ready-label.js`);
+            await syncOne({ github, core, owner: context.repo.owner, repo: context.repo.repo,
+              number: context.payload.pull_request.number });
 
   label-category:
     name: "Category Labels"
@@ -64,26 +71,40 @@ jobs:
   label-size:
     name: "Size Label"
     runs-on: ubuntu-latest
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
 
     steps:
-      # Automatically adds size labels based on total changed lines
+      # Size from the PR totals: the files API returns only 30 files per page.
       - name: Label by size
-        uses: pascalgn/size-label-action@56b489b027932ec0cf60438a1a5f1a19c8fc71ff # v0.5.7
-        env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          sizes: >
-            {
-              "0": "small",
-              "50": "medium",
-              "250": "large"
+          script: |
+            const { owner, repo } = context.repo;
+            // Current totals: runs of one PR can start out of push order.
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: context.payload.pull_request.number });
+            const lines = pr.additions + pr.deletions;
+            const label = lines >= 250 ? "size/large" : lines >= 50 ? "size/medium" : "size/small";
+            core.info(`PR #${pr.number}: ${lines} changed lines -> ${label}`);
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: pr.number, per_page: 100 });
+            for (const l of labels) {
+              if (l.name.startsWith("size/") && l.name !== label) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: l.name });
+              }
+            }
+            if (!labels.some(l => l.name === label)) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [label] });
             }
 
   label-by-date:
     name: "Date label (Quarters)"
     runs-on: ubuntu-latest
-    if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' }}
+    # actions/labeler writes the whole label set from an earlier read.
+    # Run after it, so it cannot restore a label that this job changes.
+    needs: label-category
+    if: ${{ !cancelled() && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
 
     steps:
       # Determines the label (02, 05, 08, 11) based on PR creation month

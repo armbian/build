@@ -275,6 +275,9 @@ for target_name in targets["targets"]:
 			one_invocation_vars.update({"BETA": os.environ.get("TARGETS_BETA", "")})
 			# Special case for REVISION, read this from TARGETS_REVISION environment and force it.
 			one_invocation_vars.update({"REVISION": os.environ.get("TARGETS_REVISION", "")})
+			# KERNEL_CVE_PATCHES changes the kernel version. Pass it on only when set, so other invocations do not change.
+			if os.environ.get("TARGETS_KERNEL_CVE_PATCHES", ""):
+				one_invocation_vars.update({"KERNEL_CVE_PATCHES": os.environ["TARGETS_KERNEL_CVE_PATCHES"]})
 			expanded = {"vars": one_invocation_vars, "configs": one_expansion["configs"], "pipeline": one_expansion["pipeline"]}
 			invocations_dict.append(expanded)
 

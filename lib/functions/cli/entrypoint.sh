@@ -7,7 +7,26 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Terminals bring their own terminfo, for example xterm-ghostty. The build host
+# or the Docker image may not have it, and tput, clear and dialog fail.
+# Use a known entry: the name without "xterm-" (ncurses ships "ghostty"),
+# else a generic one.
+function ensure_known_terminal() {
+	[[ -n "${TERM:-}" ]] || return 0
+	tput -T "${TERM}" longname &> /dev/null && return 0
+	declare term
+	for term in "${TERM#xterm-}" xterm-256color xterm dumb; do
+		if tput -T "${term}" longname &> /dev/null; then
+			export TERM="${term}"
+			return 0
+		fi
+	done
+	return 0 # no tput or no entry: keep TERM, the Docker image may know it
+}
+
 function cli_entrypoint() {
+	ensure_known_terminal # before tput reads the terminal width
+
 	# array, readonly, global, for future reference, "exported" to shutup shellcheck
 	declare -rg -x -a ARMBIAN_ORIGINAL_ARGV=("${@}")
 
@@ -43,6 +62,7 @@ function cli_entrypoint() {
 	# Now load the key=value pairs from cmdline into environment, before loading config or executing commands.
 	# This will be done _again_ later, to make sure cmdline params override config et al.
 	apply_cmdline_params_to_env "early" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
+	ensure_known_terminal              # the command line can set TERM
 	# From here on, no more ${1} or stuff. We've parsed it all into ARMBIAN_PARSED_CMDLINE_PARAMS or ARMBIAN_NON_PARAM_ARGS and ARMBIAN_COMMAND.
 
 	# Normalize renamed switches now, while the command line is all we have.
@@ -219,6 +239,7 @@ function cli_entrypoint() {
 		# Apply the params received from the command line _again_ after running the config.
 		# This ensures that params take precedence over stuff possibly defined in the config.
 		apply_cmdline_params_to_env "after config '${config_filename}'" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
+		ensure_known_terminal                                           # the config can set TERM
 	done
 
 	# Early check for deprecations

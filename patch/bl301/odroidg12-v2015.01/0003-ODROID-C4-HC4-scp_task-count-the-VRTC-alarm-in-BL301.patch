@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Thu, 24 Sep 2026 01:10:59 +0300
+Subject: [PATCH 3/4] ODROID-C4/HC4: scp_task: count the VRTC alarm in BL301
+
+BL30 keeps the VRTC alarm in 32-bit microseconds, so an alarm past
+4294 s wraps and wakes the board early. Count the seconds the kernel
+wrote to AO_DEBUG_REG2 against the 64-bit AO TimerE, the way the
+Amlogic FreeRTOS BL30 does it (driver/vrtc/vrtc.c), and ignore the
+early IRQ_VRTC.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ .../odroidc4/firmware/scp_task/pwr_ctrl.c       | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/board/hardkernel/odroidc4/firmware/scp_task/pwr_ctrl.c b/board/hardkernel/odroidc4/firmware/scp_task/pwr_ctrl.c
+index 69271ab..15af466 100644
+--- a/board/hardkernel/odroidc4/firmware/scp_task/pwr_ctrl.c
++++ b/board/hardkernel/odroidc4/firmware/scp_task/pwr_ctrl.c
+@@ -133,10 +133,22 @@ void get_wakeup_source(void *response, unsigned int suspend_from)
+ }
+ extern void __switch_idle_task(void);
+ 
++/* timere_read_us() of the Amlogic FreeRTOS BL30 */
++static unsigned long long timere_read_us(void)
++{
++	unsigned long long te = readl(AO_TIMERE_REG);
++
++	te |= (unsigned long long)readl(AO_TIMERE_HI_REG) << 32;
++	return te;
++}
++
+ static unsigned int detect_key(unsigned int suspend_from)
+ {
+ 	int exit_reason = 0;
+ 	unsigned *irq = (unsigned *)WAKEUP_SRC_IRQ_ADDR_BASE;
++	/* BL30 counts the VRTC alarm in 32-bit microseconds and fires early past 4294 s */
++	unsigned int alarm_s = readl(AO_DEBUG_REG2);
++	unsigned long long alarm_start = timere_read_us();
+ #ifdef CONFIG_ADC_KEY
+ 	unsigned char adc_key_cnt = 0;
+ 	saradc_enable();
+@@ -176,8 +188,11 @@ static unsigned int detect_key(unsigned int suspend_from)
+ 				exit_reason = REMOTE_WAKEUP;
+ 		}
+ 
+-		if (irq[IRQ_VRTC] == IRQ_VRTC_NUM) {
++		if (irq[IRQ_VRTC] == IRQ_VRTC_NUM)
+ 			irq[IRQ_VRTC] = 0xFFFFFFFF;
++		if (alarm_s && timere_read_us() - alarm_start >
++				alarm_s * 1000000ULL) {
++			writel(0, AO_DEBUG_REG2);
+ 			exit_reason = RTC_WAKEUP;
+ 		}
+ 

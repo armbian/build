@@ -41,9 +41,16 @@ Subject: [ARCHEOLOGY] Feature/sunxi mainline stmmac ac300 (#9952)
 > X-Git-Archeology:   From: Alastair D'Silva <deece@users.noreply.github.com>
 > X-Git-Archeology:   Subject: Feature/sunxi mainline stmmac ac300 (#9952)
 > X-Git-Archeology:
+>
+> Rebased on top of the upstream 7.4 dwmac-sun8i fixes (d9750b3c4c27 "Fix EPHY
+> clock leak in get_ephy_nodes()" and fee9c17671b6 "reset the MAC after PHY
+> initialization"): the MAC software reset now happens in sun8i_dwmac_dma_reset()
+> after the PHY is initialized, so the extra reset in sun8i_dwmac_init() is gone;
+> the MDIO-mux reset is still skipped for the internal PHY, and get_ephy_nodes()
+> keeps the clock/reset optional handling on top of the local-variable version.
 ---
- drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c | 76 ++++++++--
- 1 file changed, 65 insertions(+), 11 deletions(-)
+ drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c | 68 ++++++++++++++++--
+ 1 file changed, 62 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
 index 111111111111..222222222222 100644
@@ -60,7 +67,7 @@ index 111111111111..222222222222 100644
  #include <linux/iopoll.h>
  #include <linux/mdio-mux.h>
  #include <linux/mfd/syscon.h>
-@@ -133,6 +136,16 @@ static const struct emac_variant emac_variant_a64 = {
+@@ -130,6 +133,16 @@
  	.tx_delay_max = 7,
  };
  
@@ -77,55 +84,35 @@ index 111111111111..222222222222 100644
  static const struct emac_variant emac_variant_h6 = {
  	.syscon_field = &sun8i_syscon_reg_field,
  	/* The "Internal PHY" of H6 is not on the die. It's on the
-@@ -574,6 +587,8 @@ static const struct stmmac_dma_ops sun8i_dwmac_dma_ops = {
+@@ -787,17 +800,23 @@
+ 		struct clk *ephy_clk;
  
- static int sun8i_dwmac_power_internal_phy(struct stmmac_priv *priv);
- 
-+static int sun8i_dwmac_reset(struct stmmac_priv *priv);
-+
- static int sun8i_dwmac_init(struct device *dev, void *priv)
- {
- 	struct net_device *ndev = dev_get_drvdata(dev);
-@@ -596,6 +611,10 @@ static int sun8i_dwmac_init(struct device *dev, void *priv)
- 		ret = sun8i_dwmac_power_internal_phy(netdev_priv(ndev));
- 		if (ret)
- 			goto err_disable_regulator;
-+
-+		ret = sun8i_dwmac_reset(netdev_priv(ndev));
-+		if (ret)
-+			goto err_disable_regulator;
- 	}
- 
- 	return 0;
-@@ -792,16 +811,24 @@ static int get_ephy_nodes(struct stmmac_priv *priv)
- 	/* Seek for internal PHY */
- 	for_each_child_of_node_scoped(mdio_internal, iphynode) {
- 		gmac->ephy_clk = of_clk_get(iphynode, 0);
--		if (IS_ERR(gmac->ephy_clk))
+ 		ephy_clk = of_clk_get(iphynode, 0);
+-		if (IS_ERR(ephy_clk))
 -			continue;
-+		if (IS_ERR(gmac->ephy_clk)) {
-+			ret = PTR_ERR(gmac->ephy_clk);
++		if (IS_ERR(ephy_clk)) {
++			ret = PTR_ERR(ephy_clk);
 +			if (ret == -EPROBE_DEFER) {
 +				of_node_put(mdio_internal);
 +				return ret;
 +			}
-+			gmac->ephy_clk = NULL;
++			ephy_clk = NULL;
 +		}
  		gmac->rst_ephy = of_reset_control_get_exclusive(iphynode, NULL);
  		if (IS_ERR(gmac->rst_ephy)) {
  			ret = PTR_ERR(gmac->rst_ephy);
+-			clk_put(ephy_clk);
  			if (ret == -EPROBE_DEFER) {
-+				if (gmac->ephy_clk)
-+					clk_put(gmac->ephy_clk);
++				clk_put(ephy_clk);
  				of_node_put(mdio_internal);
  				return ret;
  			}
 -			continue;
 +			gmac->rst_ephy = NULL;
  		}
+ 		gmac->ephy_clk = ephy_clk;
  		dev_info(priv->device, "Found internal PHY node\n");
- 		of_node_put(mdio_internal);
-@@ -879,7 +906,9 @@ static int mdio_mux_syscon_switch_fn(int current_child, int desired_child,
+@@ -876,7 +895,9 @@
  		switch (desired_child) {
  		case DWMAC_SUN8I_MDIO_MUX_INTERNAL_ID:
  			dev_info(priv->device, "Switch mux to internal PHY");
@@ -136,26 +123,31 @@ index 111111111111..222222222222 100644
  			gmac->use_internal_phy = true;
  			break;
  		case DWMAC_SUN8I_MDIO_MUX_EXTERNAL_ID:
-@@ -900,10 +929,14 @@ static int mdio_mux_syscon_switch_fn(int current_child, int desired_child,
+@@ -897,12 +918,17 @@
  		} else {
  			sun8i_dwmac_unpower_internal_phy(gmac);
  		}
 -		/* After changing syscon value, the MAC need reset or it will
 -		 * use the last value (and so the last PHY set).
 -		 */
--		ret = sun8i_dwmac_reset(priv);
+-		ret = sun8i_dwmac_reset(priv->ioaddr);
+-		if (ret)
+-			dev_err(priv->device, "EMAC reset timeout\n");
 +		if (!gmac->use_internal_phy) {
 +			/* After changing syscon value, the MAC need reset or it will
 +			 * use the last value (and so the last PHY set).
-+			 * For internal PHY, the MAC reset will timeout because the PHY
-+			 * is not yet enabled/clocked. Delay the reset to dwmac_init.
++			 * For the internal PHY the reset would time out here because
++			 * the PHY is not clocked yet; the MAC is reset later from
++			 * sun8i_dwmac_dma_reset(), after the PHY is initialized.
 +			 */
-+			ret = sun8i_dwmac_reset(priv);
++			ret = sun8i_dwmac_reset(priv->ioaddr);
++			if (ret)
++				dev_err(priv->device, "EMAC reset timeout\n");
 +		}
  	}
  	return ret;
  }
-@@ -1008,9 +1041,13 @@ static int sun8i_dwmac_set_syscon(struct device *dev,
+@@ -1007,9 +1033,13 @@
  
  static void sun8i_dwmac_unset_syscon(struct sunxi_priv_data *gmac)
  {
@@ -172,7 +164,7 @@ index 111111111111..222222222222 100644
  }
  
  static void sun8i_dwmac_exit(struct device *dev, void *priv)
-@@ -1189,6 +1226,21 @@ static int sun8i_dwmac_probe(struct platform_device *pdev)
+@@ -1185,6 +1215,21 @@
  	}
  
  	plat_dat = devm_stmmac_probe_config_dt(pdev, stmmac_res.mac);
@@ -194,7 +186,7 @@ index 111111111111..222222222222 100644
  	if (IS_ERR(plat_dat))
  		return PTR_ERR(plat_dat);
  
-@@ -1297,6 +1349,8 @@ static const struct of_device_id sun8i_dwmac_match[] = {
+@@ -1289,6 +1334,8 @@
  		.data = &emac_variant_h6 },
  	{ .compatible = "allwinner,sun50i-h616-emac",
  		.data = &emac_variant_h6 },

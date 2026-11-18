@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Mon, 9 Nov 2026 00:00:00 +0000
+Subject: PCI: rockchip-host: bring the link up again when it keeps entering
+ Recovery
+
+On Kobol Helios64 (RK3399 with a JMB585 at x2) about one link bring-up in
+thirty goes bad. The LTSSM reaches L0 and then re-enters Recovery about
+every 200 us, while the RC receives a constant stream of DLLPs without
+errors. The first config read behind the port gets no completion and aborts
+the CPU, or link training times out. The state survives Recovery, and a new
+bring-up of the port clears it.
+
+After the link comes up, watch the LTSSM for 5 ms and treat more than two
+entries into Recovery as a bad bring-up. Bring the port up again, up to
+five tries in all, for this and for a training timeout. An empty slot stays
+in Detect, so a timeout there fails on the first try. If no try gives a
+usable link, fail without any config access behind the port: probe returns
+an error, and resume leaves the bus reading as empty.
+
+Every link bring-up takes 5 ms longer.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/pci/controller/pcie-rockchip-host.c | 111 +++++++++++++++++---
+ drivers/pci/controller/pcie-rockchip.h      |   1 +
+ 2 files changed, 99 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-rockchip-host.c b/drivers/pci/controller/pcie-rockchip-host.c
+index 297548d..01ecd61 100644
+--- a/drivers/pci/controller/pcie-rockchip-host.c
++++ b/drivers/pci/controller/pcie-rockchip-host.c
+@@ -64,6 +64,10 @@ static void rockchip_pcie_update_txcredit_mui(struct rockchip_pcie *rockchip)
+ static int rockchip_pcie_valid_device(struct rockchip_pcie *rockchip,
+ 				      struct pci_bus *bus, int dev)
+ {
++	/* A request behind the port aborts the CPU when the link is not usable. */
++	if (!pci_is_root_bus(bus) && !rockchip->link_ok)
++		return 0;
++
+ 	/*
+ 	 * Access only one slot on each root port.
+ 	 * Do not read more than one device on the bus directly attached
+@@ -280,9 +284,45 @@ static void rockchip_pcie_set_power_limit(struct rockchip_pcie *rockchip)
+ 	rockchip_pcie_write(rockchip, status, PCIE_RC_CONFIG_CR + PCI_EXP_DEVCAP);
+ }
+ 
++#define PCIE_LINK_CHECK_US		5000
++#define PCIE_LINK_CHECK_MAX_RECOVERIES	2
++#define PCIE_LINK_BRING_UP_TRIES	5
++#define PCIE_LINK_RETRY_WAIT_MS		500
++#define PCIE_LTSSM_DETECT_ACTIVE	0x01
++#define PCIE_LTSSM_RECOVERY_RCVRLOCK	0x0b
++#define PCIE_LTSSM_RECOVERY_IDLE	0x0e
++
++/*
++ * A bad bring-up re-enters Recovery about every 200 us, and config requests
++ * through it get no completion. A good link settles in L0.
++ */
++static bool rockchip_pcie_link_is_stable(struct rockchip_pcie *rockchip)
++{
++	ktime_t end = ktime_add_us(ktime_get(), PCIE_LINK_CHECK_US);
++	bool was_recovery = false;
++	int recoveries = 0;
++
++	while (ktime_before(ktime_get(), end)) {
++		u32 state = rockchip_pcie_read(rockchip, PCIE_CLIENT_DEBUG_OUT_0) &
++			    PCIE_CLIENT_DEBUG_LTSSM_MASK;
++		bool is_recovery = state >= PCIE_LTSSM_RECOVERY_RCVRLOCK &&
++				   state <= PCIE_LTSSM_RECOVERY_IDLE;
++
++		if (is_recovery && !was_recovery)
++			recoveries++;
++		was_recovery = is_recovery;
++		udelay(2);
++	}
++
++	return recoveries <= PCIE_LINK_CHECK_MAX_RECOVERIES;
++}
++
+ /**
+  * rockchip_pcie_host_init_port - Initialize hardware
+  * @rockchip: PCIe port information
++ *
++ * Return: 0 on success, -EAGAIN if another bring-up of the link may help, or
++ * another negative error code
+  */
+ static int rockchip_pcie_host_init_port(struct rockchip_pcie *rockchip)
+ {
+@@ -328,7 +368,18 @@ static int rockchip_pcie_host_init_port(struct rockchip_pcie *rockchip)
+ 				 status, PCIE_LINK_UP(status), 20,
+ 				 500 * USEC_PER_MSEC);
+ 	if (err) {
+-		dev_err(dev, "PCIe link training gen1 timeout!\n");
++		status = rockchip_pcie_read(rockchip, PCIE_CLIENT_DEBUG_OUT_0) &
++			 PCIE_CLIENT_DEBUG_LTSSM_MASK;
++		dev_warn(dev, "PCIe link training gen1 timeout, LTSSM %#x\n", status);
++		/* An empty slot stays in Detect, and another bring-up cannot help. */
++		if (status > PCIE_LTSSM_DETECT_ACTIVE)
++			err = -EAGAIN;
++		goto err_power_off_phy;
++	}
++
++	if (!rockchip_pcie_link_is_stable(rockchip)) {
++		dev_warn(dev, "PCIe link up but keeps entering Recovery\n");
++		err = -EAGAIN;
+ 		goto err_power_off_phy;
+ 	}
+ 
+@@ -400,6 +451,32 @@ err_power_off_phy:
+ 	return err;
+ }
+ 
++static int rockchip_pcie_bring_up_port(struct rockchip_pcie *rockchip)
++{
++	struct device *dev = rockchip->dev;
++	int i, err;
++
++	for (i = 0; i < PCIE_LINK_BRING_UP_TRIES; i++) {
++		if (i) {
++			dev_info(dev, "retrying the link bring-up (%d/%d)\n", i,
++				 PCIE_LINK_BRING_UP_TRIES - 1);
++			msleep(PCIE_LINK_RETRY_WAIT_MS);
++		}
++		err = rockchip_pcie_host_init_port(rockchip);
++		if (err != -EAGAIN)
++			break;
++	}
++
++	rockchip->link_ok = !err;
++	if (err == -EAGAIN) {
++		dev_err(dev, "no usable link after %d tries\n",
++			PCIE_LINK_BRING_UP_TRIES);
++		err = -ETIMEDOUT;
++	}
++
++	return err;
++}
++
+ static irqreturn_t rockchip_pcie_subsys_irq_handler(int irq, void *arg)
+ {
+ 	struct rockchip_pcie *rockchip = arg;
+@@ -874,19 +951,23 @@ static int rockchip_pcie_suspend_noirq(struct device *dev)
+ 			    PCIE_CLIENT_INT_CLI, PCIE_CLIENT_INT_MASK);
+ 	rockchip_pcie_write(rockchip, (u32)PCIE_CORE_INT, PCIE_CORE_INT_MASK);
+ 
+-	ret = rockchip_pcie_wait_l2(rockchip);
+-	if (ret) {
+-		rockchip_pcie_enable_interrupts(rockchip);
+-		return ret;
+-	}
++	/* A failed resume left no link and has already released the PHYs. */
++	if (rockchip->link_ok) {
++		ret = rockchip_pcie_wait_l2(rockchip);
++		if (ret) {
++			rockchip_pcie_enable_interrupts(rockchip);
++			return ret;
++		}
+ 
+-	rockchip_pcie_deinit_phys(rockchip);
++		rockchip_pcie_deinit_phys(rockchip);
++		rockchip->link_ok = false;
++	}
+ 
+ 	rockchip_pcie_disable_clocks(rockchip);
+ 
+ 	regulator_disable(rockchip->vpcie0v9);
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static int rockchip_pcie_resume_noirq(struct device *dev)
+@@ -904,9 +985,13 @@ static int rockchip_pcie_resume_noirq(struct device *dev)
+ 	if (err)
+ 		goto err_disable_0v9;
+ 
+-	err = rockchip_pcie_host_init_port(rockchip);
++	/*
++	 * On failure we keep the clocks: the PM core still resumes the root
++	 * port, whose registers need them, and the next suspend releases them.
++	 */
++	err = rockchip_pcie_bring_up_port(rockchip);
+ 	if (err)
+-		goto err_pcie_resume;
++		return err;
+ 
+ 	err = rockchip_pcie_cfg_atu(rockchip);
+ 	if (err)
+@@ -919,9 +1004,9 @@ static int rockchip_pcie_resume_noirq(struct device *dev)
+ 	return 0;
+ 
+ err_err_deinit_port:
++	rockchip->link_ok = false;
+ 	rockchip_pcie_deinit_phys(rockchip);
+-err_pcie_resume:
+-	rockchip_pcie_disable_clocks(rockchip);
++	return err;
+ err_disable_0v9:
+ 	regulator_disable(rockchip->vpcie0v9);
+ 	return err;
+@@ -1012,7 +1097,7 @@ static int rockchip_pcie_probe(struct platform_device *pdev)
+ 		goto err_set_vpcie;
+ 	}
+ 
+-	err = rockchip_pcie_host_init_port(rockchip);
++	err = rockchip_pcie_bring_up_port(rockchip);
+ 	if (err)
+ 		goto err_vpcie;
+ 
+diff --git a/drivers/pci/controller/pcie-rockchip.h b/drivers/pci/controller/pcie-rockchip.h
+index 6c6cbf5..d545fad 100644
+--- a/drivers/pci/controller/pcie-rockchip.h
++++ b/drivers/pci/controller/pcie-rockchip.h
+@@ -327,6 +327,7 @@ struct rockchip_pcie {
+ 	void    __iomem *msg_region;
+ 	phys_addr_t msg_bus_addr;
+ 	bool is_rc;
++	bool link_ok;
+ 	struct resource *mem_res;
+ 	/* Bus scan delay is a workaround for some pcie devices causing crashes */
+ 	u32 bus_scan_delay;

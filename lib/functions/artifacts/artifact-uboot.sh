@@ -79,7 +79,7 @@ function artifact_uboot_prepare_version() {
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=(
-		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
+		"post_uboot_custom_postprocess" "fetch_sources_tools" "fetch_custom_uboot" "build_custom_uboot"
 		"pre_config_uboot_target" "post_config_uboot_target" "pre_package_uboot_image"
 		"check_uboot_produced_binary_file"
 	)
@@ -123,6 +123,8 @@ function artifact_uboot_prepare_version() {
 	[[ -n "${BOOTLOADER_BOOTS_FROM:-}" ]] && vars_to_hash+=("${BOOTLOADER_BOOTS_FROM}")
 	# SPI images for armbian-install: default, and for a SATA install target.
 	[[ -n "${BOOTLOADER_MTD_IMAGE:-}" ]] && vars_to_hash+=("${BOOTLOADER_MTD_IMAGE}" "${BOOTLOADER_MTD_IMAGE_SATA:-}")
+	# Space reserved before the first partition, shipped as BOOTLOADER_RESERVED_MIB in platform_install.sh.
+	[[ -n "${OFFSET:-}" ]] && vars_to_hash+=("${OFFSET}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"

@@ -1,0 +1,74 @@
+From 1359eb6a25c0474c5ff5fce9bb38806fdc9403da Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Fri, 25 Sep 2026 15:42:19 +0800
+Subject: [PATCH] drm/msm/dsi/phy: select C-PHY pixel clock parent by rate
+
+Expose the bit clock and post-out divider as C-PHY pixel clock parents, allowing the clock framework to select the source closest to the requested rate. Propagate pixel divider rate requests to the mux without retuning the PLL shared with the byte clock. Keep the D-PHY clock path unchanged.
+---
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c | 38 +++++++++++++++++++----
+ 1 file changed, 32 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+index 8f4b03713..028b8b250 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -807,14 +807,37 @@ static int pll_7nm_register(struct dsi_pll_7nm *pll_7nm, struct clk_hw **provide
+ 		goto fail;
+ 	}
+ 
+-	/* in CPHY mode, pclk_mux will always have post_out_div as parent
+-	 * don't register a pclk_mux clock and just use post_out_div instead
+-	 */
+ 	if (pll_7nm->phy->cphy_mode) {
++		static const u32 cphy_pclk_mux_table[] = { 0, 3 };
++		const struct clk_parent_data cphy_pclk_parents[] = {
++			{ .hw = pll_bit },
++			{ .hw = pll_post_out_div },
++		};
++
++		/*
++		 * C-PHY can source the pixel clock from either the bit clock or
++		 * the post-out divider. Keep the PLL rate set by the byte clock;
++		 * the pixel clock only needs to select the closest parent. The
++		 * display clock controller may truncate its parent rate request,
++		 * leaving the matching source slightly above the requested rate.
++		 */
+ 		dsi_pll_cmn_clk_cfg1_update(pll_7nm,
+ 					    DSI_7nm_PHY_CMN_CLK_CFG1_DSICLK_SEL__MASK,
+ 					    DSI_7nm_PHY_CMN_CLK_CFG1_DSICLK_SEL(3));
+-		phy_pll_out_dsi_parent = pll_post_out_div;
++
++		snprintf(clk_name, sizeof(clk_name), "dsi%d_pclk_mux", pll_7nm->phy->id);
++		hw = devm_clk_hw_register_mux_parent_data_table(dev, clk_name,
++				cphy_pclk_parents, ARRAY_SIZE(cphy_pclk_parents),
++				0, pll_7nm->phy->base +
++					REG_DSI_7nm_PHY_CMN_CLK_CFG1,
++				0, 2, CLK_MUX_ROUND_CLOSEST, cphy_pclk_mux_table,
++				&pll_7nm->pclk_mux_lock);
++		if (IS_ERR(hw)) {
++			ret = PTR_ERR(hw);
++			goto fail;
++		}
++
++		phy_pll_out_dsi_parent = hw;
+ 	} else {
+ 		snprintf(clk_name, sizeof(clk_name), "dsi%d_pclk_mux", pll_7nm->phy->id);
+ 
+@@ -837,9 +860,12 @@ static int pll_7nm_register(struct dsi_pll_7nm *pll_7nm, struct clk_hw **provide
+ 
+ 	/* PIX CLK DIV : DIV_CTRL_7_4*/
+ 	hw = devm_clk_hw_register_divider_parent_hw(dev, clk_name,
+-			phy_pll_out_dsi_parent, 0,
++			phy_pll_out_dsi_parent,
++			pll_7nm->phy->cphy_mode ? CLK_SET_RATE_PARENT : 0,
+ 			pll_7nm->phy->base + REG_DSI_7nm_PHY_CMN_CLK_CFG0,
+-			4, 4, CLK_DIVIDER_ONE_BASED, &pll_7nm->postdiv_lock);
++			4, 4, CLK_DIVIDER_ONE_BASED |
++				(pll_7nm->phy->cphy_mode ? CLK_DIVIDER_ROUND_CLOSEST : 0),
++			&pll_7nm->postdiv_lock);
+ 	if (IS_ERR(hw)) {
+ 		ret = PTR_ERR(hw);
+ 		goto fail;
+-- 
+2.55.0
+
