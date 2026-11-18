@@ -707,9 +707,9 @@ add_user() {
 				(
 					echo "$first_input"
 					echo "$second_input"
-				) | passwd "$RealUserName" > /dev/null 2>&1
+				) | passwd "$RealUserName" > /dev/null 2>&1 || return 1
 			else
-				passwd -d "$RealUserName" > /dev/null 2>&1
+				passwd -d "$RealUserName" > /dev/null 2>&1 || return 1
 			fi
 
 			# Hardware and desktop groups: EXTRA_GROUPS in /etc/adduser.conf, the groups adduser gives
@@ -1061,10 +1061,12 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# log in over SSH with a password, end the first-boot root password login set
 	# at build time by distro-agnostic.sh: root keeps key-based login. The user
 	# needs a usable password, an installed login shell listed in /etc/shells, an
-	# account that has not expired, no /etc/nologin, and sshd accepting a password
-	# for that user from the address of this session (SSH_CONNECTION, loopback on
-	# the console) with no other required method and no Allow/Deny rules;
-	# otherwise root password login is left as it is (atomic write)
+	# account that has not expired, no nologin file, an SSH session (on the console
+	# the client address is unknown), UseDNS off, and sshd accepting a password for
+	# that user from the address of this session with no other required method and
+	# no Allow/Deny rules; otherwise root password login is left as it is. If an
+	# earlier run switched it and stopped before sshd restarted, a run that cannot
+	# confirm the user's login puts it back (atomic write)
 	_f="/etc/ssh/sshd_config"
 	_root_login=()
 	if [[ -n "${RealUserName:-}" && "$(passwd -S "${RealUserName}" 2> /dev/null | awk '{print $2}')" == P ]] &&
@@ -1073,13 +1075,18 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		grep -qxF -- "${_shell}" /etc/shells &&
 		_exp="$(getent shadow "${RealUserName}" | cut -d: -f8)" &&
 		[[ -z "${_exp}" || "${_exp}" -gt $(($(date +%s) / 86400)) ]] &&
-		[[ ! -e /etc/nologin ]] &&
-		read -r _ca _ _la _lp _ <<< "${SSH_CONNECTION:-127.0.0.1 0 127.0.0.1 22}" &&
+		[[ ! -e /etc/nologin && ! -e /run/nologin && -n "${SSH_CONNECTION:-}" ]] &&
+		read -r _ca _ _la _lp _ <<< "${SSH_CONNECTION}" &&
 		_t="$(sshd -T -C "user=${RealUserName},host=${_ca},addr=${_ca},laddr=${_la},lport=${_lp}" 2> /dev/null)" &&
+		grep -qx 'usedns no' <<< "${_t}" &&
 		grep -qx 'passwordauthentication yes' <<< "${_t}" &&
 		grep -qx 'authenticationmethods any' <<< "${_t}" &&
 		! grep -qE '^(allowusers|allowgroups|denyusers|denygroups) ' <<< "${_t}"; then
 		_root_login=(-e 's/^[[:blank:]]*PermitRootLogin[[:blank:]]+yes[[:blank:]]*$/PermitRootLogin prohibit-password/')
+		! grep -qE '^[[:blank:]]*PermitRootLogin[[:blank:]]+yes[[:blank:]]*$' "${_f}" || touch /root/.firstlogin_root_ssh_switch
+	elif [[ -e /root/.firstlogin_root_ssh_switch ]]; then
+		_root_login=(-e 's/^[[:blank:]]*PermitRootLogin[[:blank:]]+prohibit-password[[:blank:]]*$/PermitRootLogin yes/')
+		rm -f /root/.firstlogin_root_ssh_switch
 	fi
 	if sed -E -e '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' \
 		"${_root_login[@]}" "${_f}" > "${_f}.tmp"; then
@@ -1092,6 +1099,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# firstlogin reruns for recovery. Unlike reload, restart succeeds on an
 	# inactive unit, so this does not loop on a fresh image.
 	systemctl restart ssh.service || exit 1
+	rm -f /root/.firstlogin_root_ssh_switch
 	# All critical configuration is complete. The EXIT trap may now safely
 	# remove the marker; subsequent failures (DM startup, etc.) should not
 	# force a full firstlogin rerun.
