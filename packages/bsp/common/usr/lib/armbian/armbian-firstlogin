@@ -691,11 +691,15 @@ add_user() {
 				mkdir -p /home/"$RealUserName"/.ssh/ || return 1
 				chown "$RealUserName:$RealUserName" /home/"$RealUserName"/.ssh/ || return 1
 				chmod 700 /home/"$RealUserName"/.ssh/ || return 1
-				if curl --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
+				if curl --fail --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
 					atomic_write "${_f}.tmp" "${_f}" 600 "$RealUserName:$RealUserName" || return 1
 				else
+					# 22: the server answered with an HTTP error; don't install the error page
+					# as a key and carry on. Network errors keep retrying on the next login.
+					local _rc=$?
 					rm -f "${_f}.tmp"
-					return 1
+					[[ ${_rc} -eq 22 ]] || return 1
+					echo -e "\n\e[0;31mWarning:\x1B[0m could not download PRESET_USER_KEY (HTTP error), no SSH key installed for $RealUserName"
 				fi
 			fi
 
@@ -1054,14 +1058,27 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	ssh-keygen -A > /dev/null 2>&1 && sync
 
 	# re-enable passing locale environment via ssh and, once the regular user can
-	# log in over SSH (a password, or an authorized_keys that holds a public key
-	# ssh-keygen can read: a failed PRESET_USER_KEY download may leave an error
-	# page there), end the first-boot root password login set at build time by
-	# distro-agnostic.sh: root keeps key-based login (atomic write)
+	# log in over SSH with a password, end the first-boot root password login set
+	# at build time by distro-agnostic.sh: root keeps key-based login. The user
+	# needs a usable password, an installed login shell listed in /etc/shells, an
+	# account that has not expired, no /etc/nologin, and sshd accepting a password
+	# for that user from the address of this session (SSH_CONNECTION, loopback on
+	# the console) with no other required method and no Allow/Deny rules;
+	# otherwise root password login is left as it is (atomic write)
 	_f="/etc/ssh/sshd_config"
 	_root_login=()
-	if [[ -n "${RealUserName:-}" ]] && { [[ "$(passwd -S "${RealUserName}" 2> /dev/null | awk '{print $2}')" == P ]] ||
-		ssh-keygen -l -f "/home/${RealUserName}/.ssh/authorized_keys" > /dev/null 2>&1; }; then
+	if [[ -n "${RealUserName:-}" && "$(passwd -S "${RealUserName}" 2> /dev/null | awk '{print $2}')" == P ]] &&
+		_shell="$(getent passwd "${RealUserName}" | cut -d: -f7)" &&
+		[[ -n "${_shell}" && "${_shell}" != */nologin && "${_shell}" != */false && -x "${_shell}" ]] &&
+		grep -qxF -- "${_shell}" /etc/shells &&
+		_exp="$(getent shadow "${RealUserName}" | cut -d: -f8)" &&
+		[[ -z "${_exp}" || "${_exp}" -gt $(($(date +%s) / 86400)) ]] &&
+		[[ ! -e /etc/nologin ]] &&
+		read -r _ca _ _la _lp _ <<< "${SSH_CONNECTION:-127.0.0.1 0 127.0.0.1 22}" &&
+		_t="$(sshd -T -C "user=${RealUserName},host=${_ca},addr=${_ca},laddr=${_la},lport=${_lp}" 2> /dev/null)" &&
+		grep -qx 'passwordauthentication yes' <<< "${_t}" &&
+		grep -qx 'authenticationmethods any' <<< "${_t}" &&
+		! grep -qE '^(allowusers|allowgroups|denyusers|denygroups) ' <<< "${_t}"; then
 		_root_login=(-e 's/^[[:blank:]]*PermitRootLogin[[:blank:]]+yes[[:blank:]]*$/PermitRootLogin prohibit-password/')
 	fi
 	if sed -E -e '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' \
