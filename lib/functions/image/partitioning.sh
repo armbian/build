@@ -359,7 +359,7 @@ function prepare_partitions() {
 			fi
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
 			physical_root_part_uuid="$(blkid -s UUID -o value "$physical_rootdevice")"
-			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks" >> "${SDCARD}/etc/crypttab"
+			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks,initramfs" >> "${SDCARD}/etc/crypttab"
 			run_host_command_logged cat "${SDCARD}/etc/crypttab"
 		fi
 
@@ -462,7 +462,7 @@ function prepare_partitions() {
 	##
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
-	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> "${SDCARD}/etc/fstab"
+	echo "tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0" >> "${SDCARD}/etc/fstab"
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
 		*if you created your own partitions, this would be a good time to format them*

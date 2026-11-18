@@ -372,6 +372,38 @@ configure_grub() {
 		GRUB_DISABLE_LINUX_UUID=false          # Be explicit about wanting UUID
 	grubCfgFrag
 
+	# Silent boot: 10_linux prints "Loading Linux ..." and "Loading initial ramdisk ..."
+	# before each linux/initrd line. Debian always does; Ubuntu does with GRUB_DISABLE_SUBMENU=y.
+	# This last grub.d script turns them into comments in grub.cfg.new when the cmdline has "quiet".
+	# update-grub runs it on every kernel and GRUB upgrade.
+	cat <<- 'grubQuietLoading' > "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
+		#!/bin/sh
+		# Armbian: with "quiet" on the kernel cmdline, hide the GRUB loading messages.
+		set -e
+		case " ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX} " in
+			*" quiet "*) ;;
+			*) exit 0 ;;
+		esac
+		# grub-mkconfig -o writes the output of each script to <cfg>.new.
+		cfg="$(readlink /proc/$$/fd/1 || true)"
+		case "$cfg" in
+			*.new) [ -f "$cfg" ] || exit 0 ;;
+			*) exit 0 ;; # output to a terminal or a pipe
+		esac
+		# grub.cfg can hold password hashes: keep the copy private.
+		umask 077
+		tmp="$(mktemp "$cfg.quiet.XXXXXX")" || exit 0
+		trap 'rm -f "$tmp"' EXIT
+		# grub-mkconfig writes more to <cfg>.new after this script, at its own offset.
+		# Keep the length: change "echo" to "#   " before a linux, initrd or devicetree line.
+		awk 'NR > 1 { if (prev ~ /^[ \t]*echo[ \t]/ && $0 ~ /^[ \t]*(linux|initrd|devicetree)/) sub(/echo/, "#   ", prev); print prev }
+			{ prev = $0 }
+			END { if (NR) print prev }' "$cfg" > "$tmp"
+		[ "$(wc -c < "$tmp")" -eq "$(wc -c < "$cfg")" ] || exit 0
+		cat "$tmp" > "$cfg"
+	grubQuietLoading
+	chmod 0755 "${MOUNT}"/etc/grub.d/99_armbian-quiet-loading
+
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
 		cat <<- grubCfgFragHostSide >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 			GRUB_DISABLE_OS_PROBER=${UEFI_GRUB_DISABLE_OS_PROBER}
@@ -379,8 +411,15 @@ configure_grub() {
 	fi
 
 	if [[ "a${UEFI_GRUB_TERMINAL}" != "a" ]]; then
+		# GRUB_TERMINAL also sets the input terminal. gfxterm and vga_text are output only:
+		# as input, GRUB shows "terminal `gfxterm' isn't found" at each boot.
+		declare grub_terminal_input="" grub_terminal
+		for grub_terminal in ${UEFI_GRUB_TERMINAL}; do
+			[[ "${grub_terminal}" == "gfxterm" || "${grub_terminal}" == "vga_text" ]] || grub_terminal_input+="${grub_terminal_input:+ }${grub_terminal}"
+		done
 		cat <<- grubCfgFragTerminal >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
-			GRUB_TERMINAL="${UEFI_GRUB_TERMINAL}"
+			GRUB_TERMINAL_OUTPUT="${UEFI_GRUB_TERMINAL}"
+			GRUB_TERMINAL_INPUT="${grub_terminal_input:-console}"
 		grubCfgFragTerminal
 	fi
 

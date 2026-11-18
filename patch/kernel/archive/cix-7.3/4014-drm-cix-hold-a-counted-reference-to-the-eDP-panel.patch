@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 17 Nov 2026 10:24:27 +0000
+Subject: drm/cix: hold a counted reference to the eDP panel
+
+fwnode_drm_find_panel() dropped the reference before it returned the
+panel. DPTx keeps the panel pointer until it unbinds, so a panel unbind
+could leave a dangling pointer. Return the counted reference, as
+of_drm_find_panel() does in 7.3. DPTx releases it when it unbinds.
+Also release the fwnode reference of the lookup.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 17 ++++++++--
+ drivers/gpu/drm/drm_panel.c            | 14 +++-----
+ 2 files changed, 18 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2305,6 +2305,11 @@ static void trilin_dp_edp_panel_unprepare(struct trilin_dp *dp)
+ }
+ 
+ 
++static void trilin_dp_put_panel(void *panel)
++{
++	drm_panel_put(panel);
++}
++
+ static void trilin_dp_edp_drop_panel(struct trilin_dp *dp)
+ {
+ 	trilin_dp_edp_panel_unprepare(dp);
+@@ -3563,6 +3568,7 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 	fwnode_edp_panel = fwnode_find_reference(dev->fwnode, "edp-panel", 0);
+ 	if (!IS_ERR_OR_NULL(fwnode_edp_panel)) {
+ 		edp_panel = fwnode_drm_find_panel(fwnode_edp_panel);
++		fwnode_handle_put(fwnode_edp_panel);
+ 		if (IS_ERR(edp_panel)) {
+ 			ret = PTR_ERR(edp_panel);
+ 			if (ret == -EPROBE_DEFER)
+@@ -3572,9 +3578,14 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 				dev_err(dev, "%s, invalid drm_panel: %d\n",
+ 					__func__, ret);
+ 			return ret;
+-		} else
+-			dev_info(dev, "%s, edp-panel %s is found\n", __func__,
+-				 dev_name(edp_panel->dev));
++		}
++		dev_info(dev, "%s, edp-panel %s is found\n", __func__,
++			 dev_name(edp_panel->dev));
++		/* Hold the panel until this device unbinds. */
++		ret = devm_add_action_or_reset(dev, trilin_dp_put_panel,
++					       edp_panel);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	dp = devm_kzalloc(dpsub->dev, sizeof(*dp), GFP_KERNEL);
+diff --git a/drivers/gpu/drm/drm_panel.c b/drivers/gpu/drm/drm_panel.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/drm_panel.c
++++ b/drivers/gpu/drm/drm_panel.c
+@@ -530,20 +530,14 @@ static struct drm_panel *find_panel_by_fwnode(const struct fwnode_handle *fwnode
+ }
+ 
+ /*
+- * fwnode_drm_find_panel - look up a panel by firmware node (uncounted form)
++ * fwnode_drm_find_panel - look up a panel by firmware node
+  *
+- * Legacy lookup used by out-of-tree drivers: like of_drm_find_panel() the
+- * returned reference is not refcounted, so the caller must not call
+- * drm_panel_put() on it.
++ * Like of_drm_find_panel(), return a counted reference. The caller must
++ * release it with drm_panel_put().
+  */
+ struct drm_panel *fwnode_drm_find_panel(const struct fwnode_handle *fwnode)
+ {
+-	struct drm_panel *panel = find_panel_by_fwnode(fwnode);
+-
+-	if (!IS_ERR(panel))
+-		drm_panel_put(panel);
+-
+-	return panel;
++	return find_panel_by_fwnode(fwnode);
+ }
+ EXPORT_SYMBOL(fwnode_drm_find_panel);
+ 
+-- 
+Armbian
+

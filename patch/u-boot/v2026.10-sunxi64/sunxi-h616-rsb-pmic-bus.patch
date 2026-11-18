@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Wed, 11 Nov 2026 10:00:00 +0000
+Subject: [PATCH] sunxi: H616: support the RSB bus for the SPL PMIC access
+
+On the OrangePi Zero2 the AXP305 is on R_RSB (pmic@745). TF-A switches
+it to RSB mode and it stays there until power is lost, so after a warm
+reboot the SPL, which only knows R_I2C on these SoCs, fails with
+
+  Failed to set core voltage! Can't set CPU frequency
+
+and the CPU stays at 408 MHz until Linux cpufreq takes over.
+
+Add the H6 generation to the SPL part of the sun8i RSB driver:
+controller at 0x07083000, gate and reset in PRCM register 0x1bc,
+PL0/PL1 function 2. The H616 manual does not describe RSB; the values
+are those of the Linux r_rsb node, r-ccu and H616-R pinctrl drivers.
+The AXP305 answers at the secondary RSB address 0x745 (runtime 0x3a).
+
+Nothing changes for boards without CONFIG_SYS_I2C_SUN8I_RSB.
+
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ arch/arm/include/asm/arch-sunxi/cpu_sun50i_h6.h |  1 +
+ arch/arm/include/asm/arch-sunxi/prcm_sun50i.h   |  3 +++
+ arch/arm/mach-sunxi/pmic_bus.c                  | 17 +++++++++++++----
+ drivers/i2c/sun8i_rsb.c                         |  6 ++++++
+ 4 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-sunxi/cpu_sun50i_h6.h b/arch/arm/include/asm/arch-sunxi/cpu_sun50i_h6.h
+index 2a9b086991c..18ac118ca15 100644
+--- a/arch/arm/include/asm/arch-sunxi/cpu_sun50i_h6.h
++++ b/arch/arm/include/asm/arch-sunxi/cpu_sun50i_h6.h
+@@ -47,6 +47,7 @@
+ #define SUNXI_PRCM_BASE			0x07010000
+ #define SUNXI_R_WDOG_BASE		0x07020400
+ #define SUNXI_R_TWI_BASE		0x07081400
++#define SUNXI_RSB_BASE			0x07083000
+ 
+ #ifndef __ASSEMBLY__
+ void sunxi_board_init(void);
+diff --git a/arch/arm/include/asm/arch-sunxi/prcm_sun50i.h b/arch/arm/include/asm/arch-sunxi/prcm_sun50i.h
+index d6653c3bb06..6e9bf587a55 100644
+--- a/arch/arm/include/asm/arch-sunxi/prcm_sun50i.h
++++ b/arch/arm/include/asm/arch-sunxi/prcm_sun50i.h
+@@ -11,6 +11,7 @@
+ #ifndef __ASSEMBLY__
+ 
+ #define CCU_PRCM_I2C_GATE_RESET		0x19c
++#define CCU_PRCM_RSB_GATE_RESET		0x1bc
+ #define CCU_PRCM_PLL_LDO_CFG		0x244
+ #define CCU_PRCM_SYS_PWROFF_GATING	0x250
+ #define CCU_PRCM_RES_CAL_CTRL		0x310
+@@ -18,6 +19,8 @@
+ 
+ #define PRCM_TWI_GATE		(1 << 0)
+ #define PRCM_TWI_RESET		(1 << 16)
++#define PRCM_RSB_GATE		(1 << 0)
++#define PRCM_RSB_RESET		(1 << 16)
+ 
+ #endif /* __ASSEMBLY__ */
+ #endif /* _PRCM_H */
+diff --git a/arch/arm/mach-sunxi/pmic_bus.c b/arch/arm/mach-sunxi/pmic_bus.c
+index c77dc538456..dd9913094c3 100644
+--- a/arch/arm/mach-sunxi/pmic_bus.c
++++ b/arch/arm/mach-sunxi/pmic_bus.c
+@@ -18,6 +18,15 @@
+ 
+ #define AXP221_CHIP_ADDR		0x68
+ 
++/* AXP305 uses the secondary RSB address pair, see Linux sunxi-rsb.c */
++#ifdef CONFIG_AXP305_POWER
++#define AXP_PMIC_RSB_DEVICE_ADDR	AXP_PMIC_SEC_DEVICE_ADDR
++#define AXP_PMIC_RSB_RUNTIME_ADDR	AXP_PMIC_SEC_RUNTIME_ADDR
++#else
++#define AXP_PMIC_RSB_DEVICE_ADDR	AXP_PMIC_PRI_DEVICE_ADDR
++#define AXP_PMIC_RSB_RUNTIME_ADDR	AXP_PMIC_PRI_RUNTIME_ADDR
++#endif
++
+ #if CONFIG_IS_ENABLED(PMIC_AXP)
+ static struct udevice *pmic;
+ #endif
+@@ -45,8 +54,8 @@ int pmic_bus_init(void)
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = rsb_set_device_address(AXP_PMIC_PRI_DEVICE_ADDR,
+-					     AXP_PMIC_PRI_RUNTIME_ADDR);
++		ret = rsb_set_device_address(AXP_PMIC_RSB_DEVICE_ADDR,
++					     AXP_PMIC_RSB_RUNTIME_ADDR);
+ 	}
+ #endif
+ 
+@@ -63,7 +72,7 @@ int pmic_bus_read(u8 reg, u8 *data)
+ 	if (IS_ENABLED(CONFIG_SYS_I2C_SUN6I_P2WI))
+ 		return p2wi_read(reg, data);
+ 	if (IS_ENABLED(CONFIG_SYS_I2C_SUN8I_RSB))
+-		return rsb_read(AXP_PMIC_PRI_RUNTIME_ADDR, reg, data);
++		return rsb_read(AXP_PMIC_RSB_RUNTIME_ADDR, reg, data);
+ 
+ 	return i2c_read(CONFIG_AXP_I2C_ADDRESS, reg, 1, data, 1);
+ #endif
+@@ -77,7 +86,7 @@ int pmic_bus_write(u8 reg, u8 data)
+ 	if (IS_ENABLED(CONFIG_SYS_I2C_SUN6I_P2WI))
+ 		return p2wi_write(reg, data);
+ 	if (IS_ENABLED(CONFIG_SYS_I2C_SUN8I_RSB))
+-		return rsb_write(AXP_PMIC_PRI_RUNTIME_ADDR, reg, data);
++		return rsb_write(AXP_PMIC_RSB_RUNTIME_ADDR, reg, data);
+ 
+ 	return i2c_write(CONFIG_AXP_I2C_ADDRESS, reg, 1, &data, 1);
+ #endif
+diff --git a/drivers/i2c/sun8i_rsb.c b/drivers/i2c/sun8i_rsb.c
+index 2197f180566..e739be11f81 100644
+--- a/drivers/i2c/sun8i_rsb.c
++++ b/drivers/i2c/sun8i_rsb.c
+@@ -159,8 +159,14 @@ int rsb_init(void)
+ {
+ 	struct sunxi_rsb_reg *base = (struct sunxi_rsb_reg *)SUNXI_RSB_BASE;
+ 
++#if defined(CONFIG_SUN50I_GEN_H6)
++	/* R_PIO has no gate here; RSB has its own PRCM register */
++	setbits_le32((void *)SUNXI_PRCM_BASE + CCU_PRCM_RSB_GATE_RESET,
++		     PRCM_RSB_GATE | PRCM_RSB_RESET);
++#else
+ 	/* Enable RSB and PIO clk, and de-assert their resets */
+ 	prcm_apb0_enable(PRCM_APB0_GATE_PIO | PRCM_APB0_GATE_RSB);
++#endif
+ 
+ 	if (IS_ENABLED(CONFIG_MACH_SUN9I)) {
+ 		sunxi_gpio_set_cfgpin(SUNXI_GPN(0), SUN9I_GPN_R_RSB);
+-- 
+Armbian
+

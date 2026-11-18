@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 17 Nov 2026 08:21:25 +0000
+Subject: pinctrl: acpi: defer for a missing pin controller, skip undefined
+ groups
+
+A consumer can probe before its pin controller. The ACPI map then
+failed with -ENXIO, which pinctrl_bind_pins() ignores, so the device
+probed without its pin setup. Return -EPROBE_DEFER, as the DT path does.
+
+Some firmware references pin groups that it does not define. Skip such
+a PinGroupFunction with a debug message. The other pin resources of the
+device still apply.
+
+On an error, release the maps of earlier resources, as
+pinctrl_dt_to_map() does. A deferred probe then does not leave
+duplicate maps behind.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/pinctrl/pinctrl-acpi.c | 48 ++++++++--
+ 1 file changed, 40 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/pinctrl/pinctrl-acpi.c b/drivers/pinctrl/pinctrl-acpi.c
+index 111111111111..222222222222 100644
+--- a/drivers/pinctrl/pinctrl-acpi.c
++++ b/drivers/pinctrl/pinctrl-acpi.c
+@@ -279,9 +279,9 @@ acpi_pin_resource_to_pinctrl_map(struct pinctrl *p, char *pinctrl_acpi,
+ 
+ 	pctldev = get_pinctrl_dev_from_acpi_name(pinctrl_acpi);
+ 	if (!pctldev) {
+-		dev_err(p->dev, "pctldev with ACPI name '%s' not found\n",
++		dev_dbg(p->dev, "pctldev with ACPI name '%s' not ready\n",
+ 			pinctrl_acpi);
+-		return -ENXIO;
++		return -EPROBE_DEFER;
+ 	}
+ 
+ 	ops = pctldev->desc->pctlops;
+@@ -490,6 +490,22 @@ static int get_pins_in_acpi_pin_group(struct acpi_device *adev,
+ 	return 0;
+ }
+ 
++/* Return 1 if the group has pins, 0 if it is not defined, or an error. */
++static int pinctrl_acpi_group_defined(struct acpi_device *adev,
++				      char *group_name)
++{
++	unsigned int *pins = NULL;
++	size_t npins = 0;
++	int ret;
++
++	ret = get_pins_in_acpi_pin_group(adev, group_name, &pins, &npins);
++	if (ret < 0)
++		return ret;
++	kfree(pins);
++
++	return npins > 0;
++}
++
+ static int process_pin_group_config(struct pinctrl *p,
+ 				    struct list_head *config_maps,
+ 				    struct acpi_resource_pin_group_config *ares)
+@@ -511,9 +527,9 @@ static int process_pin_group_config(struct pinctrl *p,
+ 	pinctrl_acpi = ares->resource_source.string_ptr;
+ 	pctl_dev = get_pinctrl_dev_from_acpi_name(pinctrl_acpi);
+ 	if (!pctl_dev) {
+-		dev_err(p->dev, "pctldev with ACPI name '%s' not found\n",
++		dev_dbg(p->dev, "pctldev with ACPI name '%s' not ready\n",
+ 			pinctrl_acpi);
+-		return -ENXIO;
++		return -EPROBE_DEFER;
+ 	}
+ 
+ 	adev = ACPI_COMPANION(pctl_dev->dev);
+@@ -551,14 +567,25 @@ process_pin_group_function(struct pinctrl *p,
+ 
+ 	pctl_dev = get_pinctrl_dev_from_acpi_name(pinctrl_acpi);
+ 	if (!pctl_dev) {
+-		dev_err(p->dev, "pctldev with ACPI name '%s' not found\n",
++		dev_dbg(p->dev, "pctldev with ACPI name '%s' not ready\n",
+ 			pinctrl_acpi);
+-		return -ENXIO;
++		return -EPROBE_DEFER;
+ 	}
+ 
+ 	adev = ACPI_COMPANION(pctl_dev->dev);
+ 	if (ares->vendor_length > 0)
+ 		state_index = ares->vendor_data[0];
++
++	/* Some firmware references groups that it does not define. Skip them. */
++	ret = pinctrl_acpi_group_defined(adev, group);
++	if (ret < 0)
++		return ret;
++	if (!ret) {
++		dev_dbg(p->dev, "%s has no pin group %s, skipped\n",
++			pinctrl_acpi, group);
++		return 0;
++	}
++
+ 	gs = pinctrl_get_group_selector(pctl_dev, group);
+ 	ret = acpi_pin_group_function_to_pinctrl_map(p, pinctrl_acpi,
+ 						     gs,
+@@ -700,13 +727,18 @@ int pinctrl_acpi_to_map(struct pinctrl *p)
+ 
+ 	ret = parse_acpi_pin_functions(p);
+ 	if (ret < 0)
+-		return ret;
++		goto err_free_maps;
+ 
+ 	ret = parse_acpi_pin_configs(p);
+ 	if (ret < 0)
+-		return ret;
++		goto err_free_maps;
+ 
+ 	return 0;
++
++err_free_maps:
++	/* Drop the maps of earlier resources, as pinctrl_dt_to_map() does. */
++	pinctrl_acpi_free_maps(p);
++	return ret;
+ }
+ 
+ static int pinctrl_acpi_populate_group_desc(struct acpi_resource *ares,
+-- 
+Armbian
+

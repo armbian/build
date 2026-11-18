@@ -173,9 +173,18 @@ function install_armbian_nvidia_autodetect_helper() {
 		BLACKLIST=/etc/modprobe.d/armbian-nvidia-disabled.conf
 		# Kept until the removal completes, so a failed removal runs again.
 		MARK=/var/lib/armbian/nvidia-remove
+		# nvidia-settings autostart fails without the driver. Mask it at each boot without
+		# an NVIDIA GPU. /run is lost at shutdown. Units of the administrator in /etc win.
+		AUTOSTART='/run/systemd/user/app-nvidia\x2dsettings\x2dautostart@autostart.service'
 
 		log() {
 			echo "armbian-nvidia-autodetect: $*" | systemd-cat -t armbian-nvidia-autodetect 2> /dev/null || true
+		}
+
+		# Show a message on the Plymouth splash, if it runs.
+		splash() {
+			command -v plymouth > /dev/null 2>&1 && plymouth --ping 2> /dev/null || return 0
+			plymouth "$1" --text="$2" 2> /dev/null || true
 		}
 
 		# Driver packages with files on the system, also partly removed ones:
@@ -202,6 +211,8 @@ function install_armbian_nvidia_autodetect_helper() {
 					modprobe nvidia_drm modeset=1 2> /dev/null || true
 					exit 0
 				fi
+				mkdir -p "${AUTOSTART%/*}"
+				[ -e "$AUTOSTART" ] || [ -L "$AUTOSTART" ] || ln -s /dev/null "$AUTOSTART"
 				mkdir -p /etc/modprobe.d
 				cat > "$BLACKLIST" <<- EOF
 					# Installed by armbian-nvidia-autodetect: no NVIDIA GPU on this host.
@@ -228,6 +239,7 @@ function install_armbian_nvidia_autodetect_helper() {
 				[ -f "$MARK" ] || exit 0
 				pkgs=$(installed)
 				log "no NVIDIA hardware; removing ${pkgs:-the remaining dependencies}"
+				splash display-message "Removing NVIDIA drivers, please wait ..."
 				# A power cut during an earlier removal leaves dpkg interrupted.
 				dpkg --configure -a > /dev/null 2>&1 || true
 				# The purge can be done already: autoremove then cleans up.
@@ -239,6 +251,7 @@ function install_armbian_nvidia_autodetect_helper() {
 				else
 					log "removal failed; it runs again at the next shutdown"
 				fi
+				splash hide-message "Removing NVIDIA drivers, please wait ..."
 				;;
 		esac
 		exit 0

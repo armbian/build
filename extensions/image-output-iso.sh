@@ -1,4 +1,4 @@
-# @description Builds a bootable live `.iso` from a UEFI image so it boots from a BMC/IPMI virtual CD-ROM. Packs the kernel, `live-boot` initrd and a squashfs rootfs into a hybrid ISO9660 with self-contained GRUB (`xorriso`/`mksquashfs`/`grub-mkstandalone`), dropping the `.img` by default. UEFI-only with Secure Boot off, restricted to `uefi-*` boards using the `grub` extension.
+# @description Builds a bootable live `.iso` from a UEFI image so it boots from a BMC/IPMI virtual CD-ROM or a USB stick. Packs the kernel, `live-boot` initrd and a squashfs rootfs into a hybrid ISO9660 with GRUB (`xorriso`/`mksquashfs`/`grub-mkstandalone`), dropping the `.img` by default. Boots UEFI (Secure Boot off) and, on amd64, legacy BIOS; restricted to `uefi-*` boards using the `grub` extension.
 
 #
 # SPDX-License-Identifier: GPL-2.0
@@ -14,7 +14,10 @@
 #   /live/vmlinuz            - the kernel
 #   /live/initrd.img         - the initrd, with live-boot support
 #   /live/filesystem.squashfs- the rootfs, mounted read-only + a RAM overlay
-#   El Torito UEFI boot      - a self-contained grub (all modules embedded)
+#   /boot/grub/              - grub.cfg, font and wallpaper; i386-pc modules on amd64
+#   El Torito UEFI boot      - a self-contained grub (all modules embedded) in an
+#                              appended ESP, so a dd copy on USB boots too
+#   El Torito BIOS boot      - amd64 only: grub i386-pc + a hybrid MBR
 #
 # An earlier "wrap the disk image" approach kept the kernel/rootfs on a separate
 # GPT partition, which is invisible under virtual-CD boot — grub loaded but had
@@ -24,8 +27,8 @@
 # extension (uefi-x86 / uefi-arm64; riscv64 experimental).
 #
 # Firmware requirements to boot the ISO:
-#   * UEFI firmware (the ISO is UEFI-only, like stock Armbian UEFI images; it will
-#     NOT boot under legacy BIOS/SeaBIOS).
+#   * UEFI firmware, or legacy BIOS/SeaBIOS on amd64. arm64/riscv64 are UEFI-only.
+#     armbian-install on a BIOS-booted live system installs GRUB for BIOS.
 #   * Secure Boot must be DISABLED: grub (grub-mkstandalone) and the Armbian kernel
 #     are unsigned, so a Secure-Boot-enabled machine rejects them. Signing the boot
 #     chain (Debian shim + an Armbian MOK, or distro-signed kernel) is a possible
@@ -35,7 +38,7 @@
 #   SKIP_ISO=yes       - do nothing
 #   ISO_VOLID="..."    - ISO9660 volume id (max 32 chars, default ARMBIAN)
 #   ISO_COMP="zstd"    - squashfs compressor (zstd|xz|gzip)
-#   ISO_TIMEOUT=1      - grub menu seconds (0 = boot immediately; >0 shows the splash)
+#   ISO_TIMEOUT=1      - grub wait in seconds; the menu is hidden, Esc shows it (0 = no wait)
 #   ISO_KEEP_IMG=no    - keep the .img alongside the .iso (default: drop it)
 #
 
@@ -66,6 +69,10 @@ function extension_prepare_config__prepare_image_output_iso_config() {
 	# and mount it with a writable RAM overlay. Inert on a normal disk boot (only
 	# activates with boot=live), so the .img still boots normally.
 	add_packages_to_image live-boot live-boot-initramfs-tools
+	# i386-pc modules for the BIOS El Torito image, and for armbian-install in BIOS mode.
+	# grub-pc-bin installs beside grub-efi-amd64 (grub-pc does not).
+	[[ "${ARCH}" == "amd64" ]] && add_packages_to_image grub-pc-bin
+	return 0
 }
 
 #### *run before installing host dependencies*
@@ -189,37 +196,71 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	done
 	[[ "${squashfs_rc}" -ne 0 ]] && exit_with_error "image-output-iso: mksquashfs failed (exit ${squashfs_rc})"
 
-	# --- self-contained grub EFI (embeds our cfg + all modules; no external deps,
-	#     so 'terminal gfxterm not found' and missing-module failures cannot happen) ---
-	# Show the Armbian grub wallpaper (embedded, so no external module/font lookup
-	# like the one that used to fail with 'terminal gfxterm not found'). gfxterm
-	# renders on the VGA/BMC-KVM screen only; serial keeps a text menu for SOL. If
-	# the font/graphics do not init, fall back to a plain text console.
-	# $prefix (grub's own var) always points at the embedded memdisk, even after the
-	# menuentry's `search` changes $root — escaped here so the shell leaves it alone.
+	# --- grub config, shared by the EFI and the BIOS grub ---
+	# gfxterm renders the Armbian wallpaper on the VGA/BMC-KVM screen; serial keeps a
+	# text menu for SOL. If the font/graphics do not init, fall back to a text console.
+	# $prefix (grub's own var) is the EFI memdisk or the ISO /boot/grub (BIOS): both
+	# hold the font and wallpaper. Escaped here so the shell leaves it alone.
+	# Desktop images with Plymouth boot silently from grub to the splash, like the
+	# installed image (see the grub extension). Esc still shows the boot log.
+	declare iso_cmdline="boot=live components systemd.gpt_auto=0"
+	if [[ "${BUILD_DESKTOP}" == "yes" && "${PLYMOUTH}" == "yes" ]]; then
+		iso_cmdline+=" quiet splash loglevel=3 vt.global_cursor_default=0 plymouth.ignore-serial-consoles"
+	else
+		iso_cmdline+=" loglevel=6"
+	fi
+	# console=tty1 last: it becomes /dev/console, which Plymouth uses.
+	iso_cmdline+=" console=ttyS0,115200 console=ttyAMA0,115200 console=tty1"
 	cat > "${MOUNT}/tmp/image-output-iso-grub.cfg" <<- GRUBCFG
 		set default=0
 		set timeout=${ISO_TIMEOUT}
+		set timeout_style=hidden
+		# Use serial only when com0 exists. grub probes the ports itself; in an
+		# 'if' condition it does not print the error. Without this, the failed
+		# 'terminal_output gfxterm serial' leaves gfxterm off.
 		insmod serial
-		serial --unit=0 --speed=115200
-		terminal_input console serial
+		set armbian_serial=0
+		if serial --unit=0 --speed=115200; then
+		    terminal_input --append serial
+		    set armbian_serial=1
+		fi
 		if loadfont \$prefix/fonts/unicode.pf2 ; then
-		    insmod all_video
+		    # UEFI: not all_video. Its video_bochs sets the QEMU standard VGA behind the
+		    # firmware, and a kernel with only the EFI framebuffer shows garbage.
+		    # BIOS (amd64): efi_gop does not exist, use vbe.
+		    if [ "\$grub_platform" = "efi" ]; then
+		        insmod efi_gop
+		    else
+		        insmod vbe
+		    fi
 		    insmod gfxterm
 		    insmod png
 		    set gfxmode=auto
-		    terminal_output gfxterm serial
+		    terminal_output gfxterm
 		    background_image \$prefix/armbian.png
 		else
-		    terminal_output console serial
+		    terminal_output console
+		fi
+		if [ "\$armbian_serial" = "1" ]; then
+		    terminal_output --append serial
 		fi
 		menuentry "Armbian ${version} (live)" {
+		    set gfxpayload=keep
 		    search --no-floppy --set=root --file /live/vmlinuz
-		    linux  /live/vmlinuz boot=live components loglevel=6 systemd.gpt_auto=0 console=ttyS0,115200 console=ttyAMA0,115200 console=tty1
+		    linux  /live/vmlinuz ${iso_cmdline}
 		    initrd /live/initrd.img
 		}
 	GRUBCFG
 
+	declare -a grub_assets=()
+	if [[ -f "${MOUNT}/usr/share/grub/unicode.pf2" && -f "${MOUNT}/usr/share/images/grub/wallpaper.png" ]]; then
+		grub_assets=("fonts/unicode.pf2=/usr/share/grub/unicode.pf2" "armbian.png=/usr/share/images/grub/wallpaper.png")
+	else
+		display_alert "Extension: ${EXTENSION}: grub wallpaper/font missing" "booting to text menu" "info"
+	fi
+
+	# --- self-contained grub EFI (embeds the cfg + all modules; no external deps,
+	#     so 'terminal gfxterm not found' and missing-module failures cannot happen) ---
 	display_alert "Building standalone grub EFI" "${EXTENSION}" "info"
 	# TMPDIR=/tmp: grub-mkstandalone's mkdtemp otherwise inherits the host TMPDIR,
 	# a path that does not exist inside the chroot ("cannot make temporary directory").
@@ -228,12 +269,10 @@ function pre_umount_final_image__800_build_image_output_iso() {
 		--output="/tmp/${efi_boot_name}"
 		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial terminal ls cat halt reboot"
 		"boot/grub/grub.cfg=/tmp/image-output-iso-grub.cfg")
-	# embed the font + wallpaper (paths are inside the chroot) if present
-	if [[ -f "${MOUNT}/usr/share/grub/unicode.pf2" && -f "${MOUNT}/usr/share/images/grub/wallpaper.png" ]]; then
-		gm_args+=("boot/grub/fonts/unicode.pf2=/usr/share/grub/unicode.pf2" "boot/grub/armbian.png=/usr/share/images/grub/wallpaper.png")
-	else
-		display_alert "Extension: ${EXTENSION}: grub wallpaper/font missing" "booting to text menu" "info"
-	fi
+	declare asset
+	for asset in "${grub_assets[@]}"; do
+		gm_args+=("boot/grub/${asset}") # paths inside the chroot
+	done
 	# grub-mkstandalone runs the target's own binary inside the chroot; on a cross
 	# build update_initramfs already undeployed the static qemu, so redeploy it for
 	# this call (a no-op / cheap on a native build) and remove it again after.
@@ -242,8 +281,9 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	undeploy_qemu_binary_from_chroot "${MOUNT}" "${EXTENSION}"
 	[[ -f "${MOUNT}/tmp/${efi_boot_name}" ]] || exit_with_error "image-output-iso: grub-mkstandalone did not produce ${efi_boot_name}"
 
-	# --- El Torito EFI boot image: a small FAT holding /EFI/BOOT/${efi_boot_name} ---
-	declare efi_img="${stage_dir}/boot/grub/efiboot.img"
+	# --- EFI boot image: a small FAT holding /EFI/BOOT/${efi_boot_name}. xorriso appends
+	#     it as an ESP partition, used by El Torito (CD) and by the firmware (USB). ---
+	declare efi_img="${tmp_dir}/efiboot.img"
 	declare efi_bytes efi_blocks
 	efi_bytes="$(stat -c%s "${MOUNT}/tmp/${efi_boot_name}")"
 	efi_blocks=$(((efi_bytes / 1024) + 2048)) # grub + FAT overhead + slack, in KiB
@@ -251,18 +291,47 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	cmd=(mkfs.vfat -n EFIBOOT "${efi_img}") && run_host_command_logged "${cmd[*]@Q}"
 	cmd=(mmd -i "${efi_img}" ::/EFI ::/EFI/BOOT) && run_host_command_logged "${cmd[*]@Q}"
 	cmd=(mcopy -i "${efi_img}" "${MOUNT}/tmp/${efi_boot_name}" "::/EFI/BOOT/${efi_boot_name}") && run_host_command_logged "${cmd[*]@Q}"
-	rm -f "${MOUNT}/tmp/${efi_boot_name}" "${MOUNT}/tmp/image-output-iso-grub.cfg"
+	rm -f "${MOUNT}/tmp/${efi_boot_name}"
 
-	# --- assemble the hybrid ISO ---
+	# --- BIOS grub (amd64): El Torito core image + modules, cfg and assets in /boot/grub ---
+	declare bios_dir="${MOUNT}/usr/lib/grub/i386-pc"
+	declare -a bios_xorriso_args=()
+	if [[ "${ARCH}" == "amd64" ]]; then
+		[[ -f "${bios_dir}/boot_hybrid.img" ]] || exit_with_error "image-output-iso: grub-pc-bin missing in the image" "${bios_dir}"
+		display_alert "Building BIOS grub El Torito image" "${EXTENSION}" "info"
+		mkdir -p "${stage_dir}/boot/grub/i386-pc" "${stage_dir}/boot/grub/fonts"
+		cmd=(chroot "${MOUNT}" grub-mkimage -O i386-pc-eltorito -p /boot/grub -o /tmp/eltorito.img biosdisk iso9660)
+		deploy_qemu_binary_to_chroot "${MOUNT}" "${EXTENSION}"
+		run_host_command_logged "${cmd[*]@Q}"
+		undeploy_qemu_binary_from_chroot "${MOUNT}" "${EXTENSION}"
+		cmd=(mv "${MOUNT}/tmp/eltorito.img" "${stage_dir}/boot/grub/i386-pc/eltorito.img") && run_host_command_logged "${cmd[*]@Q}"
+		cp "${bios_dir}"/*.mod "${bios_dir}"/*.lst "${stage_dir}/boot/grub/i386-pc/"
+		cp "${MOUNT}/tmp/image-output-iso-grub.cfg" "${stage_dir}/boot/grub/grub.cfg"
+		for asset in "${grub_assets[@]}"; do
+			cp "${MOUNT}${asset#*=}" "${stage_dir}/boot/grub/${asset%%=*}"
+		done
+		bios_xorriso_args=(
+			--grub2-mbr "${bios_dir}/boot_hybrid.img"
+			--mbr-force-bootable
+			-b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info
+			-eltorito-alt-boot)
+	fi
+	rm -f "${MOUNT}/tmp/image-output-iso-grub.cfg"
+
+	# --- assemble the hybrid ISO: ISO9660 + appended ESP in a GPT, as Ubuntu does.
+	#     Boots as CD (El Torito) and as a dd copy on USB. ---
 	declare iso="${DESTIMG}/${version}.iso"
 	display_alert "Assembling ISO" "${iso}" "info"
 	cmd=(xorriso -as mkisofs
 		-iso-level 3
 		-volid "${ISO_VOLID:0:32}"
 		-full-iso9660-filenames
-		-e boot/grub/efiboot.img
-		-no-emul-boot
-		-isohybrid-gpt-basdat
+		-partition_offset 16
+		-append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "${efi_img}"
+		-appended_part_as_gpt
+		-c boot.catalog
+		"${bios_xorriso_args[@]}"
+		-e --interval:appended_partition_2:all:: -no-emul-boot
 		-o "${iso}"
 		"${stage_dir}")
 	run_host_command_logged "${cmd[*]@Q}"
