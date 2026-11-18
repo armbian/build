@@ -2,7 +2,7 @@
 BOARD_NAME="Sige7s"
 BOARD_VENDOR="armsom"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER="amazingfate"
+BOARD_MAINTAINER=""
 INTRODUCED="2026"
 BOOTCONFIG="coolpi-4b-rk3588s_defconfig"
 KERNEL_TARGET="edge"
