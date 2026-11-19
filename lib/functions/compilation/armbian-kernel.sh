@@ -531,6 +531,13 @@ function armbian_kernel_config__enable_smb_cifs() {
 	fi
 }
 
+# Enables Ceph clients as modules: CephFS and RBD block devices.
+function armbian_kernel_config__enable_ceph() {
+	opts_y+=("NETWORK_FILESYSTEMS") # Parent menu, off in some minimal configs
+	opts_m+=("CEPH_FS")             # CephFS client (mount -t ceph)
+	opts_m+=("BLK_DEV_RBD")         # RADOS block device (/dev/rbdX)
+}
+
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
 #   sets a wide range of kernel configuration options necessary for Docker, including support for
 #   control groups (cgroups), networking, security, and various netfilter
