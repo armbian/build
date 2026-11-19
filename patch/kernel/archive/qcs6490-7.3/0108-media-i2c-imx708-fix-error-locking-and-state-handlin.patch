@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 19 Nov 2026 20:40:59 +0100
+Subject: media: i2c: imx708: fix error, locking and state handling
+
+An error from the optional reset GPIO lookup was passed on as a
+descriptor and a failed gain write was dropped. A VBLANK change that
+moved the long exposure shift left the exposure register in the old
+encoding, system suspend and resume ran without the control lock and a
+failed resume kept the stream references, the HDR mode and Bayer order
+were read under different locks, TRY formats left the crop and the
+metadata pad unnormalized, and a partial PDAF write cleared its marker
+first. Fix them and refuse active format changes while streaming.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/i2c/imx708.c | 56 ++++++----
+ 1 file changed, 37 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/media/i2c/imx708.c b/drivers/media/i2c/imx708.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/imx708.c
++++ b/drivers/media/i2c/imx708.c
+@@ -1180,7 +1180,7 @@ static int imx708_set_ctrl(struct v4l2_ctrl *ctrl)
+ 
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_ANALOGUE_GAIN:
+-		imx708_set_analogue_gain(imx708, ctrl->val);
++		ret = imx708_set_analogue_gain(imx708, ctrl->val);
+ 		break;
+ 	case V4L2_CID_EXPOSURE:
+ 		ret = imx708_set_exposure(imx708, ctrl->val);
+@@ -1219,6 +1219,8 @@ static int imx708_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_VBLANK:
+ 		ret = imx708_set_frame_length(imx708,
+ 					      imx708->mode->height + ctrl->val);
++		if (!ret)
++			ret = imx708_set_exposure(imx708, imx708->exposure->val);
+ 		break;
+ 	case V4L2_CID_NOTIFY_GAINS:
+ 		ret = imx708_write_reg(imx708, IMX708_REG_COLOUR_BALANCE_BLUE,
+@@ -1291,17 +1293,13 @@ static int imx708_enum_frame_size(struct v4l2_subdev *sd,
+ 		const struct imx708_mode *mode_list;
+ 		unsigned int num_modes;
+ 
++		mutex_lock(&imx708->mutex);
+ 		get_mode_table(fse->code, &mode_list, &num_modes,
+ 			       imx708->hdr_mode->val);
+-
+-		if (fse->index >= num_modes)
+-			return -EINVAL;
+-
+-		mutex_lock(&imx708->mutex);
+ 		code = imx708_get_format_code(imx708);
+ 		mutex_unlock(&imx708->mutex);
+ 
+-		if (fse->code != code)
++		if (fse->index >= num_modes || fse->code != code)
+ 			return -EINVAL;
+ 
+ 		fse->min_width = mode_list[fse->index].width;
+@@ -1396,6 +1394,11 @@ static int imx708_set_pad_format(struct v4l2_subdev *sd,
+ 
+ 	mutex_lock(&imx708->mutex);
+ 
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && imx708->streaming) {
++		mutex_unlock(&imx708->mutex);
++		return -EBUSY;
++	}
++
+ 	if (fmt->pad == IMAGE_PAD) {
+ 		const struct imx708_mode *mode_list;
+ 		unsigned int num_modes;
+@@ -1416,18 +1419,19 @@ static int imx708_set_pad_format(struct v4l2_subdev *sd,
+ 			framefmt = v4l2_subdev_state_get_format(sd_state,
+ 							      fmt->pad);
+ 			*framefmt = fmt->format;
++			*v4l2_subdev_state_get_crop(sd_state, IMAGE_PAD) =
++				mode->crop;
+ 		} else {
+ 			imx708->mode = mode;
+ 			imx708_set_framing_limits(imx708);
+ 		}
+ 	} else {
++		/* Only one embedded data mode is supported */
++		imx708_update_metadata_pad_format(fmt);
+ 		if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+ 			framefmt = v4l2_subdev_state_get_format(sd_state,
+ 							      fmt->pad);
+ 			*framefmt = fmt->format;
+-		} else {
+-			/* Only one embedded data mode is supported */
+-			imx708_update_metadata_pad_format(fmt);
+ 		}
+ 	}
+ 
+@@ -1517,7 +1521,8 @@ static int imx708_start_streaming(struct imx708 *imx708)
+ 		ret = imx708_read_reg(imx708, IMX708_REG_BASE_SPC_GAINS_L,
+ 				      IMX708_REG_VALUE_08BIT, &val);
+ 		if (ret == 0 && val == 0x40) {
+-			for (i = 0; i < 54 && ret == 0; i++) {
++			/* The first left gain doubles as the done marker, so write it last */
++			for (i = 1; i < 54 && ret == 0; i++) {
+ 				ret = imx708_write_reg(imx708,
+ 						       IMX708_REG_BASE_SPC_GAINS_L + i,
+ 						       IMX708_REG_VALUE_08BIT,
+@@ -1529,6 +1534,11 @@ static int imx708_start_streaming(struct imx708 *imx708)
+ 						       IMX708_REG_VALUE_08BIT,
+ 						       pdaf_gains[1][i % 9]);
+ 			}
++			if (ret == 0)
++				ret = imx708_write_reg(imx708,
++						       IMX708_REG_BASE_SPC_GAINS_L,
++						       IMX708_REG_VALUE_08BIT,
++						       pdaf_gains[0][0]);
+ 		}
+ 		if (ret) {
+ 			dev_err(&client->dev, "%s failed to set PDAF gains\n",
+@@ -1702,8 +1712,10 @@ static int __maybe_unused imx708_suspend(struct device *dev)
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct imx708 *imx708 = to_imx708(sd);
+ 
++	mutex_lock(&imx708->mutex);
+ 	if (imx708->streaming)
+ 		imx708_stop_streaming(imx708);
++	mutex_unlock(&imx708->mutex);
+ 
+ 	return 0;
+ }
+@@ -1713,19 +1725,22 @@ static int __maybe_unused imx708_resume(struct device *dev)
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct imx708 *imx708 = to_imx708(sd);
+-	int ret;
++	int ret = 0;
+ 
++	mutex_lock(&imx708->mutex);
+ 	if (imx708->streaming) {
+ 		ret = imx708_start_streaming(imx708);
+-		if (ret)
+-			goto error;
++		if (ret) {
++			imx708_stop_streaming(imx708);
++			imx708->streaming = 0;
++			__v4l2_ctrl_grab(imx708->vflip, false);
++			__v4l2_ctrl_grab(imx708->hflip, false);
++			__v4l2_ctrl_grab(imx708->hdr_mode, false);
++			pm_runtime_put_noidle(dev);
++		}
+ 	}
++	mutex_unlock(&imx708->mutex);
+ 
+-	return 0;
+-
+-error:
+-	imx708_stop_streaming(imx708);
+-	imx708->streaming = 0;
+ 	return ret;
+ }
+ 
+@@ -2033,6 +2048,9 @@ static int imx708_probe(struct i2c_client *client)
+ 	/* Request optional enable pin */
+ 	imx708->reset_gpio = devm_gpiod_get_optional(dev, "reset",
+ 						     GPIOD_OUT_HIGH);
++	if (IS_ERR(imx708->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(imx708->reset_gpio),
++				     "failed to get reset gpio\n");
+ 
+ 	/*
+ 	 * The sensor must be powered for imx708_identify_module()
+-- 
+Armbian
+

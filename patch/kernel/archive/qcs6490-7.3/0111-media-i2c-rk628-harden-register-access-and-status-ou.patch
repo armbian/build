@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 19 Nov 2026 20:41:28 +0100
+Subject: media: i2c: rk628: harden register access and status output
+
+The register helpers accepted banks the chip variant never registered,
+and their error logs printed the value, which for reads is uninitialized
+and for writes can be HDCP key material. The CDR mode was used as a
+table index without a bound, the status output could divide by zero or
+index past the color range strings, and the HDR metadata ioctl could
+copy uninitialized stack memory to userspace. Reject missing banks, log
+only the register, bound those values and zero the metadata.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/i2c/rk628/rk628.c           | 10 +++----
+ drivers/media/i2c/rk628/rk628_combrxphy.c |  4 +++
+ drivers/media/i2c/rk628/rk628_csi_v4l2.c  |  2 +-
+ drivers/media/i2c/rk628/rk628_hdmirx.c    | 13 ++++++----
+ 4 files changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/media/i2c/rk628/rk628.c b/drivers/media/i2c/rk628/rk628.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628.c
++++ b/drivers/media/i2c/rk628/rk628.c
+@@ -272,7 +272,7 @@ int rk628_media_i2c_write(struct rk628 *rk628, u32 reg, u32 val)
+ 	int region = (reg >> 16) & 0xff;
+ 	int ret = 0;
+ 
+-	if (region >= RK628_DEV_MAX) {
++	if (region >= RK628_DEV_MAX || !rk628->regmap[region]) {
+ 		dev_err(rk628->dev,
+ 			"%s: i2c err: invalid arguments, out of register range\n", __func__);
+ 		return -EINVAL;
+@@ -287,7 +287,7 @@ int rk628_media_i2c_write(struct rk628 *rk628, u32 reg, u32 val)
+ 	}
+ 	if (ret < 0)
+ 		dev_err(rk628->dev,
+-			"%s: i2c err reg=0x%x, val=0x%x, ret=%d\n", __func__, reg, val, ret);
++			"%s: i2c err reg=0x%x, ret=%d\n", __func__, reg, ret);
+ 
+ 	return ret;
+ }
+@@ -298,7 +298,7 @@ int rk628_media_i2c_read(struct rk628 *rk628, u32 reg, u32 *val)
+ 	int region = (reg >> 16) & 0xff;
+ 	int ret = 0;
+ 
+-	if (region >= RK628_DEV_MAX) {
++	if (region >= RK628_DEV_MAX || !rk628->regmap[region]) {
+ 		dev_err(rk628->dev,
+ 			"%s: i2c err: invalid arguments, out of register range\n", __func__);
+ 		return -EINVAL;
+@@ -313,7 +313,7 @@ int rk628_media_i2c_read(struct rk628 *rk628, u32 reg, u32 *val)
+ 	}
+ 	if (ret < 0)
+ 		dev_err(rk628->dev,
+-			"%s: i2c err reg=0x%x, val=0x%x ret=%d\n", __func__, reg, *val, ret);
++			"%s: i2c err reg=0x%x, ret=%d\n", __func__, reg, ret);
+ 
+ 	return ret;
+ }
+@@ -325,7 +325,7 @@ int rk628_media_i2c_update_bits(struct rk628 *rk628, u32 reg, u32 mask,
+ 	int region = (reg >> 16) & 0xff;
+ 	int ret;
+ 
+-	if (region >= RK628_DEV_MAX) {
++	if (region >= RK628_DEV_MAX || !rk628->regmap[region]) {
+ 		dev_err(rk628->dev,
+ 			"%s: i2c err: invalid arguments, out of register range\n", __func__);
+ 		return -EINVAL;
+diff --git a/drivers/media/i2c/rk628/rk628_combrxphy.c b/drivers/media/i2c/rk628/rk628_combrxphy.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_combrxphy.c
++++ b/drivers/media/i2c/rk628/rk628_combrxphy.c
+@@ -481,6 +481,10 @@ static int rk628_combrxphy_set_hdmi_mode_for_cable(struct rk628 *rk628, int f)
+ 	cdr_mode = (val >> 16) & 0x1f;
+ 	cdr_data =  val & 0xffff;
+ 	dev_info(rk628->dev, "cdr_mode:%d, cdr_data:%d\n", cdr_mode, cdr_data);
++	if (cdr_mode >= ARRAY_SIZE(cdr_mode_to_khz)) {
++		dev_err(rk628->dev, "unsupported cdr_mode %d\n", cdr_mode);
++		return -EINVAL;
++	}
+ 
+ 	/* step5: manually configure PLL
+ 	 * cfg reg 66a8 tmds clock div2 for rgb/yuv444 as default
+diff --git a/drivers/media/i2c/rk628/rk628_csi_v4l2.c b/drivers/media/i2c/rk628/rk628_csi_v4l2.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_csi_v4l2.c
++++ b/drivers/media/i2c/rk628/rk628_csi_v4l2.c
+@@ -2668,7 +2668,7 @@ static long rk628_csi_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
+ 	struct rkmodule_capture_info  *capture_info;
+ 	u32 stream = 0;
+ 	int edid_version, i;
+-	struct hdr_metadata_infoframe hdmi_metadata;
++	struct hdr_metadata_infoframe hdmi_metadata = {};
+ 	u8 input_color_space;
+ 
+ 	switch (cmd) {
+diff --git a/drivers/media/i2c/rk628/rk628_hdmirx.c b/drivers/media/i2c/rk628/rk628_hdmirx.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_hdmirx.c
++++ b/drivers/media/i2c/rk628/rk628_hdmirx.c
+@@ -112,7 +112,7 @@ static int rk628_hdmirx_write_nolock(struct rk628 *rk628, u32 reg, u32 val)
+ 	int region = (reg >> 16) & 0xff;
+ 	int ret = 0;
+ 
+-	if (region >= RK628_DEV_MAX) {
++	if (region >= RK628_DEV_MAX || !rk628->regmap[region]) {
+ 		dev_err(rk628->dev,
+ 			"%s: i2c err: invalid arguments, out of register range\n", __func__);
+ 		return -EINVAL;
+@@ -121,7 +121,7 @@ static int rk628_hdmirx_write_nolock(struct rk628 *rk628, u32 reg, u32 val)
+ 	ret = regmap_write(rk628->regmap[region], reg, val);
+ 	if (ret < 0)
+ 		dev_err(rk628->dev,
+-			"%s: i2c err reg=0x%x, val=0x%x, ret=%d\n", __func__, reg, val, ret);
++			"%s: i2c err reg=0x%x, ret=%d\n", __func__, reg, ret);
+ 
+ 	return ret;
+ }
+@@ -1911,7 +1911,9 @@ static int rk628_hdmirx_read_timing(struct rk628 *rk628,
+ 	}
+ 
+ 	rk628_dbg(rk628, "get current aviif:  vic:%d, color_range: %s, color_space %s",
+-		 vic, bus_color_range_str[color_range], bus_color_space_str[color_space]);
++		 vic, color_range < ARRAY_SIZE(bus_color_range_str) ?
++		 bus_color_range_str[color_range] : "Unknown",
++		 bus_color_space_str[color_space]);
+ 
+ 	if (rk628->version >= RK628F_VERSION)
+ 		fps = tmds_clk  / (htotal * vtotal);
+@@ -2464,7 +2466,7 @@ static int rk628_hdmirx_status_show(struct seq_file *s, void *v)
+ 	rk628_hdmirx_read_timing(rk628, &timings);
+ 	htot = bt->width + bt->hfrontporch + bt->hsync + bt->hbackporch;
+ 	vtot = bt->height + bt->vfrontporch + bt->vsync + bt->vbackporch;
+-	fps = div_u64(bt->pixelclock,  (htot * vtot));
++	fps = (htot && vtot) ? div_u64(bt->pixelclock, htot * vtot) : 0;
+ 	seq_printf(s, "Timing: %ux%u%s%u (%ux%u)",
+ 		   bt->width, bt->height, bt->interlaced ? "i" : "p",
+ 		   fps, htot, vtot);
+@@ -2482,7 +2484,8 @@ static int rk628_hdmirx_status_show(struct seq_file *s, void *v)
+ 
+ 	range = rk628_hdmirx_get_range(rk628);
+ 	seq_puts(s, "Color Range: ");
+-	seq_printf(s, "%s\n", bus_color_range_str[range]);
++	seq_printf(s, "%s\n", range < ARRAY_SIZE(bus_color_range_str) ?
++		   bus_color_range_str[range] : "Unknown");
+ 
+ 	space = rk628_hdmirx_get_color_space(rk628);
+ 	seq_puts(s, "Color Space: ");
+-- 
+Armbian
+
