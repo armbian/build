@@ -96,6 +96,9 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 
 fi
 
+# shellcheck source=config/sources/families/include/uefi_initramfs.inc
+source "${BASH_SOURCE%/*}/uefi_initramfs.inc"
+
 function pre_customize_image__disable_few_armbian_services() {
 	display_alert "Disabling Armbian services that are not needed for UEFI" "${BOARD}" "info"
 	chroot_sdcard systemctl disable armbian-hardware-monitor.service "||" true
