@@ -1,0 +1,731 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 19 Nov 2026 21:29:31 +0100
+Subject: media: i2c: rk628: fix probe unwind, PLL lock and stream errors
+
+The BT1120 and CSI probes left the subdevice registered, the poll timer
+running or the IRQs live on their error paths, and the PLL lock loops
+could spin forever. Stream-on reported success without a signal, a
+rejected timing change still published new link controls, reset could
+leave an IRQ masked across suspend, and the TMDS sample vote compared
+only neighbours. Fix those, refuse split CSI output without a second
+wired transmitter, report the link rate the TX PHY really programs and
+BT.2020 output when the CSC keeps it.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/i2c/rk628/rk628_bt1120_v4l2.c  |  34 ++-
+ drivers/media/i2c/rk628/rk628_combtxphy.c    |  69 +++--
+ drivers/media/i2c/rk628/rk628_combtxphy.h    |   1 +
+ drivers/media/i2c/rk628/rk628_cru.c          |  37 ++-
+ drivers/media/i2c/rk628/rk628_csi_v4l2.c     | 133 +++++++---
+ drivers/media/i2c/rk628/rk628_hdmirx.c       |  12 +-
+ drivers/media/i2c/rk628/rk628_hdmirx.h       |   6 -
+ drivers/media/i2c/rk628/rk628_post_process.c |  11 +
+ drivers/media/i2c/rk628/rk628_post_process.h |   1 +
+ 9 files changed, 203 insertions(+), 101 deletions(-)
+
+diff --git a/drivers/media/i2c/rk628/rk628_bt1120_v4l2.c b/drivers/media/i2c/rk628/rk628_bt1120_v4l2.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_bt1120_v4l2.c
++++ b/drivers/media/i2c/rk628/rk628_bt1120_v4l2.c
+@@ -1985,6 +1985,7 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 	int err;
+ 	struct rk628 *rk628;
+ 	unsigned long irq_flags;
++	bool hdmirx_irq_on = false, plugin_irq_on = false;
+ 
+ 	dev_info(dev, "RK628 I2C driver version: %02x.%02x.%02x",
+ 		DRIVER_VERSION >> 16,
+@@ -2038,7 +2039,9 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 		err = -ENODEV;
+ 		goto power_off;
+ 	}
+-	rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	err = rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	if (err)
++		goto power_off;
+ 
+ #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
+ 	v4l2_i2c_subdev_init(sd, client, &rk628_bt1120_ops);
+@@ -2120,6 +2123,7 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 							  bt1120->i2s_enable_default,
+ 							  NULL);
+ 	if (!bt1120->audio_info) {
++		err = -ENOMEM;
+ 		v4l2_err(sd, "request audio info fail\n");
+ 		goto err_work_queues;
+ 	}
+@@ -2136,6 +2140,7 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 					err);
+ 			goto err_work_queues;
+ 		}
++		hdmirx_irq_on = true;
+ 	} else {
+ 		v4l2_dbg(1, debug, sd, "no irq, cfg poll!\n");
+ 		INIT_WORK(&bt1120->work_i2c_poll,
+@@ -2151,7 +2156,7 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 		if (bt1120->plugin_irq < 0) {
+ 			dev_err(bt1120->dev, "failed to get plugin det irq\n");
+ 			err = bt1120->plugin_irq;
+-			goto err_work_queues;
++			goto err_poll;
+ 		}
+ 
+ 		err = devm_request_threaded_irq(dev, bt1120->plugin_irq, NULL,
+@@ -2159,14 +2164,15 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 				IRQF_TRIGGER_RISING | IRQF_ONESHOT, "rk628_bt1120", bt1120);
+ 		if (err) {
+ 			dev_err(bt1120->dev, "failed to register plugin det irq (%d)\n", err);
+-			goto err_work_queues;
++			goto err_poll;
+ 		}
++		plugin_irq_on = true;
+ 	}
+ 
+ 	err = v4l2_ctrl_handler_setup(sd->ctrl_handler);
+ 	if (err) {
+ 		v4l2_err(sd, "v4l2 ctrl handler setup failed! err:%d\n", err);
+-		goto err_work_queues;
++		goto err_poll;
+ 	}
+ 
+ 	if (bt1120->cec_enable)
+@@ -2177,12 +2183,20 @@ static int rk628_bt1120_probe(struct i2c_client *client)
+ 
+ 	return 0;
+ 
++err_poll:
++	if (plugin_irq_on)
++		devm_free_irq(dev, bt1120->plugin_irq, bt1120);
++	if (hdmirx_irq_on)
++		devm_free_irq(dev, bt1120->hdmirx_irq, bt1120);
++	if (!bt1120->hdmirx_irq) {
++		timer_delete_sync(&bt1120->timer);
++		cancel_work_sync(&bt1120->work_i2c_poll);
++	}
+ err_work_queues:
+-	if (!bt1120->hdmirx_irq)
+-		flush_work(&bt1120->work_i2c_poll);
+-	cancel_delayed_work(&bt1120->delayed_work_enable_hotplug);
+-	cancel_delayed_work(&bt1120->delayed_work_res_change);
++	disable_delayed_work_sync(&bt1120->delayed_work_enable_hotplug);
++	disable_delayed_work_sync(&bt1120->delayed_work_res_change);
+ 	rk628_hdmirx_audio_destroy(bt1120->audio_info);
++	v4l2_async_unregister_subdev(sd);
+ err_hdl:
+ 	mutex_destroy(&bt1120->confctl_mutex);
+ 	media_entity_cleanup(&sd->entity);
+@@ -2207,8 +2221,8 @@ static void rk628_bt1120_remove(struct i2c_client *client)
+ 		flush_work(&bt1120->work_i2c_poll);
+ 	}
+ 
+-	cancel_delayed_work_sync(&bt1120->delayed_work_enable_hotplug);
+-	cancel_delayed_work_sync(&bt1120->delayed_work_res_change);
++	disable_delayed_work_sync(&bt1120->delayed_work_enable_hotplug);
++	disable_delayed_work_sync(&bt1120->delayed_work_res_change);
+ 	rk628_hdmirx_audio_cancel_work_audio(bt1120->audio_info, true);
+ 	if (bt1120->rk628->version < RK628F_VERSION)
+ 		rk628_hdmirx_audio_cancel_work_rate_change(bt1120->audio_info, true);
+diff --git a/drivers/media/i2c/rk628/rk628_combtxphy.c b/drivers/media/i2c/rk628/rk628_combtxphy.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_combtxphy.c
++++ b/drivers/media/i2c/rk628/rk628_combtxphy.c
+@@ -101,6 +101,50 @@ static void rk628_combtxphy_gvi_power_on(struct rk628 *rk628)
+ 	rk628_i2c_update_bits(rk628,  COMBTXPHY_CON0, SW_TX_IDLE_MASK, 0);
+ }
+ 
++/* Compute the MIPI PLL dividers for fhsc Mbps and return the resulting rate. */
++static unsigned int rk628_combtxphy_mipi_pll(struct rk628_combtxphy *txphy,
++					     unsigned int fhsc)
++{
++	unsigned int fvco, frac_rate, fin = 24;
++
++	if (fhsc < 375)
++		txphy->rate_div = 4;
++	else if (fhsc < 750)
++		txphy->rate_div = 2;
++	else
++		txphy->rate_div = 1;
++
++	fvco = fhsc * 2 * txphy->rate_div;
++	txphy->ref_div = 1;
++	txphy->fb_div = fvco / 8 / fin;
++	frac_rate = fvco - (fin * 8 * txphy->fb_div);
++	if (frac_rate) {
++		frac_rate <<= 10;
++		frac_rate /= fin * 8;
++		txphy->frac_div = frac_rate;
++	} else {
++		txphy->frac_div = 0;
++	}
++
++	fvco = fin * (1024 * txphy->fb_div + txphy->frac_div);
++	fvco *= 8;
++	fvco = DIV_ROUND_UP(fvco, 1024 * txphy->ref_div);
++
++	return fvco / 2 / txphy->rate_div;
++}
++
++u32 rk628_txphy_mipi_rate_mbps(u32 mbps)
++{
++	struct rk628_combtxphy txphy = {};
++	unsigned int fhsc = 24 * (mbps / 24);
++
++	if (fhsc < 80 || fhsc > 2000)
++		return mbps;
++
++	return rk628_combtxphy_mipi_pll(&txphy, fhsc);
++}
++EXPORT_SYMBOL(rk628_txphy_mipi_rate_mbps);
++
+ void rk628_txphy_set_mode(struct rk628 *rk628, enum phy_mode mode)
+ {
+ 	unsigned int fvco, frac_rate, fin = 24;
+@@ -116,32 +160,9 @@ void rk628_txphy_set_mode(struct rk628 *rk628, enum phy_mode mode)
+ 		fhsc = fin * (fhsc / fin);
+ 		if (fhsc < 80 || fhsc > 2000)
+ 			return;
+-		else if (fhsc < 375)
+-			txphy->rate_div = 4;
+-		else if (fhsc < 750)
+-			txphy->rate_div = 2;
+-		else
+-			txphy->rate_div = 1;
+ 
+ 		txphy->flags = flags;
+-
+-		fvco = fhsc * 2 * txphy->rate_div;
+-		txphy->ref_div = 1;
+-		txphy->fb_div = fvco / 8 / fin;
+-		frac_rate = fvco - (fin * 8 * txphy->fb_div);
+-		if (frac_rate) {
+-			frac_rate <<= 10;
+-			frac_rate /= fin * 8;
+-			txphy->frac_div = frac_rate;
+-		} else {
+-			txphy->frac_div = 0;
+-		}
+-
+-		fvco = fin * (1024 * txphy->fb_div + txphy->frac_div);
+-		fvco *= 8;
+-		fvco = DIV_ROUND_UP(fvco, 1024 * txphy->ref_div);
+-		fhsc = fvco / 2 / txphy->rate_div;
+-		txphy->bus_width = fhsc;
++		txphy->bus_width = rk628_combtxphy_mipi_pll(txphy, fhsc);
+ 
+ 		break;
+ 	}
+diff --git a/drivers/media/i2c/rk628/rk628_combtxphy.h b/drivers/media/i2c/rk628/rk628_combtxphy.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_combtxphy.h
++++ b/drivers/media/i2c/rk628/rk628_combtxphy.h
+@@ -98,6 +98,7 @@ struct rk628_combtxphy {
+ void rk628_txphy_set_mode(struct rk628 *rk628, enum phy_mode mode);
+ void rk628_txphy_set_bus_width(struct rk628 *rk628, u32 bus_width);
+ u32 rk628_txphy_get_bus_width(struct rk628 *rk628);
++u32 rk628_txphy_mipi_rate_mbps(u32 mbps);
+ void rk628_txphy_power_on(struct rk628 *rk628);
+ void rk628_txphy_power_off(struct rk628 *rk628);
+ struct rk628_combtxphy *rk628_txphy_register(struct rk628 *rk628);
+diff --git a/drivers/media/i2c/rk628/rk628_cru.c b/drivers/media/i2c/rk628/rk628_cru.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_cru.c
++++ b/drivers/media/i2c/rk628/rk628_cru.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/delay.h>
++#include <linux/iopoll.h>
+ #include "rk628.h"
+ #include "rk628_cru.h"
+ 
+@@ -125,6 +126,21 @@ static unsigned long rk628_cru_clk_get_rate_pll(struct rk628 *rk628,
+ 	return foutpostdiv;
+ }
+ 
++static int rk628_cru_pll_wait_lock(struct rk628 *rk628, u32 reg)
++{
++	u32 val = 0;
++	int ret, err;
++
++	ret = read_poll_timeout(rk628_i2c_read, err, err || (val & PLL_LOCK),
++				100, 100 * USEC_PER_MSEC, false, rk628, reg, &val);
++	if (ret || err) {
++		dev_err(rk628->dev, "pll is not locked\n");
++		return ret ? ret : err;
++	}
++
++	return 0;
++}
++
+ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
+ 						unsigned int id,
+ 						unsigned long rate)
+@@ -135,7 +151,7 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
+ 	u16 fbdiv = 0;
+ 	u32 frac = 0;
+ 	u64 foutvco, foutpostdiv;
+-	u32 offset, val;
++	u32 offset;
+ 
+ 	if (id == CGU_CLK_APLL && rk628->version == RK628D_VERSION)
+ 		return 0;
+@@ -162,11 +178,8 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
+ 	if (fin == fout) {
+ 		rk628_i2c_write(rk628, offset + CRU_CPLL_CON0, PLL_BYPASS(1));
+ 		rk628_i2c_write(rk628, offset + CRU_CPLL_CON1, PLL_PD(0));
+-		while (1) {
+-			rk628_i2c_read(rk628, offset + CRU_CPLL_CON1, &val);
+-			if (val & PLL_LOCK)
+-				break;
+-		}
++		if (rk628_cru_pll_wait_lock(rk628, offset + CRU_CPLL_CON1))
++			return 0;
+ 		return fin;
+ 	}
+ 
+@@ -265,11 +278,8 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
+ 			PLL_REFDIV(refdiv));
+ 	rk628_i2c_write(rk628, offset + CRU_CPLL_CON2, PLL_FRAC(frac));
+ 
+-	while (1) {
+-		rk628_i2c_read(rk628, offset + CRU_CPLL_CON1, &val);
+-		if (val & PLL_LOCK)
+-			break;
+-	}
++	if (rk628_cru_pll_wait_lock(rk628, offset + CRU_CPLL_CON1))
++		return 0;
+ 
+ 	return (unsigned long)foutpostdiv;
+ }
+@@ -306,6 +316,8 @@ static unsigned long rk628_cru_clk_set_rate_sclk_hdmirx_aud(struct rk628 *rk628,
+ 		parent_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_APLL, rate*4);
+ 	else
+ 		parent_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_GPLL, rate*4);
++	if (!parent_rate)
++		return 0;
+ 	div = DIV_ROUND_CLOSEST_ULL(parent_rate, rate);
+ 	do_div(parent_rate, div);
+ 	rate = parent_rate;
+@@ -475,7 +487,8 @@ int rk628_clk_set_rate(struct rk628 *rk628, unsigned int id,
+ 	case CGU_CLK_APLL:
+ 	case CGU_CLK_CPLL:
+ 	case CGU_CLK_GPLL:
+-		rk628_cru_clk_set_rate_pll(rk628, id, rate);
++		if (!rk628_cru_clk_set_rate_pll(rk628, id, rate))
++			return -EIO;
+ 		break;
+ 	case CGU_CLK_RX_READ:
+ 		rk628_cru_clk_set_rate_rx_read(rk628, rate);
+diff --git a/drivers/media/i2c/rk628/rk628_csi_v4l2.c b/drivers/media/i2c/rk628/rk628_csi_v4l2.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_csi_v4l2.c
++++ b/drivers/media/i2c/rk628/rk628_csi_v4l2.c
+@@ -52,6 +52,7 @@ MODULE_PARM_DESC(debug, "debug level (0-3)");
+ 
+ #define DRIVER_VERSION			KERNEL_VERSION(0, 0x1, 0x0)
+ #define RK628_CSI_NAME			"rk628-csi"
++#define RK628_CSI_MAX_LANE_RATE_MBPS	1800
+ 
+ enum tx_mode_type {
+ 	CSI_MODE,
+@@ -148,13 +149,14 @@ struct rk628_edid {
+ 	u8 *data;
+ };
+ 
++/* TX PHY rates for 700, 900, 1300, 1500, 1800 and 1850 Mbps lanes */
+ static const s64 link_freq_menu_items[] = {
+-	RK628_CSI_LINK_FREQ_350M,
+-	RK628_CSI_LINK_FREQ_450M,
+-	RK628_CSI_LINK_FREQ_650M,
+-	RK628_CSI_LINK_FREQ_750M,
+-	RK628_CSI_LINK_FREQ_900M,
+-	RK628_CSI_LINK_FREQ_925M,
++	348000000,
++	444000000,
++	648000000,
++	744000000,
++	900000000,
++	924000000,
+ };
+ 
+ static const struct v4l2_dv_timings_cap rk628_csi_timings_cap = {
+@@ -440,7 +442,7 @@ static int rk628_hdmirx_inno_phy_power_off(struct v4l2_subdev *sd);
+ static int rk628_hdmirx_phy_setup(struct v4l2_subdev *sd);
+ static int rk628_csi_format_change(struct v4l2_subdev *sd);
+ static void rk628_csi_update_link_controls(struct rk628_csi *csi);
+-static void enable_stream(struct v4l2_subdev *sd, bool enable);
++static int enable_stream(struct v4l2_subdev *sd, bool enable);
+ static void rk628_hdmirx_vid_enable(struct v4l2_subdev *sd, bool en);
+ static void rk628_csi_set_csi(struct v4l2_subdev *sd);
+ static void rk628_hdmirx_hpd_ctrl(struct v4l2_subdev *sd, bool en);
+@@ -528,6 +530,24 @@ static void rk628_hdmirx_ctrl_enable(struct v4l2_subdev *sd, int en)
+ 	}
+ }
+ 
++static u32 rk628_csi_calc_lane_rate_mbps(struct rk628_csi *csi, u64 pixelclock)
++{
++	u32 lane_rate;
++	u8 bpp, lanes;
++
++	bpp = 16;
++	lanes = csi->csi_lanes_in_use;
++	pixelclock = div_u64(pixelclock, 1000 * 1000);
++	lane_rate = pixelclock * bpp;
++	lane_rate = div_u64(lane_rate, lanes);
++	if (csi->rk628->dual_mipi)
++		lane_rate /= 2;
++	if (csi->rk628->is_10bit)
++		lane_rate = div_u64(lane_rate * 5, 4);
++
++	return lane_rate;
++}
++
+ static int rk628_csi_get_detected_timings(struct v4l2_subdev *sd,
+ 				     struct v4l2_dv_timings *timings)
+ {
+@@ -563,15 +583,25 @@ static int rk628_csi_get_detected_timings(struct v4l2_subdev *sd,
+ 	else
+ 		csi->mbus_fmt_code = MEDIA_BUS_FMT_RGB888_1X24;
+ 
+-	if ((bt->pixelclock > 300000000 && csi->rk628->version >= RK628F_VERSION) ||
++	/* Splitting CSI output needs the second transmitter wired up. */
++	if ((bt->pixelclock > 300000000 && csi->rk628->version >= RK628F_VERSION &&
++	     (csi->dual_mipi_use || csi->rk628->tx_mode == DSI_MODE)) ||
+ 		(bt->width > 2048 && csi->rk628->tx_mode == DSI_MODE)) {
+ 		v4l2_info(sd, "rk628f detect pixclk more than 300M, use dual mipi mode\n");
+ 		csi->rk628->dual_mipi = true;
+ 	} else {
+-		v4l2_info(sd, "pixclk less than 300M, use single mipi mode\n");
++		v4l2_info(sd, "use single mipi mode\n");
+ 		csi->rk628->dual_mipi = false;
+ 	}
+ 
++	if (csi->rk628->tx_mode == CSI_MODE &&
++	    rk628_csi_calc_lane_rate_mbps(csi, bt->pixelclock) >
++	    RK628_CSI_MAX_LANE_RATE_MBPS) {
++		v4l2_info(sd, "pixclk %llu exceeds single mipi output\n",
++			  bt->pixelclock);
++		return -ERANGE;
++	}
++
+ 	return ret;
+ 
+ }
+@@ -579,17 +609,22 @@ static int rk628_csi_get_detected_timings(struct v4l2_subdev *sd,
+ static void rk628_csi_hdmirx_reset(struct v4l2_subdev *sd)
+ {
+ 	struct rk628_csi *csi = to_csi(sd);
++	bool plugin_irq_off = false, hdmirx_irq_off = false;
+ 
+ 	rk628_hdmirx_audio_cancel_work_audio(csi->audio_info, true);
+-	if (csi->plugin_irq_requested && !READ_ONCE(csi->rk628->is_suspend))
++	if (csi->plugin_irq_requested && !READ_ONCE(csi->rk628->is_suspend)) {
+ 		disable_irq(csi->plugin_irq);
+-	if (csi->hdmirx_irq_requested && !READ_ONCE(csi->rk628->is_suspend))
++		plugin_irq_off = true;
++	}
++	if (csi->hdmirx_irq_requested && !READ_ONCE(csi->rk628->is_suspend)) {
+ 		disable_irq(csi->hdmirx_irq);
++		hdmirx_irq_off = true;
++	}
+ 	rk628_hdmirx_controller_reset(csi->rk628);
+ 	csi->hdcp.hdcp_start = false;
+-	if (csi->plugin_irq_requested && !READ_ONCE(csi->rk628->is_suspend))
++	if (plugin_irq_off)
+ 		enable_irq(csi->plugin_irq);
+-	if (csi->hdmirx_irq_requested && !READ_ONCE(csi->rk628->is_suspend))
++	if (hdmirx_irq_off)
+ 		enable_irq(csi->hdmirx_irq);
+ 	if (csi->cec && csi->cec->adap)
+ 		rk628_hdmirx_cec_state_reconfiguration(csi->rk628, csi->cec);
+@@ -774,10 +809,12 @@ static void rk628_delayed_work_res_change(struct work_struct *work)
+ 						      SW_I2S_DATA_OEN_MASK,
+ 						      SW_I2S_DATA_OEN(0));
+ 			}
+-		} else {
+-			rk628_csi_format_change(sd);
++		} else if (rk628_csi_format_change(sd) == LOCK_OK) {
+ 			csi->nosignal = false;
+ 			rk628_csi_enable_interrupts(sd, true);
++		} else {
++			schedule_delayed_work(&csi->delayed_work_enable_hotplug,
++					      msecs_to_jiffies(100));
+ 		}
+ 	}
+ 	mutex_unlock(&csi->confctl_mutex);
+@@ -1054,7 +1091,7 @@ static void rk628_csi_disable_stream(struct v4l2_subdev *sd)
+ 	csi->is_streaming = false;
+ }
+ 
+-static void enable_stream(struct v4l2_subdev *sd, bool en)
++static int enable_stream(struct v4l2_subdev *sd, bool en)
+ {
+ 	struct rk628_csi *csi = to_csi(sd);
+ 
+@@ -1062,19 +1099,19 @@ static void enable_stream(struct v4l2_subdev *sd, bool en)
+ 	if (en) {
+ 		if (!tx_5v_power_present(sd) || csi->nosignal) {
+ 			v4l2_err(sd, "%s: hdmi no signal or unplug!\n", __func__);
+-			return;
++			return -ENOLINK;
+ 		}
+ 		if (csi->rk628->is_10bit && (csi->rk628->color_format == BUS_FMT_YUV444 ||
+ 		   csi->rk628->color_format == BUS_FMT_RGB)) {
+ 			v4l2_err(sd, "%s: unsupported 10bit YUV444 or RGB format!\n", __func__);
+-			return;
++			return -EINVAL;
+ 		}
+ 
+ 		if (rk628_hdmirx_scdc_ced_err(csi->rk628) == CED_FULL) {
+ 			rk628_hdmirx_plugout(sd);
+ 			schedule_delayed_work(&csi->delayed_work_enable_hotplug,
+ 					      msecs_to_jiffies(800));
+-			return;
++			return -ENOLINK;
+ 		}
+ 
+ 		if (csi->rk628->tx_mode == DSI_MODE)
+@@ -1106,6 +1143,8 @@ static void enable_stream(struct v4l2_subdev *sd, bool en)
+ 			rk628_disable_dsitx(sd);
+ 		}
+ 	}
++
++	return 0;
+ }
+ 
+ static void rk628_post_process_setup(struct v4l2_subdev *sd)
+@@ -1672,7 +1711,11 @@ static int rk628_csi_format_change(struct v4l2_subdev *sd)
+ 	}
+ 	if (!v4l2_match_dv_timings(&csi->timings, &timings, 0, false)) {
+ 		/* automatically set timing rather than set by userspace */
+-		rk628_csi_s_dv_timings(sd, 0, &timings);
++		ret = rk628_csi_s_dv_timings(sd, 0, &timings);
++		if (ret) {
++			v4l2_dbg(1, debug, sd, "%s: set timing fail\n", __func__);
++			return LOCK_FAIL;
++		}
+ 		v4l2_print_dv_timings(sd->name,
+ 				"rk628_csi_format_change: New format: ",
+ 				&timings, false);
+@@ -2218,8 +2261,11 @@ static inline unsigned int fps_calc(const struct v4l2_bt_timings *t)
+ static int rk628_csi_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct rk628_csi *csi = to_csi(sd);
++	int ret;
+ 
+-	enable_stream(sd, enable);
++	ret = enable_stream(sd, enable);
++	if (ret)
++		return ret;
+ 
+ 	v4l2_info(sd, "%s: on: %d, %dx%d@%d\n", __func__, enable,
+ 				csi->timings.bt.width,
+@@ -2287,22 +2333,11 @@ static int rk628_csi_enum_frame_interval(struct v4l2_subdev *sd,
+ static u32 rk628_csi_get_lane_rate_mbps(struct rk628_csi *csi)
+ {
+ 	u32 lane_rate;
+-	u32 max_lane_rate = 1800;
+-	u8 bpp, lanes;
+-	u64 pixelclock = csi->timings.bt.pixelclock;
+ 
+-	bpp = 16;
+-	lanes = csi->csi_lanes_in_use;
+-	pixelclock = div_u64(pixelclock, 1000 * 1000);
+-	lane_rate = pixelclock * bpp;
+-	lane_rate = div_u64(lane_rate, lanes);
+-	if (csi->rk628->dual_mipi)
+-		lane_rate /= 2;
+-	if (csi->rk628->is_10bit)
+-		lane_rate = div_u64(lane_rate * 5, 4);
++	lane_rate = rk628_csi_calc_lane_rate_mbps(csi, csi->timings.bt.pixelclock);
+ 
+ 	if (lane_rate > 1500)
+-		lane_rate = max_lane_rate;
++		lane_rate = RK628_CSI_MAX_LANE_RATE_MBPS;
+ 	else if (lane_rate > 1300 && lane_rate <= 1500)
+ 		lane_rate = 1500;
+ 	else if (lane_rate > 900 && lane_rate <= 1300)
+@@ -2323,7 +2358,7 @@ static int rk628_find_best_link_freq(u32 rate)
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(link_freq_menu_items); i++) {
+-		dist = abs(div_u64(link_freq_menu_items[i] * 2, 1000000) - rate);
++		dist = abs((s64)div_u64(link_freq_menu_items[i] * 2, 1000000) - rate);
+ 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
+ 			cur_best_fit_dist = dist;
+ 			cur_best_fit = i;
+@@ -2348,6 +2383,7 @@ static void rk628_csi_update_link_controls(struct rk628_csi *csi)
+ 		bpp = 24;
+ 	}
+ 
++	rate = rk628_txphy_mipi_rate_mbps(rate);
+ 	index = rk628_find_best_link_freq(rate);
+ 	v4l2_ctrl_s_ctrl(csi->link_freq, index);
+ 	v4l2_ctrl_s_ctrl_int64(csi->pixel_rate,
+@@ -2362,8 +2398,13 @@ static void rk628_csi_fill_format(struct rk628_csi *csi,
+ 	format->height = csi->timings.bt.height;
+ 	format->field = csi->timings.bt.interlaced ?
+ 		V4L2_FIELD_INTERLACED : V4L2_FIELD_NONE;
+-	format->colorspace = format->height <= 576 ?
+-		V4L2_COLORSPACE_SMPTE170M : V4L2_COLORSPACE_REC709;
++	/* RK628F/H CSI output is converted to BT.709, or BT.2020 for BT.2020 input. */
++	if (csi->rk628->version >= RK628F_VERSION && csi->rk628->tx_mode == CSI_MODE)
++		format->colorspace = rk628_post_process_csc_out_bt2020(csi->rk628) ?
++			V4L2_COLORSPACE_BT2020 : V4L2_COLORSPACE_REC709;
++	else
++		format->colorspace = format->height <= 576 ?
++			V4L2_COLORSPACE_SMPTE170M : V4L2_COLORSPACE_REC709;
+ 	format->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+ 	format->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+ 	format->xfer_func = V4L2_XFER_FUNC_DEFAULT;
+@@ -3321,7 +3362,11 @@ static int rk628_csi_resume(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 	rk628_cru_initialize(csi->rk628);
+-	rk628_clk_set_rate(csi->rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	ret = rk628_clk_set_rate(csi->rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	if (ret) {
++		rk628_csi_power_off(csi);
++		return ret;
++	}
+ 	rk628_csi_initial(sd);
+ 	rk628_hdmirx_plugout(sd);
+ 	enable_delayed_work(&csi->delayed_work_enable_hotplug);
+@@ -3725,6 +3770,7 @@ static int rk628_csi_probe(struct i2c_client *client)
+ 	struct rk628 *rk628;
+ 	unsigned long irq_flags;
+ 	const struct of_device_id *match;
++	bool async_registered = false;
+ 	struct v4l2_dv_timings default_timing =
+ 				V4L2_DV_BT_CEA_640X480P59_94;
+ 
+@@ -3788,7 +3834,9 @@ static int rk628_csi_probe(struct i2c_client *client)
+ 		err = -ENODEV;
+ 		goto power_off;
+ 	}
+-	rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	err = rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
++	if (err)
++		goto power_off;
+ 
+ 	if (rk628->version >= RK628F_VERSION) {
+ 		err = rk628_csi_get_multi_dev_info(csi);
+@@ -3964,10 +4012,11 @@ static int rk628_csi_probe(struct i2c_client *client)
+ 		v4l2_err(sd, "v4l2 register subdev failed! err:%d\n", err);
+ 		goto err_work_queues;
+ 	}
++	async_registered = true;
+ 
+ 	err = device_add_groups(dev, rk628_groups);
+ 	if (err)
+-		goto err_async;
++		goto err_work_queues;
+ 
+ 	csi->rk628->dual_mipi = false;
+ 	rk628_debugfs_create(csi->rk628);
+@@ -3987,14 +4036,14 @@ static int rk628_csi_probe(struct i2c_client *client)
+ 
+ 	return 0;
+ 
+-err_async:
+-	v4l2_async_unregister_subdev(sd);
+ err_work_queues:
+ 	rk628_csi_quiesce(csi);
+ 	if (csi->plugin_irq_requested)
+ 		devm_free_irq(dev, csi->plugin_irq, csi);
+ 	if (csi->hdmirx_irq_requested)
+ 		devm_free_irq(dev, csi->hdmirx_irq, csi);
++	if (async_registered)
++		v4l2_async_unregister_subdev(sd);
+ 	rk628_hdmirx_audio_destroy(csi->audio_info);
+ err_hdl:
+ 	mutex_destroy(&csi->confctl_mutex);
+diff --git a/drivers/media/i2c/rk628/rk628_hdmirx.c b/drivers/media/i2c/rk628/rk628_hdmirx.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_hdmirx.c
++++ b/drivers/media/i2c/rk628/rk628_hdmirx.c
+@@ -1679,6 +1679,7 @@ u32 rk628_hdmirx_get_tmdsclk_cnt(struct rk628 *rk628)
+ {
+ 	int i, j;
+ 	u32 val, tmdsclk_cnt = 0;
++	u8 best_cnt = 0;
+ 	struct hdmirx_tmdsclk_cnt tmdsclk[HDMIRX_GET_TMDSCLK_TIME] = {0};
+ 
+ 	for (i = 0; i < HDMIRX_GET_TMDSCLK_TIME; i++) {
+@@ -1693,16 +1694,13 @@ u32 rk628_hdmirx_get_tmdsclk_cnt(struct rk628 *rk628)
+ 		}
+ 	}
+ 
+-	for (i = 0; i < HDMIRX_GET_TMDSCLK_TIME; i++) {
+-		if (!tmdsclk[i].tmds_cnt)
+-			return tmdsclk_cnt;
+-
++	for (i = 0; i < HDMIRX_GET_TMDSCLK_TIME && tmdsclk[i].tmds_cnt; i++) {
+ 		rk628_dbg(rk628, "tmdsclk_cnt: %d, cnt: %d\n",
+ 			 tmdsclk[i].tmds_cnt, tmdsclk[i].cnt);
+-		if (!i)
+-			tmdsclk_cnt = tmdsclk[i].tmds_cnt;
+-		else if (tmdsclk[i].cnt > tmdsclk[i - 1].cnt)
++		if (tmdsclk[i].cnt > best_cnt) {
++			best_cnt = tmdsclk[i].cnt;
+ 			tmdsclk_cnt = tmdsclk[i].tmds_cnt;
++		}
+ 	}
+ 
+ 	return tmdsclk_cnt;
+diff --git a/drivers/media/i2c/rk628/rk628_hdmirx.h b/drivers/media/i2c/rk628/rk628_hdmirx.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_hdmirx.h
++++ b/drivers/media/i2c/rk628/rk628_hdmirx.h
+@@ -460,12 +460,6 @@
+ 
+ #define RK628_CSI_LINK_FREQ_LOW		350000000
+ #define RK628_CSI_LINK_FREQ_HIGH	650000000
+-#define RK628_CSI_LINK_FREQ_350M	350000000
+-#define RK628_CSI_LINK_FREQ_450M	450000000
+-#define RK628_CSI_LINK_FREQ_650M	650000000
+-#define RK628_CSI_LINK_FREQ_750M	750000000
+-#define RK628_CSI_LINK_FREQ_900M	900000000
+-#define RK628_CSI_LINK_FREQ_925M	925000000
+ #define RK628_CSI_PIXEL_RATE_LOW	400000000
+ #define RK628_CSI_PIXEL_RATE_HIGH	600000000
+ #define MIPI_DATARATE_MBPS_LOW		700
+diff --git a/drivers/media/i2c/rk628/rk628_post_process.c b/drivers/media/i2c/rk628/rk628_post_process.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_post_process.c
++++ b/drivers/media/i2c/rk628/rk628_post_process.c
+@@ -1653,6 +1653,17 @@ u8 rk628_get_output_color_space(struct rk628 *rk628, u8 input_color_space)
+ }
+ EXPORT_SYMBOL(rk628_get_output_color_space);
+ 
++bool rk628_post_process_csc_out_bt2020(struct rk628 *rk628)
++{
++	u8 in_cs, out_cs;
++
++	in_cs = rk628_csc_color_space_convert(rk628->color_space, rk628->color_format);
++	out_cs = rk628_get_output_color_space(rk628, in_cs);
++
++	return out_cs == OPTM_CS_E_XV_YCC_2020 || out_cs == OPTM_CS_E_RGB_2020;
++}
++EXPORT_SYMBOL(rk628_post_process_csc_out_bt2020);
++
+ static void rk628_post_process_csc(struct rk628 *rk628,
+ 				bool is_input_full_range, bool is_output_full_range)
+ {
+diff --git a/drivers/media/i2c/rk628/rk628_post_process.h b/drivers/media/i2c/rk628/rk628_post_process.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/rk628/rk628_post_process.h
++++ b/drivers/media/i2c/rk628/rk628_post_process.h
+@@ -9,6 +9,7 @@
+ 
+ u8 rk628_csc_color_space_convert(u8 in_color_space, u8 format);
+ u8 rk628_get_output_color_space(struct rk628 *rk628, u8 input_color_space);
++bool rk628_post_process_csc_out_bt2020(struct rk628 *rk628);
+ void rk628_post_process_csc_en(struct rk628 *rk628, bool input_full_range, bool output_full_range);
+ void rk628_post_process_csc_dis(struct rk628 *rk628);
+ void rk628_post_process_pattern_node(struct rk628 *rk628);
+-- 
+Armbian
+

@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 19 Nov 2026 20:41:20 +0100
+Subject: media: dw9807-vcm: fix the regulator notifier and PM paths
+
+The DW9817 changes dropped the legacy dongwoon,dw9807 match, registered
+the regulator notifier before the subdev existed and never removed it,
+disabled VDD twice on system sleep, waited 100 us instead of the 12 ms
+power-up time and never restored the lens when a shared VDD was already
+on. Restore the match, order and unwind the notifier, use the runtime
+PM force helpers, track the lens activation per power cycle, return a
+failed restore from resume and keep the first focus move retryable.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/i2c/dw9807-vcm.c | 93 +++++++---
+ 1 file changed, 67 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/media/i2c/dw9807-vcm.c b/drivers/media/i2c/dw9807-vcm.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/dw9807-vcm.c
++++ b/drivers/media/i2c/dw9807-vcm.c
+@@ -47,8 +47,7 @@
+ 
+ #define MAX_RETRY		10
+ 
+-#define DW9807_PW_MIN_DELAY_US		100
+-#define DW9807_PW_DELAY_RANGE_US	10
++#define DW9807_PW_ON_DELAY_US		12000
+ 
+ struct dw9807_cfg {
+ 	unsigned int idle_pos;
+@@ -63,6 +62,7 @@ struct dw9807_device {
+ 	struct regulator *vdd;
+ 	struct notifier_block notifier;
+ 	bool first;
++	bool active;
+ };
+ 
+ static inline struct dw9807_device *sd_to_dw9807_vcm(
+@@ -138,7 +138,8 @@ static int dw9807_set_dac(struct i2c_client *client, u16 data)
+  * (We don't use hardware slew rate control, because it differs widely
+  * between otherwise-compatible ICs, and may need lens-specific tuning.)
+  */
+-static int dw9807_ramp(struct i2c_client *client, int start, int end)
++static int dw9807_ramp(struct i2c_client *client, int start, int end,
++		       int *reached)
+ {
+ 	int step, val, ret;
+ 
+@@ -156,6 +157,8 @@ static int dw9807_ramp(struct i2c_client *client, int start, int end)
+ 		if (ret)
+ 			dev_err_ratelimited(&client->dev, "%s I2C failure: %d",
+ 					    __func__, ret);
++		else if (reached)
++			*reached = val;
+ 		if (val == end)
+ 			break;
+ 		usleep_range(DW9807_CTRL_DELAY_US, DW9807_CTRL_DELAY_US + 10);
+@@ -179,7 +182,8 @@ static int dw9807_active(struct dw9807_device *dw9807_dev)
+ 
+ 	dw9807_dev->first = true;
+ 
+-	return dw9807_ramp(client, dw9807_dev->idle_pos, dw9807_dev->current_val);
++	return dw9807_ramp(client, dw9807_dev->idle_pos, dw9807_dev->current_val,
++			   NULL);
+ }
+ 
+ static int dw9807_standby(struct dw9807_device *dw9807_dev)
+@@ -189,7 +193,8 @@ static int dw9807_standby(struct dw9807_device *dw9807_dev)
+ 	int ret;
+ 
+ 	if (abs(dw9807_dev->current_val - dw9807_dev->idle_pos) > DW9807_CTRL_STEPS)
+-		dw9807_ramp(client, dw9807_dev->current_val, dw9807_dev->idle_pos);
++		dw9807_ramp(client, dw9807_dev->current_val, dw9807_dev->idle_pos,
++			    NULL);
+ 
+ 	/* Power down */
+ 	ret = i2c_master_send(client, tx_data, sizeof(tx_data));
+@@ -214,13 +219,13 @@ static int dw9807_regulator_event(struct notifier_block *nb,
+ 		 * From the datasheet, it should be 10ms + 2ms (max power
+ 		 * up sequence duration)
+ 		 */
+-		usleep_range(DW9807_PW_MIN_DELAY_US,
+-			     DW9807_PW_MIN_DELAY_US +
+-			     DW9807_PW_DELAY_RANGE_US);
++		usleep_range(DW9807_PW_ON_DELAY_US,
++			     DW9807_PW_ON_DELAY_US + 1000);
+ 
+-		dw9807_active(dw9807_dev);
++		dw9807_dev->active = !dw9807_active(dw9807_dev);
+ 	} else if (action & REGULATOR_EVENT_PRE_DISABLE) {
+ 		dw9807_standby(dw9807_dev);
++		dw9807_dev->active = false;
+ 	}
+ 
+ 	return 0;
+@@ -234,10 +239,19 @@ static int dw9807_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE) {
+ 		struct i2c_client *client = v4l2_get_subdevdata(&dev_vcm->sd);
+ 		int start = (dev_vcm->first) ? dev_vcm->current_val : ctrl->val;
++		int reached = start;
++		int ret;
++
++		ret = dw9807_ramp(client, start, ctrl->val, &reached);
++		if (ret) {
++			if (dev_vcm->first)
++				dev_vcm->current_val = reached;
++			return ret;
++		}
+ 
+ 		dev_vcm->first = false;
+ 		dev_vcm->current_val = ctrl->val;
+-		return dw9807_ramp(client, start, ctrl->val);
++		return 0;
+ 	}
+ 
+ 	return -EINVAL;
+@@ -313,6 +327,8 @@ static const struct dw9807_cfg dw9817_cfg = {
+ static const struct of_device_id dw9807_of_table[] = {
+ 	{ .compatible = "dongwoon,dw9807-vcm", .data = &dw9807_cfg },
+ 	{ .compatible = "dongwoon,dw9817-vcm", .data = &dw9817_cfg },
++	/* Compatibility for older firmware, NEVER USE THIS IN FIRMWARE! */
++	{ .compatible = "dongwoon,dw9807", .data = &dw9807_cfg },
+ 	{ /* sentinel */ }
+ };
+ 
+@@ -333,16 +349,6 @@ static int dw9807_probe(struct i2c_client *client)
+ 			return PTR_ERR(dw9807_dev->vdd);
+ 
+ 		dw9807_dev->vdd = NULL;
+-	} else {
+-		dw9807_dev->notifier.notifier_call = dw9807_regulator_event;
+-
+-		rval = regulator_register_notifier(dw9807_dev->vdd,
+-						   &dw9807_dev->notifier);
+-		if (rval) {
+-			dev_err(&client->dev,
+-				"could not register regulator notifier\n");
+-			return rval;
+-		}
+ 	}
+ 
+ 	cfg = (const struct dw9807_cfg *)i2c_get_match_data(client);
+@@ -355,6 +361,18 @@ static int dw9807_probe(struct i2c_client *client)
+ 	dw9807_dev->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+ 	dw9807_dev->sd.internal_ops = &dw9807_int_ops;
+ 
++	if (dw9807_dev->vdd) {
++		dw9807_dev->notifier.notifier_call = dw9807_regulator_event;
++
++		rval = regulator_register_notifier(dw9807_dev->vdd,
++						   &dw9807_dev->notifier);
++		if (rval) {
++			dev_err(&client->dev,
++				"could not register regulator notifier\n");
++			return rval;
++		}
++	}
++
+ 	rval = dw9807_init_controls(dw9807_dev);
+ 	if (rval)
+ 		goto err_cleanup;
+@@ -377,23 +395,31 @@ static int dw9807_probe(struct i2c_client *client)
+ 	return 0;
+ 
+ err_cleanup:
++	if (dw9807_dev->vdd)
++		regulator_unregister_notifier(dw9807_dev->vdd,
++					      &dw9807_dev->notifier);
+ 	v4l2_ctrl_handler_free(&dw9807_dev->ctrls_vcm);
+ 	media_entity_cleanup(&dw9807_dev->sd.entity);
+ 
+ 	return rval;
+ }
+ 
++static int dw9807_vcm_suspend(struct device *dev);
++
+ static void dw9807_remove(struct i2c_client *client)
+ {
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct dw9807_device *dw9807_dev = sd_to_dw9807_vcm(sd);
+ 
++	pm_runtime_disable(&client->dev);
++	if (!pm_runtime_status_suspended(&client->dev))
++		dw9807_vcm_suspend(&client->dev);
++	pm_runtime_set_suspended(&client->dev);
++
+ 	if (dw9807_dev->vdd)
+ 		regulator_unregister_notifier(dw9807_dev->vdd,
+ 					      &dw9807_dev->notifier);
+ 
+-	pm_runtime_disable(&client->dev);
+-
+ 	dw9807_subdev_cleanup(dw9807_dev);
+ }
+ 
+@@ -425,17 +451,32 @@ static int  __maybe_unused dw9807_vcm_resume(struct device *dev)
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct dw9807_device *dw9807_dev = sd_to_dw9807_vcm(sd);
++	int ret;
+ 
+-	if (dw9807_dev->vdd)
+-		return regulator_enable(dw9807_dev->vdd);
++	if (!dw9807_dev->vdd)
++		return dw9807_active(dw9807_dev);
++
++	ret = regulator_enable(dw9807_dev->vdd);
++	if (ret)
++		return ret;
+ 
+-	return dw9807_active(dw9807_dev);
++	/* A shared VDD that was already on sends no enable event */
++	if (!dw9807_dev->active) {
++		ret = dw9807_active(dw9807_dev);
++		if (ret) {
++			regulator_disable(dw9807_dev->vdd);
++			return ret;
++		}
++		dw9807_dev->active = true;
++	}
++
++	return 0;
+ }
+ 
+ MODULE_DEVICE_TABLE(of, dw9807_of_table);
+ 
+ static const struct dev_pm_ops dw9807_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(dw9807_vcm_suspend, dw9807_vcm_resume)
++	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	SET_RUNTIME_PM_OPS(dw9807_vcm_suspend, dw9807_vcm_resume, NULL)
+ };
+ 
+-- 
+Armbian
+
