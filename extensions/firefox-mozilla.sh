@@ -36,7 +36,7 @@ function post_repo_customize_image__firefox_mozilla() {
 		URIs: https://packages.mozilla.org/apt
 		Suites: mozilla
 		Components: main
-		Signed-By: ${key_file}
+		Signed-By: ${key_file} ${key_fpr}
 	EOF
 
 	# 1002 beats the 1001 pin for o=Armbian in armbian-config's armbian-desktops file.
@@ -83,7 +83,7 @@ function post_repo_customize_image__firefox_mozilla() {
 			if (insec && !done) { print entries; done = 1 }
 			next
 		}
-		insec && /^(x-scheme-handler\/https?|text\/html|application\/xhtml\+xml)=/ { next }
+		insec && /^[[:space:]]*(x-scheme-handler\/https?|text\/html|application\/xhtml\+xml)[[:space:]]*=/ { next }
 		{ print }
 		END {
 			if (done) exit
@@ -98,12 +98,15 @@ function post_repo_customize_image__firefox_mozilla() {
 	declare dconf_dir="${SDCARD}/etc/dconf/db/local.d"
 	declare -a gnome_keys=()
 	if [[ -d "${dconf_dir}" ]]; then
-		mapfile -t gnome_keys < <(grep -rl "^[[:space:]]*favorite-apps = " "${dconf_dir}" || true)
+		mapfile -t gnome_keys < <(grep -rlE "^[[:space:]]*favorite-apps[[:space:]]*=" "${dconf_dir}" || true)
 	fi
 	if [[ ${#gnome_keys[@]} -gt 0 ]]; then
-		sed -i -E "/^[[:space:]]*favorite-apps = /{
-			s/, '(chromium|chromium-browser|google-chrome)\.desktop'//g
-			/'firefox\.desktop'/! s/(favorite-apps = \[[^],]*)/\1, 'firefox.desktop'/
+		# Drop the Chromium-family entries at any position. Add Firefox as the second entry, or alone.
+		sed -i -E "/^[[:space:]]*favorite-apps[[:space:]]*=/{
+			s/'(chromium|chromium-browser|google-chrome)\.desktop'(,[[:space:]]*)?//g
+			s/,[[:space:]]*\]/]/
+			/'firefox\.desktop'/! s/\[[[:space:]]*\]/['firefox.desktop']/
+			/'firefox\.desktop'/! s/(=[[:space:]]*\[[^],]*)/\1, 'firefox.desktop'/
 		}" "${gnome_keys[@]}"
 		chroot_sdcard dconf update
 	fi
