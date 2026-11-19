@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @description Creates USB burn images for JetHub J80/J100/J200/J310. J310 uses GPT on eMMC and preserves the SD image.
+# @description Creates USB burn images for JetHub J80/J100/J200/J310. Supports only the base image layout with one root partition; other layouts get no burn image. J310 uses GPT on eMMC and preserves the SD image.
 
 #
 # SPDX-License-Identifier: GPL-2.0
@@ -190,6 +190,14 @@ function post_build_image__900_jethub_burn() {
 
 	local -r original_image_file="${DESTIMG}/${version}.img"
 	[[ -f "$original_image_file" ]] || exit_with_error "Original image not found: $original_image_file"
+
+	# A separate /boot (BOOTFS_TYPE, cryptroot, lvm, cloud-init) adds a partition
+	local image_partitions
+	image_partitions=$(sfdisk -d "$original_image_file" 2> /dev/null | grep -c 'start=')
+	if [[ "${image_partitions}" -ne 1 ]]; then
+		display_alert "jethub-burn" "Only the base layout with one root partition is supported, found ${image_partitions}: no burn image" "wrn"
+		return 0
+	fi
 
 	local dts_name bins_subdir
 	local soc_family="legacy" recovery_slots="no"
