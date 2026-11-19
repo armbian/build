@@ -533,6 +533,8 @@ function board_side_bsp_cli_postinst_finish() {
 
 	# Reload services
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service armbian-console-loglevel.service > /dev/null 2>&1
+	# User service: does nothing without ~/.armbian-dotfiles.
+	systemctl --global enable armbian-dotfiles.service > /dev/null 2>&1
 }
 
 # Helper to add files, from stdin, to the bsp-cli package.
