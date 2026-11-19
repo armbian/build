@@ -47,3 +47,10 @@ function post_uboot_custom_postprocess__orangepizero2_env_offset_guard() {
 	fi
 	display_alert "u-boot-sunxi-with-spl.bin ends below the SPI flash environment" "${bin_size} <= ${env_offset}" "info"
 }
+
+# fw_printenv/fw_setenv need the default environment while the SPI NOR holds no saved one
+# (blank flash, or after an erase); ship the one this U-Boot build was compiled with.
+function post_uboot_custom_postprocess__orangepizero2_initial_env() {
+	run_host_command_logged "env" "-i" "${uboot_make_envs[@]}" pipetty make u-boot-initial-env "$CTHREADS" "${cross_compile}"
+	run_host_command_logged install -D -m 0644 u-boot-initial-env "${uboottempdir}/etc/u-boot-initial-env"
+}
