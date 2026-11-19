@@ -147,6 +147,7 @@ Follow these rules for new overlays. Then each **OVERLAY_PREFIX** list matches r
 - Amlogic Meson overlays: use `meson-<soc>-<name>`, for example `meson-sm1-odroid-c4-i2c0`.
 	- G12A, G12B and SM1 boards also get `meson-g12`. Use `meson-g12-` for an overlay that works on all three.
 	- GXBB and GXL boards also get `meson`, for old overlays without a SoC part, for example `meson-i2cA`. Do not add new overlays with the `meson-` prefix alone.
+- Qualcomm overlays: use `<soc>-<name>` and `<soc>-<board>-<name>`, for example `qcs6490-radxa-dragon-q6a-uart6` or `sc8280xp-usb0-peripheral`. These boards boot with GRUB: `grub-with-dtb` merges the overlays into the DTB when a kernel is installed or `armbianEnv.txt` changes.
 - Sophgo and SpacemiT overlays: use `<soc>-<name>`, for example `sg2000-uart1` or `k1-uart5`.
 - Apart from `meson-g12`, do not use a prefix that covers several SoCs, for example `rk35xx-`, `rockchip-` or `meson-` alone. Do not add an overlay without a prefix.
 - Do not rename an existing overlay, even if its name does not follow these guidelines. Installed systems keep the old name in `armbianEnv.txt`, so a rename breaks them after a kernel upgrade. If an old name does not fit the rules, you can add its prefix to **OVERLAY_PREFIX_BOARD** of the boards that use it.
