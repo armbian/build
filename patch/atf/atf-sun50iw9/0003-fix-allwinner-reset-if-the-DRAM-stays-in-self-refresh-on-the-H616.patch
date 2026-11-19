@@ -1,18 +1,19 @@
-From b655b3dec9a3dbe89635bef0d9a705875f9f33c1 Mon Sep 17 00:00:00 2001
+From 7fc25bf79be447a2523823b5ae82128463ac7fce Mon Sep 17 00:00:00 2001
 From: Arun Iyengar <aiyengar1990@gmail.com>
-Date: Thu, 19 Nov 2026 05:52:26 +0000
+Date: Thu, 19 Nov 2026 11:30:16 +0000
 Subject: [PATCH] fix(allwinner): reset if the DRAM stays in self-refresh on
  the H616
 
 If the DRAM did not leave self-refresh after a wakeup, the SRAM routine
 still wrote its report to DRAM and jumped to BL31 in DRAM. Reset the
-SoC through the watchdog instead, without touching DRAM.
+SoC through the watchdog instead, without touching DRAM. Restart the
+watchdog as well, so that it also fires when the OS left it running.
 
 Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
 ---
  plat/allwinner/common/sunxi_native_suspend.c |  9 +-----
- plat/allwinner/common/sunxi_standby_sram.S   | 30 ++++++++++++++------
- 2 files changed, 22 insertions(+), 17 deletions(-)
+ plat/allwinner/common/sunxi_standby_sram.S   | 34 ++++++++++++++------
+ 2 files changed, 26 insertions(+), 17 deletions(-)
 
 diff --git a/plat/allwinner/common/sunxi_native_suspend.c b/plat/allwinner/common/sunxi_native_suspend.c
 index e5b8b0612..e3e199070 100644
@@ -50,21 +51,23 @@ index e5b8b0612..e3e199070 100644
  		INFO("PSCI: system resumed, DRAM was in self-refresh\n");
  	}
 diff --git a/plat/allwinner/common/sunxi_standby_sram.S b/plat/allwinner/common/sunxi_standby_sram.S
-index 76af8b68d..06b557e97 100644
+index 76af8b68d..9436f5b65 100644
 --- a/plat/allwinner/common/sunxi_standby_sram.S
 +++ b/plat/allwinner/common/sunxi_standby_sram.S
-@@ -29,6 +29,10 @@
+@@ -29,6 +29,12 @@
  #define MCTL_COM_MAER1			0x024
  #define MCTL_COM_MAER2			0x028
  
 +/* Watchdog registers */
-+#define WDOG_CFG_REG			(SUNXI_R_WDOG_BASE + 0x0014)
-+#define WDOG_MODE_REG			(SUNXI_R_WDOG_BASE + 0x0018)
++#define WDOG_CTRL			0x10
++#define WDOG_CTRL_RESTART		((0xa57 << 1) | 1)
++#define WDOG_CFG			0x14
++#define WDOG_MODE			0x18
 +
  /* PLL_CPUX control register */
  #define PLL_CPUX_ENABLE_BIT		31
  #define PLL_CPUX_LOCK_ENABLE		(1 << 29)
-@@ -75,13 +79,12 @@ endfunc sunxi_standby_jump
+@@ -75,13 +81,12 @@ endfunc sunxi_standby_jump
   * x3: time limit in counter ticks for each wait on the DRAM controller
   *     and for the PLL lock (0: do not touch the DRAM controller at all)
   * x4: address of the report (struct sunxi_standby_report, 4 x uint32_t),
@@ -83,7 +86,7 @@ index 76af8b68d..06b557e97 100644
   * w5: PLL_CPUX control register value to restore (PLL not restarted if its
   *     enable bit is clear)
   * w6: CPUX_AXI_CFG value to restore (CPU clock source and dividers)
-@@ -93,6 +96,11 @@ endfunc sunxi_standby_jump
+@@ -93,6 +98,11 @@ endfunc sunxi_standby_jump
   * MBUS master enables in MC_COM) are involved: the PHY keeps its clocks, so
   * nothing there needs restoring on the way out.
   *
@@ -95,7 +98,7 @@ index 76af8b68d..06b557e97 100644
   * After the wakeup, PLL_CPUX is restarted at once, so that it locks while
   * the DRAM leaves self-refresh, and the CPU is switched back to it before
   * entering BL31. If the PLL does not lock in time, the CPU stays on the
-@@ -181,9 +189,13 @@ sunxi_standby_sram_start:
+@@ -181,9 +191,15 @@ sunxi_standby_sram_start:
  	sub	x14, x14, x13
  	cmp	x14, x3
  	b.lo	3b
@@ -104,10 +107,12 @@ index 76af8b68d..06b557e97 100644
 -	orr	w10, w10, w12, lsl #16		/* last STATR seen */
 +
 +	/* DRAM is still in self-refresh: reset the SoC, touching only MMIO. */
-+	mov_imm	x11, WDOG_CFG_REG
++	mov_imm	x11, SUNXI_R_WDOG_BASE
 +	mov	w12, #1
-+	str	w12, [x11]			/* reset the whole system */
-+	str	w12, [x11, #(WDOG_MODE_REG - WDOG_CFG_REG)]	/* 0.5 s */
++	str	w12, [x11, #WDOG_CFG]		/* reset the whole system */
++	str	w12, [x11, #WDOG_MODE]		/* after 0.5 s */
++	mov	w12, #WDOG_CTRL_RESTART
++	str	w12, [x11, #WDOG_CTRL]
 +31:	b	31b
  
  4:	str	w5, [x1, #MCTL_COM_MAER0]
