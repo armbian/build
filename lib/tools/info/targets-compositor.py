@@ -341,8 +341,17 @@ def _exclude_rule_matches(rule: dict, invocation: dict) -> bool:
 exclude_rules = targets.get("exclude", [])
 if exclude_rules is None:  # "exclude:" with no entries
 	exclude_rules = []
-if not isinstance(exclude_rules, list) or not all(isinstance(rule, dict) and rule for rule in exclude_rules):
-	log.error("Invalid 'exclude' in targets file: it must be a list of non-empty mappings")
+def _exclude_value_ok(value) -> bool:
+	# A pattern is a scalar or a non-empty list of scalars.
+	scalars = (str, int, float, bool)
+	if isinstance(value, list):
+		return bool(value) and all(isinstance(member, scalars) for member in value)
+	return isinstance(value, scalars)
+
+
+if not isinstance(exclude_rules, list) or not all(
+		isinstance(rule, dict) and rule and all(_exclude_value_ok(value) for value in rule.values()) for rule in exclude_rules):
+	log.error("Invalid 'exclude' in targets file: it must be a list of non-empty mappings of scalars or lists of scalars")
 	sys.exit(1)
 if exclude_rules:
 	invocations_kept = []
