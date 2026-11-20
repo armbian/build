@@ -1,4 +1,4 @@
-From 4d996f29f9bea0dc216930a9d4097b9d612de0f8 Mon Sep 17 00:00:00 2001
+From f6fe7c81c40939ea91af2a21a590b540cb329ee9 Mon Sep 17 00:00:00 2001
 From: Arun Iyengar <aiyengar1990@gmail.com>
 Date: Mon, 2 Nov 2026 02:54:41 +0000
 Subject: [PATCH 1/2] feat(allwinner): offer CPU_SUSPEND natively on the H616
@@ -7,27 +7,30 @@ The H616 has no SCP, so the native PSCI ops offer no CPU_SUSPEND and
 Linux has no idle state beyond WFI.
 
 Add SUNXI_NATIVE_CPU_SUSPEND: core-level CPU_SUSPEND through the
-CPUIDLE block that CPU_OFF already uses. A core's wake bit is set when
-it comes online and cleared at CPU_OFF, never on the idle path. All
-cores are set to AArch64 once at setup, so a power-cycled core 0 does
-not restart in the BROM.
+CPUIDLE block that CPU_OFF already uses. The block changes the reset
+and gating registers itself, so CPU_ON must not read-modify-write them:
+at setup each secondary core is powered up once to a stub that leaves
+it to the block, and CPU_ON then sets the core's wake bit and sends it
+an SGI. All cores are set to AArch64 once at setup, so a power-cycled
+core 0 does not restart in the BROM.
 
 Backport of the version under upstream review to lts-v2.14.11.
 
 Link: https://review.trustedfirmware.org/c/TF-A/trusted-firmware-a/+/56325
 Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
 ---
- plat/allwinner/common/allwinner-common.mk     |  11 ++
+ plat/allwinner/common/allwinner-common.mk     |  11 +
  .../common/include/sunxi_cpucfg_ncat.h        |   3 +
- plat/allwinner/common/include/sunxi_private.h |   3 +
- plat/allwinner/common/sunxi_cpu_ops.c         |  42 ++++-
- plat/allwinner/common/sunxi_native_pm.c       | 156 +++++++++++++++++-
- plat/allwinner/common/sunxi_pm.c              |  15 +-
+ plat/allwinner/common/include/sunxi_private.h |   5 +
+ plat/allwinner/common/plat_helpers.S          |  31 +++
+ plat/allwinner/common/sunxi_cpu_ops.c         |  42 +++-
+ plat/allwinner/common/sunxi_native_pm.c       | 194 +++++++++++++++++-
+ plat/allwinner/common/sunxi_pm.c              |  50 +++--
  plat/allwinner/common/sunxi_prepare_dtb.c     |   7 +-
  plat/allwinner/sun50i_h616/platform.mk        |   2 +
- .../allwinner/sun50i_h616/sunxi_idle_states.c |  20 +++
+ .../allwinner/sun50i_h616/sunxi_idle_states.c |  20 ++
  plat/allwinner/sun50i_h616/sunxi_power.c      |   4 -
- 10 files changed, 249 insertions(+), 14 deletions(-)
+ 11 files changed, 340 insertions(+), 29 deletions(-)
 
 diff --git a/plat/allwinner/common/allwinner-common.mk b/plat/allwinner/common/allwinner-common.mk
 index bc91c47ee..3faa44af1 100644
@@ -66,10 +69,10 @@ index 22828c271..18a7654d5 100644
  #define SUNXI_CONFIG_DELAY_REG		(SUNXI_R_CPUCFG_BASE + 0x0144)
  
 diff --git a/plat/allwinner/common/include/sunxi_private.h b/plat/allwinner/common/include/sunxi_private.h
-index b9ca3f600..5a9414013 100644
+index b9ca3f600..9695bdc40 100644
 --- a/plat/allwinner/common/include/sunxi_private.h
 +++ b/plat/allwinner/common/include/sunxi_private.h
-@@ -16,8 +16,10 @@ extern const struct psci_cpu_idle_state sunxi_idle_states[];
+@@ -16,8 +16,12 @@ extern const struct psci_cpu_idle_state sunxi_idle_states[];
  void sunxi_configure_mmu_el3(int flags);
  
  void sunxi_cpu_on(u_register_t mpidr);
@@ -77,10 +80,12 @@ index b9ca3f600..5a9414013 100644
  void sunxi_cpu_power_off_others(void);
  void sunxi_cpu_power_off_self(void);
 +void sunxi_cpuidle_enable(void);
++void sunxi_cpu_park(void);
++void sunxi_set_entrypoint(unsigned int cpu, uintptr_t entrypoint);
  void sunxi_power_down(void);
  
  #if SUNXI_PSCI_USE_NATIVE
-@@ -41,6 +43,7 @@ static inline int sunxi_set_scpi_psci_ops(const plat_psci_ops_t **psci_ops)
+@@ -41,6 +45,7 @@ static inline int sunxi_set_scpi_psci_ops(const plat_psci_ops_t **psci_ops)
  }
  #endif
  int sunxi_validate_ns_entrypoint(uintptr_t ns_entrypoint);
@@ -88,6 +93,55 @@ index b9ca3f600..5a9414013 100644
  
  int sunxi_pmic_setup(uint16_t socid, const void *fdt);
  void sunxi_security_setup(void);
+diff --git a/plat/allwinner/common/plat_helpers.S b/plat/allwinner/common/plat_helpers.S
+index b00c7aefd..deea0fae9 100644
+--- a/plat/allwinner/common/plat_helpers.S
++++ b/plat/allwinner/common/plat_helpers.S
+@@ -8,6 +8,10 @@
+ #include <asm_macros.S>
+ #include <sunxi_def.h>
+ #include <sunxi_mmap.h>
++#if SUNXI_NATIVE_CPU_SUSPEND
++#include <drivers/arm/gicv2.h>
++#include <sunxi_cpucfg_ncat.h>
++#endif
+ 
+ 	.globl	plat_crash_console_init
+ 	.globl	plat_crash_console_putc
+@@ -40,6 +44,33 @@ func plat_my_core_pos
+ 	ret
+ endfunc plat_my_core_pos
+ 
++#if SUNXI_NATIVE_CPU_SUSPEND
++	.globl	sunxi_cpu_park
++
++/*
++ * Reset entry of a secondary core at setup: the CPUIDLE block powers it off.
++ * Leave the GIC as CPU_OFF does, so that CPU_ON's Group 1 SGI wakes the core.
++ */
++func sunxi_cpu_park
++	mov_imm	x2, SUNXI_GICD_BASE
++	mov	w1, #0xffffffff
++	str	w1, [x2, #GICD_IGROUPR]
++	mov_imm	x2, SUNXI_GICC_BASE
++	mov	w1, #GIC_PRI_MASK
++	str	w1, [x2, #GICC_PMR]
++	mov	w1, #(FIQ_BYP_DIS_GRP1 | FIQ_BYP_DIS_GRP0 | IRQ_BYP_DIS_GRP1 | IRQ_BYP_DIS_GRP0)
++	str	w1, [x2, #GICC_CTLR]
++	bl	plat_my_core_pos
++	mov	w1, #1
++	lsl	w1, w1, w0
++	mov_imm	x2, SUNXI_CORE_CLOSE_REG
++	str	w1, [x2]
++	dsb	sy
++1:	wfi
++	b	1b
++endfunc sunxi_cpu_park
++#endif
++
+ func platform_mem_init
+ 	ret
+ endfunc platform_mem_init
 diff --git a/plat/allwinner/common/sunxi_cpu_ops.c b/plat/allwinner/common/sunxi_cpu_ops.c
 index 30841e2ea..826b504a4 100644
 --- a/plat/allwinner/common/sunxi_cpu_ops.c
@@ -156,10 +210,10 @@ index 30841e2ea..826b504a4 100644
  		sunxi_cpu_enable_power(cluster, core);
  
 diff --git a/plat/allwinner/common/sunxi_native_pm.c b/plat/allwinner/common/sunxi_native_pm.c
-index 28abd3c67..f1589942c 100644
+index 28abd3c67..2269d55b8 100644
 --- a/plat/allwinner/common/sunxi_native_pm.c
 +++ b/plat/allwinner/common/sunxi_native_pm.c
-@@ -4,13 +4,17 @@
+@@ -4,13 +4,18 @@
   * SPDX-License-Identifier: BSD-3-Clause
   */
  
@@ -169,6 +223,7 @@ index 28abd3c67..f1589942c 100644
  #include <common/debug.h>
  #include <drivers/arm/gicv2.h>
  #include <drivers/delay_timer.h>
++#include <lib/bakery_lock.h>
  #include <lib/mmio.h>
  #include <lib/psci/psci.h>
 +#include <plat/common/platform.h>
@@ -177,7 +232,7 @@ index 28abd3c67..f1589942c 100644
  #include <sunxi_mmap.h>
  #include <sunxi_private.h>
  
-@@ -18,6 +22,48 @@
+@@ -18,15 +23,66 @@
  #define SUNXI_WDOG0_CFG_REG		(SUNXI_R_WDOG_BASE + 0x0014)
  #define SUNXI_WDOG0_MODE_REG		(SUNXI_R_WDOG_BASE + 0x0018)
  
@@ -201,57 +256,63 @@ index 28abd3c67..f1589942c 100644
 +}
 +
 +#if SUNXI_NATIVE_CPU_SUSPEND
-+/*
-+ * CPUIDLE_WAKE bit n allows the CPUIDLE block to power core n up again when
-+ * the GIC has an interrupt pending for it. The register is shared by all
-+ * cores, so it is only ever changed while the PSCI system level lock is held:
-+ * on the way online (CPU_ON finisher, or setup for the boot CPU) and offline
-+ * (CPU_OFF). CPU_SUSPEND at the core level takes no PSCI lock and several
-+ * cores enter and leave it concurrently, so it must not touch the register:
-+ * a read-modify-write racing with another core's would drop that core's bit,
-+ * and a core gated without its bit is never woken again.
-+ */
-+static void sunxi_cpuidle_wake_enable(bool enable)
-+{
-+	uint32_t bit = BIT_32(plat_my_core_pos());
++/* Not used by the OS; it only makes the GIC request a wakeup for an offline core. */
++#define SUNXI_CPU_ON_SGI		U(15)
 +
-+	if (enable) {
-+		mmio_setbits_32(SUNXI_CPUIDLE_WAKE_REG, bit);
-+	} else {
-+		mmio_clrbits_32(SUNXI_CPUIDLE_WAKE_REG, bit);
-+	}
-+}
++/* CPU_OFF takes it with the data cache off; the idle path never does. */
++static DEFINE_BAKERY_LOCK(sunxi_cpuidle_wake_lock);
 +#endif
 +
++/*
++ * The CPUIDLE block changes the reset and gating registers by itself when a
++ * core enters or leaves cpu-sleep, so sunxi_cpu_on() must not read-modify-write
++ * them then. Every secondary core is left to the block at setup, so the block
++ * powers it up: with CPUIDLE_WAKE set, a pending interrupt does it.
++ */
  static int sunxi_pwr_domain_on(u_register_t mpidr)
  {
++#if SUNXI_NATIVE_CPU_SUSPEND
++	uint32_t bit = BIT_32(plat_core_pos_by_mpidr(mpidr));
++
++	bakery_lock_get(&sunxi_cpuidle_wake_lock);
++	mmio_setbits_32(SUNXI_CPUIDLE_WAKE_REG, bit);
++	bakery_lock_release(&sunxi_cpuidle_wake_lock);
++	mmio_write_32(SUNXI_GICD_BASE + GICD_SGIR,
++		      GICV2_SGIR_VALUE(SGIR_TGT_SPECIFIC, bit, true,
++				       SUNXI_CPU_ON_SGI));
++#else
  	sunxi_cpu_on(mpidr);
-@@ -27,6 +73,11 @@ static int sunxi_pwr_domain_on(u_register_t mpidr)
++#endif
+ 
+ 	return PSCI_E_SUCCESS;
+ }
  
  static void sunxi_pwr_domain_off(const psci_power_state_t *target_state)
  {
 +#if SUNXI_NATIVE_CPU_SUSPEND
++	bakery_lock_get(&sunxi_cpuidle_wake_lock);
 +	/* An offline core must stay off whatever interrupts target it. */
-+	sunxi_cpuidle_wake_enable(false);
++	mmio_clrbits_32(SUNXI_CPUIDLE_WAKE_REG, BIT_32(plat_my_core_pos()));
++	bakery_lock_release(&sunxi_cpuidle_wake_lock);
 +#endif
 +
  	gicv2_cpuif_disable();
  
  	sunxi_cpu_power_off_self();
-@@ -34,10 +85,91 @@ static void sunxi_pwr_domain_off(const psci_power_state_t *target_state)
+@@ -34,10 +90,119 @@ static void sunxi_pwr_domain_off(const psci_power_state_t *target_state)
  
  static void sunxi_pwr_domain_on_finish(const psci_power_state_t *target_state)
  {
 -	gicv2_pcpu_distif_init();
 -	gicv2_cpuif_enable();
 +#if SUNXI_NATIVE_CPU_SUSPEND
-+	/* From now on the CPUIDLE block may wake this core from cpu-sleep. */
-+	sunxi_cpuidle_wake_enable(true);
++	mmio_write_8(SUNXI_GICD_BASE + GICD_CPENDSGIR + SUNXI_CPU_ON_SGI,
++		     0xff);
 +#endif
 +
 +	sunxi_gic_cpu_init();
- }
- 
++}
++
 +#if SUNXI_NATIVE_CPU_SUSPEND
 +static void sunxi_cpu_standby(plat_local_state_t cpu_state)
 +{
@@ -262,8 +323,8 @@ index 28abd3c67..f1589942c 100644
 +	write_scr_el3(scr | SCR_IRQ_BIT);
 +	wfi();
 +	write_scr_el3(scr);
-+}
-+
+ }
+ 
 +/*
 + * Power this core down. The CPUIDLE hardware block takes over once the core
 + * executes WFI with its CORE_CLOSE flag set: it isolates the core and removes
@@ -289,7 +350,7 @@ index 28abd3c67..f1589942c 100644
 +
 +static void sunxi_pwr_domain_suspend_finish(const psci_power_state_t *target_state)
 +{
-+	/* The CPUIDLE_WAKE bit stays set, see sunxi_cpuidle_wake_enable(). */
++	/* The CPUIDLE_WAKE bit stays set. */
 +	sunxi_gic_cpu_init();
 +}
 +
@@ -327,12 +388,52 @@ index 28abd3c67..f1589942c 100644
 +
 +	return PSCI_E_SUCCESS;
 +}
++
++/*
++ * Power each secondary core up once, while no core can be in cpu-sleep, to a
++ * stub that hands it to the CPUIDLE block. The block powers it off and sets
++ * its power switch to 0xff.
++ */
++static void sunxi_cpuidle_park_secondaries(void)
++{
++	unsigned int self = plat_my_core_pos();
++	unsigned int core;
++	unsigned int us;
++
++	for (core = 0U; core < PLATFORM_CORE_COUNT; ++core) {
++		if (core == self) {
++			continue;
++		}
++
++		sunxi_set_entrypoint(core, (uintptr_t)sunxi_cpu_park);
++		sunxi_cpu_on(core << MPIDR_AFF0_SHIFT);
++		for (us = 0U; mmio_read_32(SUNXI_CPU_POWER_CLAMP_REG(0, core)) != 0xffU; ++us) {
++			if (us == 10000U) {
++				ERROR("PSCI: core %u did not power down\n", core);
++				panic();
++			}
++			udelay(1);
++		}
++	}
++}
 +#endif /* SUNXI_NATIVE_CPU_SUSPEND */
 +
  static void sunxi_system_off(void)
  {
  	gicv2_cpuif_disable();
-@@ -69,6 +201,12 @@ static const plat_psci_ops_t sunxi_native_psci_ops = {
+@@ -45,6 +210,11 @@ static void sunxi_system_off(void)
+ 	/* Attempt to power down the board (may not return) */
+ 	sunxi_power_down();
+ 
++#if SUNXI_NATIVE_CPU_SUSPEND
++	/* Nothing may wake a core again. */
++	mmio_write_32(SUNXI_CPUIDLE_WAKE_REG, 0);
++#endif
++
+ 	/* Turn off all CPUs */
+ 	sunxi_cpu_power_off_others();
+ 	sunxi_cpu_power_off_self();
+@@ -69,6 +239,12 @@ static const plat_psci_ops_t sunxi_native_psci_ops = {
  	.pwr_domain_on			= sunxi_pwr_domain_on,
  	.pwr_domain_off			= sunxi_pwr_domain_off,
  	.pwr_domain_on_finish		= sunxi_pwr_domain_on_finish,
@@ -345,7 +446,7 @@ index 28abd3c67..f1589942c 100644
  	.system_off			= sunxi_system_off,
  	.system_reset			= sunxi_system_reset,
  	.validate_ns_entrypoint		= sunxi_validate_ns_entrypoint,
-@@ -76,5 +214,19 @@ static const plat_psci_ops_t sunxi_native_psci_ops = {
+@@ -76,5 +252,19 @@ static const plat_psci_ops_t sunxi_native_psci_ops = {
  
  void sunxi_set_native_psci_ops(const plat_psci_ops_t **psci_ops)
  {
@@ -359,14 +460,14 @@ index 28abd3c67..f1589942c 100644
 +	sunxi_cpuidle_enable();
 +
 +#if SUNXI_NATIVE_CPU_SUSPEND
-+	/* Secondary cores are armed by their CPU_ON finisher. */
-+	sunxi_cpuidle_wake_enable(true);
++	mmio_write_32(SUNXI_CPUIDLE_WAKE_REG, BIT_32(plat_my_core_pos()));
++	sunxi_cpuidle_park_secondaries();
 +#endif
 +
  	*psci_ops = &sunxi_native_psci_ops;
  }
 diff --git a/plat/allwinner/common/sunxi_pm.c b/plat/allwinner/common/sunxi_pm.c
-index ebc406b91..68fd3e123 100644
+index ebc406b91..a601cf5d7 100644
 --- a/plat/allwinner/common/sunxi_pm.c
 +++ b/plat/allwinner/common/sunxi_pm.c
 @@ -30,6 +30,15 @@ bool sunxi_psci_is_scpi(void)
@@ -385,7 +486,46 @@ index ebc406b91..68fd3e123 100644
  int sunxi_validate_ns_entrypoint(uintptr_t ns_entrypoint)
  {
  	/* The non-secure entry point must be in DRAM */
-@@ -64,7 +73,11 @@ int plat_setup_psci_ops(uintptr_t sec_entrypoint,
+@@ -40,33 +49,42 @@ int sunxi_validate_ns_entrypoint(uintptr_t ns_entrypoint)
+ 	return PSCI_E_SUCCESS;
+ }
+ 
++void sunxi_set_entrypoint(unsigned int cpu, uintptr_t entrypoint)
++{
++	if (sunxi_cpucfg_has_per_cluster_regs()) {
++		mmio_write_32(SUNXI_CPUCFG_RVBAR_LO_REG(cpu),
++			      entrypoint & 0xffffffff);
++		mmio_write_32(SUNXI_CPUCFG_RVBAR_HI_REG(cpu),
++			      entrypoint >> 32);
++	} else {
++		mmio_write_32(SUNXI_ALT_RVBAR_LO_REG(cpu),
++			      entrypoint & 0xffffffff);
++		mmio_write_32(SUNXI_ALT_RVBAR_HI_REG(cpu),
++			      entrypoint >> 32);
++	}
++}
++
+ int plat_setup_psci_ops(uintptr_t sec_entrypoint,
+ 			const plat_psci_ops_t **psci_ops)
+ {
+ 	assert(psci_ops);
+ 
+-	/* Program all CPU entry points. */
+-	for (unsigned int cpu = 0; cpu < PLATFORM_CORE_COUNT; ++cpu) {
+-		if (sunxi_cpucfg_has_per_cluster_regs()) {
+-			mmio_write_32(SUNXI_CPUCFG_RVBAR_LO_REG(cpu),
+-				      sec_entrypoint & 0xffffffff);
+-			mmio_write_32(SUNXI_CPUCFG_RVBAR_HI_REG(cpu),
+-				      sec_entrypoint >> 32);
+-		} else {
+-			mmio_write_32(SUNXI_ALT_RVBAR_LO_REG(cpu),
+-				      sec_entrypoint & 0xffffffff);
+-			mmio_write_32(SUNXI_ALT_RVBAR_HI_REG(cpu),
+-				      sec_entrypoint >> 32);
+-		}
+-	}
+-
+ 	if (sunxi_set_scpi_psci_ops(psci_ops) == 0) {
  		INFO("PSCI: Suspend is available via SCPI\n");
  		psci_is_scpi = true;
  	} else {
@@ -398,6 +538,13 @@ index ebc406b91..68fd3e123 100644
  		sunxi_set_native_psci_ops(psci_ops);
  	}
  
++	/* After the native ops setup, which may have used other entry points. */
++	for (unsigned int cpu = 0; cpu < PLATFORM_CORE_COUNT; ++cpu) {
++		sunxi_set_entrypoint(cpu, sec_entrypoint);
++	}
++
+ 	return 0;
+ }
 diff --git a/plat/allwinner/common/sunxi_prepare_dtb.c b/plat/allwinner/common/sunxi_prepare_dtb.c
 index 0f689744a..7072d51d3 100644
 --- a/plat/allwinner/common/sunxi_prepare_dtb.c
