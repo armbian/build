@@ -102,7 +102,8 @@ dtb-$(CONFIG_ARCH_SUNXI) += \
 	sun50i-h616-walnutpi-box-oled.dtbo \
 	sun50i-h616-walnutpi-zerow-expansion.dtbo \
 	sun50i-h616-ws2812.dtbo \
-	sun50i-h616-light.dtbo
+	sun50i-h616-light.dtbo \
+	sun55i-t527-npu.dtbo
 
 scr-$(CONFIG_ARCH_SUNXI) += \
 	sun50i-a64-fixup.scr \
@@ -112,7 +113,8 @@ scr-$(CONFIG_ARCH_SUNXI) += \
 
 dtbotxt-$(CONFIG_ARCH_SUNXI) += \
 	README.sun50i-a64-overlays \
-	README.sun50i-h5-overlays
+	README.sun50i-h5-overlays \
+	README.sun55i-t527-overlays
 
 targets += $(dtb-y) $(scr-y) $(dtbotxt-y)
 
