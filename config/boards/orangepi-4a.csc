@@ -6,11 +6,9 @@ BOARD_MAINTAINER=""
 INTRODUCED="2025"
 BOOTCONFIG="orangepi_4a_defconfig"
 OVERLAY_PREFIX="sun55i-t527"
-#BOOT_LOGO="desktop"
 KERNEL_TARGET="edge"
 BOOT_FDT_FILE="sun55i-t527-orangepi-4a.dtb"
+
+# GPT is overwritten by the eGON bootloader image at 8 KiB (issue #10647)
 IMAGE_PARTITION_TABLE="msdos"
 BOOTFS_TYPE="fat"
-BOOTSTART="1"
-BOOTSIZE="512"
-ROOTSTART="513"
