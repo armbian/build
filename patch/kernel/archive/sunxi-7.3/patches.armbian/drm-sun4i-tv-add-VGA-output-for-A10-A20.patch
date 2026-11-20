@@ -1,0 +1,480 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 18 Oct 2026 13:31:34 +0200
+Subject: drm/sun4i: tv: add VGA output for A10/A20
+
+The A10/A20 TV encoders can drive a VGA connector: in "VGA mode" three
+DACs output R, G and B taken straight from the display backend, and
+the TCON channel 1 provides HSYNC and VSYNC. The Cubietruck has its
+VGA connector wired this way, and the vendor 3.4 kernel uses it as its
+default output.
+
+When the TV encoder's output port is linked to a "vga-connector" node,
+register a DAC encoder and a VGA connector instead of the composite
+one. The connector reads EDID and detects the monitor over the DDC bus
+given by the connector's ddc-i2c-bus property, and falls back to the
+standard modes up to 1920x1200 when the monitor gives no EDID; an EDID
+override still applies first. Without
+a DDC bus it leaves the modes to the probe helper, which applies an
+EDID override when the connector is forced on and otherwise adds the
+modes up to 1024x768. The I2C adapter is looked up when first
+needed rather than at probe or bind time, so the display pipeline
+never waits for an I2C controller.
+
+The register values are those of the vendor driver (TVE_set_vga_mode),
+checked against a Cubietruck running it. The backend keeps its RGB
+output (no RGB to YUV conversion as for composite). Modes are limited
+to 150 MHz, which covers the vendor driver's VGA modes up to 1680x1050
+(146.25 MHz); faster modes are untested.
+
+VGA works with the TV encoder's reset bit untouched, as with the vendor
+driver: on a Cubietruck driving VGA the bit (CCU LCD0 CH0 bit 29) reads
+0, i.e. asserted. So the reset line is optional for the VGA case;
+composite still requires it.
+
+Also stop the graph walk at VGA connectors: sun4i_drv would otherwise
+add the connector node as a component that never binds.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/sun4i/sun4i_drv.c |   3 +-
+ drivers/gpu/drm/sun4i/sun4i_tv.c  | 294 ++++++++++++++++++++++++++----
+ 2 files changed, 258 insertions(+), 39 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_drv.c b/drivers/gpu/drm/sun4i/sun4i_drv.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_drv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_drv.c
+@@ -154,7 +154,8 @@ static const struct component_master_ops sun4i_drv_master_ops = {
+ 
+ static bool sun4i_drv_node_is_connector(struct device_node *node)
+ {
+-	return of_device_is_compatible(node, "hdmi-connector");
++	return of_device_is_compatible(node, "hdmi-connector") ||
++		of_device_is_compatible(node, "vga-connector");
+ }
+ 
+ static bool sun4i_drv_node_is_frontend(struct device_node *node)
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tv.c b/drivers/gpu/drm/sun4i/sun4i_tv.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tv.c
+@@ -8,6 +8,7 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/component.h>
++#include <linux/i2c.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+@@ -17,6 +18,7 @@
+ 
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
++#include <drm/drm_edid.h>
+ #include <drm/drm_encoder.h>
+ #include <drm/drm_of.h>
+ #include <drm/drm_panel.h>
+@@ -24,6 +26,7 @@
+ #include <drm/drm_probe_helper.h>
+ 
+ #include "sun4i_crtc.h"
++#include "sun4i_tcon.h"
+ #include "sun4i_drv.h"
+ #include "sunxi_engine.h"
+ 
+@@ -33,6 +36,7 @@
+ #define SUN4I_TVE_EN_ENABLE			BIT(0)
+ 
+ #define SUN4I_TVE_CFG0_REG		0x004
++#define SUN4I_TVE_CFG0_VGA			BIT(29)
+ #define SUN4I_TVE_CFG0_DAC_CONTROL_54M		BIT(26)
+ #define SUN4I_TVE_CFG0_CORE_DATAPATH_54M	BIT(25)
+ #define SUN4I_TVE_CFG0_CORE_CONTROL_54M		BIT(24)
+@@ -179,6 +183,10 @@ struct sun4i_tv {
+ 	struct reset_control	*reset;
+ 
+ 	struct sun4i_drv	*drv;
++
++	/* VGA instead of composite: output port goes to a vga-connector */
++	bool			vga;
++	struct device_node	*ddc_node;
+ };
+ 
+ static const struct video_levels ntsc_video_levels = {
+@@ -256,6 +264,13 @@ drm_encoder_to_sun4i_tv(struct drm_encoder *encoder)
+ 			    encoder);
+ }
+ 
++static inline struct sun4i_tv *
++drm_connector_to_sun4i_tv(struct drm_connector *connector)
++{
++	return container_of(connector, struct sun4i_tv,
++			    connector);
++}
++
+ static const struct tv_mode *
+ sun4i_tv_find_tv_by_mode(unsigned int mode)
+ {
+@@ -283,7 +298,35 @@ static void sun4i_tv_disable(struct drm_encoder *encoder,
+ 			   SUN4I_TVE_EN_ENABLE,
+ 			   0);
+ 
+-	sunxi_engine_disable_color_correction(crtc->engine);
++	if (tv->vga)
++		sun4i_tcon_set_vga_sync(crtc->tcon, false);
++	else
++		sunxi_engine_disable_color_correction(crtc->engine);
++}
++
++/*
++ * VGA: the backend's RGB goes straight to DACs 0-2, which the vendor driver
++ * sets up as G, B and R (sources 4, 5 and 6, the Cubietruck's TVOUT0-2);
++ * the TCON drives HSYNC/VSYNC. The values are those of the vendor 3.4
++ * driver (TVE_set_vga_mode), checked against a running Cubietruck.
++ */
++static void sun4i_tv_vga_enable(struct sun4i_tv *tv)
++{
++	regmap_write(tv->regs, SUN4I_TVE_EN_REG,
++		     SUN4I_TVE_EN_DAC_MAP(0, 1) |
++		     SUN4I_TVE_EN_DAC_MAP(1, 2) |
++		     SUN4I_TVE_EN_DAC_MAP(2, 3));
++	regmap_write(tv->regs, SUN4I_TVE_CFG0_REG, SUN4I_TVE_CFG0_VGA);
++	/*
++	 * DACs 0-2 enabled with sources 4/5/6, luma/chroma gains as for
++	 * TV; bit 30 and the internal DAC setting 2 are copied as is.
++	 */
++	regmap_write(tv->regs, SUN4I_TVE_DAC0_REG, 0x403e1ac7);
++	regmap_update_bits(tv->regs, SUN4I_TVE_DAC1_REG, GENMASK(23, 0), 0);
++
++	regmap_update_bits(tv->regs, SUN4I_TVE_EN_REG,
++			   SUN4I_TVE_EN_ENABLE,
++			   SUN4I_TVE_EN_ENABLE);
+ }
+ 
+ static void sun4i_tv_enable(struct drm_encoder *encoder,
+@@ -297,8 +340,16 @@ static void sun4i_tv_enable(struct drm_encoder *encoder,
+ 	struct drm_connector *connector = &tv->connector;
+ 	struct drm_connector_state *conn_state =
+ 		drm_atomic_get_new_connector_state(state, connector);
+-	const struct tv_mode *tv_mode =
+-		sun4i_tv_find_tv_by_mode(conn_state->tv.mode);
++	const struct tv_mode *tv_mode;
++
++	if (tv->vga) {
++		DRM_DEBUG_DRIVER("Enabling the VGA output\n");
++		sun4i_tv_vga_enable(tv);
++		sun4i_tcon_set_vga_sync(crtc->tcon, true);
++		return;
++	}
++
++	tv_mode = sun4i_tv_find_tv_by_mode(conn_state->tv.mode);
+ 
+ 	DRM_DEBUG_DRIVER("Enabling the TV Output\n");
+ 
+@@ -416,6 +467,130 @@ static const struct drm_connector_helper_funcs sun4i_tv_comp_connector_helper_fu
+ 	.get_modes	= drm_connector_helper_tv_get_modes,
+ };
+ 
++/*
++ * The DDC bus is looked up on every use rather than at probe time, so that
++ * the display pipeline never waits for (or fails on) an I2C controller, and
++ * no reference to it is held between uses.
++ */
++static struct i2c_adapter *sun4i_tv_vga_get_ddc(struct sun4i_tv *tv)
++{
++	return tv->ddc_node ? of_get_i2c_adapter_by_node(tv->ddc_node) : NULL;
++}
++
++static int sun4i_tv_vga_get_modes(struct drm_connector *connector)
++{
++	struct sun4i_tv *tv = drm_connector_to_sun4i_tv(connector);
++	struct i2c_adapter *ddc = sun4i_tv_vga_get_ddc(tv);
++	const struct drm_edid *drm_edid;
++	int count;
++
++	if (!ddc) {
++		/* the probe helper applies an EDID override or adds safe modes */
++		drm_edid_connector_update(connector, NULL);
++		return 0;
++	}
++
++	drm_edid = drm_edid_read_ddc(connector, ddc);
++	i2c_put_adapter(ddc);
++	drm_edid_connector_update(connector, drm_edid);
++	count = drm_edid_connector_add_modes(connector);
++	drm_edid_free(drm_edid);
++
++	/* drm_edid_read_ddc() skips the EDID override when the DDC probe fails */
++	if (!count)
++		count = drm_edid_override_connector_update(connector);
++
++	if (!count) {
++		count = drm_add_modes_noedid(connector, 1920, 1200);
++		drm_set_preferred_mode(connector, 1024, 768);
++	}
++
++	return count;
++}
++
++static enum drm_mode_status
++sun4i_tv_vga_mode_valid(struct drm_connector *connector,
++			const struct drm_display_mode *mode)
++{
++	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
++		return MODE_NO_INTERLACE;
++
++	/* the vendor driver's fastest VGA mode, 1680x1050, needs 146.25 MHz */
++	if (mode->clock > 150000)
++		return MODE_CLOCK_HIGH;
++
++	return MODE_OK;
++}
++
++static enum drm_connector_status
++sun4i_tv_vga_detect(struct drm_connector *connector, bool force)
++{
++	struct i2c_adapter *ddc = sun4i_tv_vga_get_ddc(drm_connector_to_sun4i_tv(connector));
++	bool present;
++
++	if (!ddc)
++		return connector_status_unknown;
++
++	present = drm_probe_ddc(ddc);
++	i2c_put_adapter(ddc);
++
++	return present ? connector_status_connected : connector_status_disconnected;
++}
++
++static const struct drm_connector_helper_funcs sun4i_tv_vga_connector_helper_funcs = {
++	.get_modes	= sun4i_tv_vga_get_modes,
++	.mode_valid	= sun4i_tv_vga_mode_valid,
++};
++
++static const struct drm_connector_funcs sun4i_tv_vga_connector_funcs = {
++	.detect			= sun4i_tv_vga_detect,
++	.fill_modes		= drm_helper_probe_single_connector_modes,
++	.destroy		= drm_connector_cleanup,
++	.reset			= drm_atomic_helper_connector_reset,
++	.atomic_duplicate_state	= drm_atomic_helper_connector_duplicate_state,
++	.atomic_destroy_state	= drm_atomic_helper_connector_destroy_state,
++};
++
++/*
++ * A10/A20 boards such as the Cubietruck wire TV encoder 0 to a VGA connector
++ * (RGB on the DACs, sync from the TCON). The device tree says so by linking
++ * the encoder's output port to a "vga-connector" node.
++ */
++static void sun4i_tv_vga_probe(struct device *dev, struct sun4i_tv *tv)
++{
++	struct device_node *remote;
++
++	remote = of_graph_get_remote_node(dev->of_node, 1, -1);
++	if (!remote)
++		return;
++
++	if (of_device_is_compatible(remote, "vga-connector")) {
++		tv->vga = true;
++		tv->ddc_node = of_parse_phandle(remote, "ddc-i2c-bus", 0);
++	}
++	of_node_put(remote);
++}
++
++static int sun4i_tv_vga_connector_init(struct drm_device *drm,
++				       struct sun4i_tv *tv)
++{
++	int ret;
++
++	drm_connector_helper_add(&tv->connector,
++				 &sun4i_tv_vga_connector_helper_funcs);
++	ret = drm_connector_init(drm, &tv->connector,
++				 &sun4i_tv_vga_connector_funcs,
++				 DRM_MODE_CONNECTOR_VGA);
++	if (ret)
++		return ret;
++
++	if (tv->ddc_node)
++		tv->connector.polled = DRM_CONNECTOR_POLL_CONNECT |
++				       DRM_CONNECTOR_POLL_DISCONNECT;
++
++	return drm_connector_attach_encoder(&tv->connector, &tv->encoder);
++}
++
+ static void sun4i_tv_connector_reset(struct drm_connector *connector)
+ {
+ 	drm_atomic_helper_connector_reset(connector);
+@@ -441,42 +616,18 @@ static const struct regmap_config sun4i_tv_regmap_config = {
+ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 			 void *data)
+ {
+-	struct platform_device *pdev = to_platform_device(dev);
+ 	struct drm_device *drm = data;
+ 	struct sun4i_drv *drv = drm->dev_private;
+ 	const struct sun4i_tv_quirks *quirks;
+ 	struct sun4i_tv *tv;
+-	void __iomem *regs;
+ 	int ret;
+ 
+ 	quirks = of_device_get_match_data(dev);
+ 	if (!quirks)
+ 		return -EINVAL;
+ 
+-	tv = devm_kzalloc(dev, sizeof(*tv), GFP_KERNEL);
+-	if (!tv)
+-		return -ENOMEM;
++	tv = dev_get_drvdata(dev);
+ 	tv->drv = drv;
+-	dev_set_drvdata(dev, tv);
+-
+-	regs = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(regs)) {
+-		dev_err(dev, "Couldn't map the TV encoder registers\n");
+-		return PTR_ERR(regs);
+-	}
+-
+-	tv->regs = devm_regmap_init_mmio(dev, regs,
+-					 &sun4i_tv_regmap_config);
+-	if (IS_ERR(tv->regs)) {
+-		dev_err(dev, "Couldn't create the TV encoder regmap\n");
+-		return PTR_ERR(tv->regs);
+-	}
+-
+-	tv->reset = devm_reset_control_get(dev, NULL);
+-	if (IS_ERR(tv->reset)) {
+-		dev_err(dev, "Couldn't get our reset line\n");
+-		return PTR_ERR(tv->reset);
+-	}
+ 
+ 	ret = reset_control_deassert(tv->reset);
+ 	if (ret) {
+@@ -484,12 +635,6 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 		return ret;
+ 	}
+ 
+-	tv->clk = devm_clk_get(dev, NULL);
+-	if (IS_ERR(tv->clk)) {
+-		dev_err(dev, "Couldn't get the TV encoder clock\n");
+-		ret = PTR_ERR(tv->clk);
+-		goto err_assert_reset;
+-	}
+ 	clk_prepare_enable(tv->clk);
+ 
+ 	if (quirks->calibration)
+@@ -500,7 +645,8 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 	drm_encoder_helper_add(&tv->encoder,
+ 			       &sun4i_tv_helper_funcs);
+ 	ret = drm_encoder_init(drm, &tv->encoder, &sun4i_tv_funcs,
+-			       DRM_MODE_ENCODER_TVDAC, NULL);
++			       tv->vga ? DRM_MODE_ENCODER_DAC :
++					 DRM_MODE_ENCODER_TVDAC, NULL);
+ 	if (ret) {
+ 		dev_err(dev, "Couldn't initialise the TV encoder\n");
+ 		goto err_disable_clk;
+@@ -510,7 +656,17 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 								dev->of_node);
+ 	if (!tv->encoder.possible_crtcs) {
+ 		ret = -EPROBE_DEFER;
+-		goto err_disable_clk;
++		goto err_cleanup_encoder;
++	}
++
++	if (tv->vga) {
++		ret = sun4i_tv_vga_connector_init(drm, tv);
++		if (ret) {
++			dev_err(dev, "Couldn't initialise the VGA connector\n");
++			goto err_cleanup_encoder;
++		}
++
++		return 0;
+ 	}
+ 
+ 	drm_connector_helper_add(&tv->connector,
+@@ -545,7 +701,6 @@ err_cleanup_encoder:
+ 	drm_encoder_cleanup(&tv->encoder);
+ err_disable_clk:
+ 	clk_disable_unprepare(tv->clk);
+-err_assert_reset:
+ 	reset_control_assert(tv->reset);
+ 	return ret;
+ }
+@@ -564,14 +719,77 @@ static const struct component_ops sun4i_tv_ops = {
+ 	.unbind	= sun4i_tv_unbind,
+ };
+ 
++/*
++ * Resources are taken here, not in bind: devm resources live until the
++ * device goes away, so taking them in bind would fail on a second bind.
++ */
+ static int sun4i_tv_probe(struct platform_device *pdev)
+ {
+-	return component_add(&pdev->dev, &sun4i_tv_ops);
++	struct device *dev = &pdev->dev;
++	struct sun4i_tv *tv;
++	void __iomem *regs;
++	int ret;
++
++	tv = devm_kzalloc(dev, sizeof(*tv), GFP_KERNEL);
++	if (!tv)
++		return -ENOMEM;
++	platform_set_drvdata(pdev, tv);
++
++	sun4i_tv_vga_probe(dev, tv);
++
++	regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(regs)) {
++		dev_err(dev, "Couldn't map the TV encoder registers\n");
++		ret = PTR_ERR(regs);
++		goto err_put_ddc_node;
++	}
++
++	tv->regs = devm_regmap_init_mmio(dev, regs, &sun4i_tv_regmap_config);
++	if (IS_ERR(tv->regs)) {
++		dev_err(dev, "Couldn't create the TV encoder regmap\n");
++		ret = PTR_ERR(tv->regs);
++		goto err_put_ddc_node;
++	}
++
++	/*
++	 * A20 VGA works with the TV encoder's reset bit (CCU LCD CH0 bit 29)
++	 * untouched, as with the vendor driver: the VGA path does not require
++	 * a reset line in the device tree; composite TV still does.
++	 */
++	if (tv->vga)
++		tv->reset = devm_reset_control_get_optional(dev, NULL);
++	else
++		tv->reset = devm_reset_control_get(dev, NULL);
++	if (IS_ERR(tv->reset)) {
++		dev_err(dev, "Couldn't get our reset line\n");
++		ret = PTR_ERR(tv->reset);
++		goto err_put_ddc_node;
++	}
++
++	tv->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(tv->clk)) {
++		dev_err(dev, "Couldn't get the TV encoder clock\n");
++		ret = PTR_ERR(tv->clk);
++		goto err_put_ddc_node;
++	}
++
++	ret = component_add(dev, &sun4i_tv_ops);
++	if (ret)
++		goto err_put_ddc_node;
++
++	return 0;
++
++err_put_ddc_node:
++	of_node_put(tv->ddc_node);
++	return ret;
+ }
+ 
+ static void sun4i_tv_remove(struct platform_device *pdev)
+ {
++	struct sun4i_tv *tv = platform_get_drvdata(pdev);
++
+ 	component_del(&pdev->dev, &sun4i_tv_ops);
++	of_node_put(tv->ddc_node);
+ }
+ 
+ static const struct sun4i_tv_quirks a10_quirks = {
+-- 
+Armbian
