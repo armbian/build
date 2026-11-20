@@ -1,0 +1,670 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:37 +0100
+Subject: usb: typec: tcpm: allocate pd_list entries non device managed
+
+The data is free'd manually, so there is no need for the device
+managed overhead. At the same time it conflicts when the TCPM
+itself is registered device managed (not yet supported).
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-1-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -8109,7 +8109,7 @@ static void tcpm_port_unregister_pd(struct tcpm_port *port)
+ 	for (i = 0; i < port->pd_count; i++) {
+ 		usb_power_delivery_unregister_capabilities(port->pd_list[i]->sink_cap);
+ 		usb_power_delivery_unregister_capabilities(port->pd_list[i]->source_cap);
+-		devm_kfree(port->dev, port->pd_list[i]);
++		kfree(port->pd_list[i]);
+ 		port->pd_list[i] = NULL;
+ 		usb_power_delivery_unregister(port->pds[i]);
+ 		port->pds[i] = NULL;
+@@ -8415,7 +8415,7 @@ static int tcpm_fw_get_caps(struct tcpm_port *port, struct fwnode_handle *fwnode
+ 	}
+ 
+ 	for (i = 0; i < port->pd_count; i++) {
+-		port->pd_list[i] = devm_kzalloc_obj(port->dev, struct pd_data);
++		port->pd_list[i] = kzalloc_obj(*port->pd_list[i]);
+ 		if (!port->pd_list[i]) {
+ 			ret = -ENOMEM;
+ 			goto put_capabilities;
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:38 +0100
+Subject: usb: typec: tcpm: add device managed port registration
+
+A few drivers would benefit from having device managed TCPM
+port registration, so that their probe routine does not mix
+device managed and non-device managed calls.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-2-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 25 ++++++++++
+ include/linux/usb/tcpm.h      |  3 ++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -9037,6 +9037,31 @@ void tcpm_unregister_port(struct tcpm_port *port)
+ }
+ EXPORT_SYMBOL_GPL(tcpm_unregister_port);
+ 
++static void devm_tcpm_unregister_port(void *data)
++{
++	struct tcpm_port *port = data;
++
++	tcpm_unregister_port(port);
++}
++
++struct tcpm_port *devm_tcpm_register_port(struct device *dev,
++					  struct tcpc_dev *tcpc)
++{
++	struct tcpm_port *result;
++	int ret;
++
++	result = tcpm_register_port(dev, tcpc);
++	if (IS_ERR(result))
++		return result;
++
++	ret = devm_add_action_or_reset(dev, devm_tcpm_unregister_port, result);
++	if (ret  < 0)
++		return ERR_PTR(ret);
++
++	return result;
++}
++EXPORT_SYMBOL_GPL(devm_tcpm_register_port);
++
+ MODULE_AUTHOR("Guenter Roeck <groeck@chromium.org>");
+ MODULE_DESCRIPTION("USB Type-C Port Manager");
+ MODULE_LICENSE("GPL");
+diff --git a/include/linux/usb/tcpm.h b/include/linux/usb/tcpm.h
+index 111111111111..222222222222 100644
+--- a/include/linux/usb/tcpm.h
++++ b/include/linux/usb/tcpm.h
+@@ -177,6 +177,9 @@ struct tcpm_port;
+ struct tcpm_port *tcpm_register_port(struct device *dev, struct tcpc_dev *tcpc);
+ void tcpm_unregister_port(struct tcpm_port *port);
+ 
++struct tcpm_port *devm_tcpm_register_port(struct device *dev,
++					  struct tcpc_dev *tcpc);
++
+ void tcpm_vbus_change(struct tcpm_port *port);
+ void tcpm_cc_change(struct tcpm_port *port);
+ void tcpm_sink_frs(struct tcpm_port *port);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:39 +0100
+Subject: usb: typec: fusb302: Switch to device managed resources
+
+The driver's probe routine is currently mixing registration calls for
+device managed resources with unmananged ones. This results in issues
+such as resource leaks or use-after-free. Fix this up by fully
+converting the driver to device managed resources.
+
+Resource acquisition has been reordered a bit, so that the work is
+initialized after the TCPM port is registered as the work uses the
+TCPM devices.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-3-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 112 +++++-----
+ 1 file changed, 62 insertions(+), 50 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -8,6 +8,7 @@
+ #include <drm/bridge/aux-bridge.h>
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
++#include <linux/devm-helpers.h>
+ #include <linux/errno.h>
+ #include <linux/extcon.h>
+ #include <linux/gpio/consumer.h>
+@@ -220,20 +221,28 @@ static int fusb302_debug_show(struct seq_file *s, void *v)
+ }
+ DEFINE_SHOW_ATTRIBUTE(fusb302_debug);
+ 
+-static void fusb302_debugfs_init(struct fusb302_chip *chip)
++static void fusb302_debugfs_exit(void *data)
++{
++	struct fusb302_chip *chip = data;
++
++	debugfs_remove(chip->dentry);
++}
++
++static int fusb302_debugfs_init(struct fusb302_chip *chip)
+ {
+ 	char name[NAME_MAX];
++	int ret;
++
++	ret = devm_mutex_init(chip->dev, &chip->logbuffer_lock);
++	if (ret < 0)
++		return ret;
+ 
+-	mutex_init(&chip->logbuffer_lock);
+ 	snprintf(name, NAME_MAX, "fusb302-%s", dev_name(chip->dev));
+ 	chip->dentry = debugfs_create_dir(name, usb_debug_root);
+ 	debugfs_create_file("log", S_IFREG | 0444, chip->dentry, chip,
+ 			    &fusb302_debug_fops);
+-}
+ 
+-static void fusb302_debugfs_exit(struct fusb302_chip *chip)
+-{
+-	debugfs_remove(chip->dentry);
++	return devm_add_action_or_reset(chip->dev, fusb302_debugfs_exit, chip);
+ }
+ 
+ #else
+@@ -241,7 +250,6 @@ static void fusb302_debugfs_exit(struct fusb302_chip *chip)
+ static void fusb302_log(const struct fusb302_chip *chip,
+ 			const char *fmt, ...) { }
+ static void fusb302_debugfs_init(const struct fusb302_chip *chip) { }
+-static void fusb302_debugfs_exit(const struct fusb302_chip *chip) { }
+ 
+ #endif
+ 
+@@ -1789,6 +1797,13 @@ static struct fwnode_handle *fusb302_fwnode_get(struct device *dev)
+ 	return fwnode;
+ }
+ 
++static void fusb302_fwnode_put(void *data)
++{
++	struct fusb302_chip *chip = data;
++
++	fwnode_handle_put(chip->tcpc_dev.fwnode);
++}
++
+ static int fusb302_probe(struct i2c_client *client)
+ {
+ 	struct fusb302_chip *chip;
+@@ -1809,7 +1824,10 @@ static int fusb302_probe(struct i2c_client *client)
+ 
+ 	chip->i2c_client = client;
+ 	chip->dev = &client->dev;
+-	mutex_init(&chip->lock);
++
++	ret = devm_mutex_init(dev, &chip->lock);
++	if (ret < 0)
++		return ret;
+ 
+ 	/*
+ 	 * Devicetree platforms should get extcon via phandle (not yet
+@@ -1828,67 +1846,68 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (IS_ERR(chip->vbus))
+ 		return PTR_ERR(chip->vbus);
+ 
+-	chip->wq = create_singlethread_workqueue(dev_name(chip->dev));
++	chip->wq = devm_alloc_ordered_workqueue(dev, dev_name(dev), 0);
+ 	if (!chip->wq)
+ 		return -ENOMEM;
+ 
+ 	spin_lock_init(&chip->irq_lock);
+-	INIT_WORK(&chip->irq_work, fusb302_irq_work);
+-	INIT_DELAYED_WORK(&chip->bc_lvl_handler, fusb302_bc_lvl_handler_work);
+ 	init_tcpc_dev(&chip->tcpc_dev);
+-	fusb302_debugfs_init(chip);
++
++	ret = fusb302_debugfs_init(chip);
++	if (ret < 0)
++		return ret;
+ 
+ 	if (client->irq) {
+ 		chip->gpio_int_n_irq = client->irq;
+ 	} else {
+ 		ret = init_gpio(chip);
+ 		if (ret < 0)
+-			goto destroy_workqueue;
++			return ret;
+ 	}
+ 
+ 	chip->tcpc_dev.fwnode = fusb302_fwnode_get(dev);
+ 	if (IS_ERR(chip->tcpc_dev.fwnode)) {
+ 		ret = PTR_ERR(chip->tcpc_dev.fwnode);
+-		goto destroy_workqueue;
++		return ret;
+ 	}
+ 
++	ret = devm_add_action_or_reset(dev, fusb302_fwnode_put, chip);
++	if (ret < 0)
++		return ret;
++
+ 	bridge_dev = devm_drm_dp_hpd_bridge_alloc(chip->dev, to_of_node(chip->tcpc_dev.fwnode));
+-	if (IS_ERR(bridge_dev)) {
+-		ret = dev_err_probe(chip->dev, PTR_ERR(bridge_dev),
+-				    "failed to alloc bridge\n");
+-		goto fwnode_put;
+-	}
++	if (IS_ERR(bridge_dev))
++		return dev_err_probe(chip->dev, PTR_ERR(bridge_dev),
++				     "failed to alloc bridge\n");
+ 
+-	chip->tcpm_port = tcpm_register_port(&client->dev, &chip->tcpc_dev);
+-	if (IS_ERR(chip->tcpm_port)) {
+-		ret = dev_err_probe(dev, PTR_ERR(chip->tcpm_port),
++	chip->tcpm_port = devm_tcpm_register_port(&client->dev, &chip->tcpc_dev);
++	if (IS_ERR(chip->tcpm_port))
++		return dev_err_probe(dev, PTR_ERR(chip->tcpm_port),
+ 				    "cannot register tcpm port\n");
+-		goto fwnode_put;
+-	}
+ 
+-	ret = devm_drm_dp_hpd_bridge_add(chip->dev, bridge_dev);
+-	if (ret)
+-		goto tcpm_unregister_port;
++	ret = devm_delayed_work_autocancel(dev, &chip->bc_lvl_handler,
++					   fusb302_bc_lvl_handler_work);
++	if (ret < 0)
++		return ret;
++
++	ret = devm_work_autocancel(dev, &chip->irq_work, fusb302_irq_work);
++	if (ret < 0)
++		return ret;
++
++	ret = devm_request_threaded_irq(dev, chip->gpio_int_n_irq, NULL,
++					fusb302_irq_intn,
++					IRQF_ONESHOT | IRQF_TRIGGER_LOW,
++					"fsc_interrupt_int_n", chip);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to request IRQ");
+ 
+-	ret = request_threaded_irq(chip->gpio_int_n_irq, NULL, fusb302_irq_intn,
+-				   IRQF_ONESHOT | IRQF_TRIGGER_LOW,
+-				   "fsc_interrupt_int_n", chip);
+-	if (ret < 0) {
+-		dev_err(dev, "cannot request IRQ for GPIO Int_N, ret=%d", ret);
+-		goto tcpm_unregister_port;
+-	}
+-	enable_irq_wake(chip->gpio_int_n_irq);
+ 	i2c_set_clientdata(client, chip);
+ 
+-	return 0;
++	ret = devm_drm_dp_hpd_bridge_add(chip->dev, bridge_dev);
++	if (ret)
++		return ret;
+ 
+-tcpm_unregister_port:
+-	tcpm_unregister_port(chip->tcpm_port);
+-fwnode_put:
+-	fwnode_handle_put(chip->tcpc_dev.fwnode);
+-destroy_workqueue:
+-	fusb302_debugfs_exit(chip);
+-	destroy_workqueue(chip->wq);
++	enable_irq_wake(chip->gpio_int_n_irq);
+ 
+ 	return ret;
+ }
+@@ -1898,13 +1917,6 @@ static void fusb302_remove(struct i2c_client *client)
+ 	struct fusb302_chip *chip = i2c_get_clientdata(client);
+ 
+ 	disable_irq_wake(chip->gpio_int_n_irq);
+-	free_irq(chip->gpio_int_n_irq, chip);
+-	cancel_work_sync(&chip->irq_work);
+-	cancel_delayed_work_sync(&chip->bc_lvl_handler);
+-	tcpm_unregister_port(chip->tcpm_port);
+-	fwnode_handle_put(chip->tcpc_dev.fwnode);
+-	destroy_workqueue(chip->wq);
+-	fusb302_debugfs_exit(chip);
+ }
+ 
+ static int fusb302_pm_suspend(struct device *dev)
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:40 +0100
+Subject: usb: typec: fusb302: switch to devm_pm_set_wake_irq
+
+Use the modern device managed wake IRQ helper provided by the PM layer
+instead of directly calling the interrupt wake enable/disable functions.
+
+This results in the wake capability only being enabled once system suspend
+is entered as its not supposed to be set while the system is running
+normally. Also it now properly reacts to device_may_wakeup().
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-4-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 15 ++++------
+ 1 file changed, 5 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -19,6 +19,7 @@
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/pinctrl/consumer.h>
++#include <linux/pm_wakeirq.h>
+ #include <linux/proc_fs.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/sched/clock.h>
+@@ -1907,16 +1908,11 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	enable_irq_wake(chip->gpio_int_n_irq);
+-
+-	return ret;
+-}
+-
+-static void fusb302_remove(struct i2c_client *client)
+-{
+-	struct fusb302_chip *chip = i2c_get_clientdata(client);
++	ret = devm_device_init_wakeup(chip->dev);
++	if (ret)
++		return ret;
+ 
+-	disable_irq_wake(chip->gpio_int_n_irq);
++	return devm_pm_set_wake_irq(chip->dev, chip->gpio_int_n_irq);
+ }
+ 
+ static int fusb302_pm_suspend(struct device *dev)
+@@ -1973,7 +1969,6 @@ static struct i2c_driver fusb302_driver = {
+ 		   .of_match_table = of_match_ptr(fusb302_dt_match),
+ 		   },
+ 	.probe = fusb302_probe,
+-	.remove = fusb302_remove,
+ 	.id_table = fusb302_i2c_device_id,
+ };
+ module_i2c_driver(fusb302_driver);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:41 +0100
+Subject: usb: typec: fusb302: rename init_gpio into fusb302_init_irq
+
+Add the fusb302_ prefix to init_gpio, since it is used by all
+the other functions and allows easy figuring out that it is a
+local function.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-5-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -1746,7 +1746,7 @@ static void fusb302_irq_work(struct work_struct *work)
+ 	enable_irq(chip->gpio_int_n_irq);
+ }
+ 
+-static int init_gpio(struct fusb302_chip *chip)
++static int fusb302_init_irq(struct fusb302_chip *chip)
+ {
+ 	struct device *dev = chip->dev;
+ 	int ret = 0;
+@@ -1861,7 +1861,7 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (client->irq) {
+ 		chip->gpio_int_n_irq = client->irq;
+ 	} else {
+-		ret = init_gpio(chip);
++		ret = fusb302_init_irq(chip);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:42 +0100
+Subject: usb: typec: fusb302: move gpio_int_n into function local scope
+
+The driver only cares about the interrupt and the GPIO itself is
+device managed, so drop the reference from the device structure
+and only keep it in the function scope. While at it cleanup the
+error handling by using dev_err_probe.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-6-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 21 ++++------
+ 1 file changed, 9 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -88,7 +88,6 @@ struct fusb302_chip {
+ 	struct work_struct irq_work;
+ 	bool irq_suspended;
+ 	bool irq_while_suspended;
+-	struct gpio_desc *gpio_int_n;
+ 	int gpio_int_n_irq;
+ 	struct extcon_dev *extcon;
+ 
+@@ -1749,19 +1748,17 @@ static void fusb302_irq_work(struct work_struct *work)
+ static int fusb302_init_irq(struct fusb302_chip *chip)
+ {
+ 	struct device *dev = chip->dev;
++	struct gpio_desc *int_gpio;
+ 	int ret = 0;
+ 
+-	chip->gpio_int_n = devm_gpiod_get(dev, "fcs,int_n", GPIOD_IN);
+-	if (IS_ERR(chip->gpio_int_n)) {
+-		dev_err(dev, "failed to request gpio_int_n\n");
+-		return PTR_ERR(chip->gpio_int_n);
+-	}
+-	ret = gpiod_to_irq(chip->gpio_int_n);
+-	if (ret < 0) {
+-		dev_err(dev,
+-			"cannot request IRQ for GPIO Int_N, ret=%d", ret);
+-		return ret;
+-	}
++	int_gpio = devm_gpiod_get(dev, "fcs,int_n", GPIOD_IN);
++	if (IS_ERR(int_gpio))
++		return dev_err_probe(dev, PTR_ERR(int_gpio), "failed to request interrupt GPIO\n");
++
++	ret = gpiod_to_irq(int_gpio);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "cannot request IRQ for GPIO\n");
++
+ 	chip->gpio_int_n_irq = ret;
+ 	return 0;
+ }
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:43 +0100
+Subject: usb: typec: fusb302: rework gpio_int_n_irq handling
+
+Improve the code readability, so that one does not need to jump
+into fusb302_init_irq() to understand that chip->gpio_int_n_irq
+is guranteed to be initialized.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-7-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 15 +++++-----
+ 1 file changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -1759,8 +1759,7 @@ static int fusb302_init_irq(struct fusb302_chip *chip)
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "cannot request IRQ for GPIO\n");
+ 
+-	chip->gpio_int_n_irq = ret;
+-	return 0;
++	return ret;
+ }
+ 
+ #define PDO_FIXED_FLAGS \
+@@ -1855,13 +1854,13 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (client->irq) {
++	if (client->irq)
+ 		chip->gpio_int_n_irq = client->irq;
+-	} else {
+-		ret = fusb302_init_irq(chip);
+-		if (ret < 0)
+-			return ret;
+-	}
++	else
++		chip->gpio_int_n_irq = fusb302_init_irq(chip);
++
++	if (chip->gpio_int_n_irq < 0)
++		return chip->gpio_int_n_irq;
+ 
+ 	chip->tcpc_dev.fwnode = fusb302_fwnode_get(dev);
+ 	if (IS_ERR(chip->tcpc_dev.fwnode)) {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 13 Nov 2026 17:42:44 +0100
+Subject: usb: typec: fusb302: drop custom gpio interrupt logic
+
+When the driver was upstreamed it contained the logic to fetch a
+"fcs,int_n" GPIO from device-tree, convert it into an interrupt and use
+it. This was never part of the binding and there was only a single
+upstream user, which got converted to follow the proper bindings in 2020
+in commit 89ee3ace7292 ("arm64: dts: rockchip: Fix Pinebook Pro FUSB302
+interrupt"). Drop the custom logic and only allow the properly
+documented ABI.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261113-fusb302-probe-cleanup-v1-8-e5c65a8c58c8@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 39 +++-------
+ 1 file changed, 9 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -11,7 +11,6 @@
+ #include <linux/devm-helpers.h>
+ #include <linux/errno.h>
+ #include <linux/extcon.h>
+-#include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+@@ -88,7 +87,7 @@ struct fusb302_chip {
+ 	struct work_struct irq_work;
+ 	bool irq_suspended;
+ 	bool irq_while_suspended;
+-	int gpio_int_n_irq;
++	int irq;
+ 	struct extcon_dev *extcon;
+ 
+ 	struct workqueue_struct *wq;
+@@ -1599,7 +1598,7 @@ static irqreturn_t fusb302_irq_intn(int irq, void *dev_id)
+ 	unsigned long flags;
+ 
+ 	/* Disable our level triggered IRQ until our irq_work has cleared it */
+-	disable_irq_nosync(chip->gpio_int_n_irq);
++	disable_irq_nosync(chip->irq);
+ 
+ 	spin_lock_irqsave(&chip->irq_lock, flags);
+ 	if (chip->irq_suspended)
+@@ -1742,24 +1741,7 @@ static void fusb302_irq_work(struct work_struct *work)
+ 	}
+ done:
+ 	mutex_unlock(&chip->lock);
+-	enable_irq(chip->gpio_int_n_irq);
+-}
+-
+-static int fusb302_init_irq(struct fusb302_chip *chip)
+-{
+-	struct device *dev = chip->dev;
+-	struct gpio_desc *int_gpio;
+-	int ret = 0;
+-
+-	int_gpio = devm_gpiod_get(dev, "fcs,int_n", GPIOD_IN);
+-	if (IS_ERR(int_gpio))
+-		return dev_err_probe(dev, PTR_ERR(int_gpio), "failed to request interrupt GPIO\n");
+-
+-	ret = gpiod_to_irq(int_gpio);
+-	if (ret < 0)
+-		return dev_err_probe(dev, ret, "cannot request IRQ for GPIO\n");
+-
+-	return ret;
++	enable_irq(chip->irq);
+ }
+ 
+ #define PDO_FIXED_FLAGS \
+@@ -1854,13 +1836,10 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (client->irq)
+-		chip->gpio_int_n_irq = client->irq;
+-	else
+-		chip->gpio_int_n_irq = fusb302_init_irq(chip);
+-
+-	if (chip->gpio_int_n_irq < 0)
+-		return chip->gpio_int_n_irq;
++	chip->irq = client->irq;
++	if (!chip->irq)
++		return dev_err_probe(chip->dev, -ENXIO,
++				     "missing interrupt\n");
+ 
+ 	chip->tcpc_dev.fwnode = fusb302_fwnode_get(dev);
+ 	if (IS_ERR(chip->tcpc_dev.fwnode)) {
+@@ -1891,7 +1870,7 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret = devm_request_threaded_irq(dev, chip->gpio_int_n_irq, NULL,
++	ret = devm_request_threaded_irq(dev, chip->irq, NULL,
+ 					fusb302_irq_intn,
+ 					IRQF_ONESHOT | IRQF_TRIGGER_LOW,
+ 					"fsc_interrupt_int_n", chip);
+@@ -1908,7 +1887,7 @@ static int fusb302_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	return devm_pm_set_wake_irq(chip->dev, chip->gpio_int_n_irq);
++	return devm_pm_set_wake_irq(chip->dev, chip->irq);
+ }
+ 
+ static int fusb302_pm_suspend(struct device *dev)
+-- 
+Armbian
+
