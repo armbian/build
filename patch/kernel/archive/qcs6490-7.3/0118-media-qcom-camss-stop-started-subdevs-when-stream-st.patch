@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Fri, 20 Nov 2026 11:09:37 +0100
+Subject: media: qcom: camss: stop started subdevs when stream start fails
+
+video_start_streaming() calls s_stream(1) on each subdev from the video
+node up to the sensor. When one of them fails, the error path stops the
+media pipeline but leaves the subdevs that already started streaming,
+so the next start sends them s_stream(1) again without a stop. Walk the
+pipeline again and call s_stream(0) on every subdev before the failed one.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/platform/qcom/camss/camss-video.c | 24 +++++++++-
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -253,7 +253,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
+-	struct media_entity *entity;
++	struct media_entity *entity, *failed;
+ 	struct media_pad *pad;
+ 	struct v4l2_subdev *subdev;
+ 	int ret;
+@@ -283,11 +283,31 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 
+ 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
+ 		if (ret < 0 && ret != -ENOIOCTLCMD)
+-			goto error;
++			goto error_stop;
+ 	}
+ 
+ 	return 0;
+ 
++error_stop:
++	failed = entity;
++	entity = &vdev->entity;
++	while (1) {
++		pad = &entity->pads[0];
++		if (!(pad->flags & MEDIA_PAD_FL_SINK))
++			break;
++
++		pad = media_pad_remote_pad_first(pad);
++		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
++			break;
++
++		entity = pad->entity;
++		if (entity == failed)
++			break;
++
++		subdev = media_entity_to_v4l2_subdev(entity);
++		v4l2_subdev_call(subdev, video, s_stream, 0);
++	}
++
+ error:
+ 	video_device_pipeline_stop(vdev);
+ 
+-- 
+Armbian
+
