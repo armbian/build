@@ -49,6 +49,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3399-w1-gpio.dtbo \
 	rockchip-rk3566-sata2.dtbo \
 	rockchip-rk3566-i2c2-m1.dtbo \
+	rockchip-rk3566-opp-2ghz.dtbo \
 	rockchip-rk3566-eltay-rm66-pdm.dtbo \
 	rockchip-rk3566-eltay-rm66-pocketterm35-touch-5d.dtbo \
 	rockchip-rk3566-i2c3-m0.dtbo \
