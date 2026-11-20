@@ -91,12 +91,14 @@ function prepare_partitions() {
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=256 # MiB
+	# One arm64 kernel in /boot is about 270 MiB: Image, initrd and uInitrd, and
+	# the DTBs of all vendors. A kernel upgrade keeps two kernels for a moment.
+	DEFAULT_BOOTSIZE=1024 # MiB
 	# FAT32 /boot has no symlinks, so the kernel package copies the image into
 	# place rather than linking it: /boot has to hold both vmlinuz-<ver> and the
-	# copy u-boot boots. 256 MiB does not fit that for two installed branches on
+	# copy u-boot boots. 512 MiB does not fit that for two installed branches on
 	# arm64, which is what leaves a kernel package stuck in iF.
-	DEFAULT_BOOTSIZE_FAT=512 # MiB
+	DEFAULT_BOOTSIZE_FAT=1024 # MiB
 	SECTOR_SIZE=${SECTOR_SIZE:-512}
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
