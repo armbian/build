@@ -49,6 +49,14 @@ write_uboot_platform() {
 	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 conv=fsync bs=1024 seek=8
 }
 
+# The BROM loads the same eGON image from SPI NOR offset 0
+if [[ "${BOOT_SUPPORT_SPI}" == "yes" ]]; then
+	write_uboot_platform_mtd() {
+		# armbian-install passes the mtdblock device, flashcp needs the mtd char device
+		flashcp -v -p "$1/u-boot-sunxi-with-spl.bin" "${2/mtdblock/mtd}"
+	}
+fi
+
 setup_write_uboot_platform() {
 	local tmp part dev
 	if grep -q "ubootpart" /proc/cmdline; then
