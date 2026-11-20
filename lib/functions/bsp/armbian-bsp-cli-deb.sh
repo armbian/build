@@ -472,6 +472,7 @@ function board_side_bsp_cli_postrm() { # not run here
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
 		systemctl disable armbian-live-patch.service > /dev/null 2>&1
+		update-alternatives --remove newt-palette /etc/newt/palette.armbian > /dev/null 2>&1 || true
 	fi
 }
 
@@ -489,6 +490,9 @@ function board_side_bsp_cli_postinst_base() {
 	if [[ -n "$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]]; then
 		sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
 	fi
+
+	# libnewt before 0.52.25 (bookworm, noble) reads /etc/newt/palette. Put Armbian colors above Ubuntu magenta (50).
+	update-alternatives --install /etc/newt/palette newt-palette /etc/newt/palette.armbian 60 > /dev/null 2>&1 || true
 
 	# fix boot delay "waiting for suspend/resume device"
 	if [[ -f "/etc/initramfs-tools/initramfs.conf" ]]; then

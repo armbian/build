@@ -2,7 +2,7 @@
 BOARD_NAME="Taishan Pi 3M"
 BOARD_VENDOR="lckfb"
 BOARDFAMILY="rk35xx"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="gahingwoo"
 INTRODUCED="2026"
 BOOTCONFIG="lckfb-tspi-3m-rk3576_defconfig"
 KERNEL_TARGET="vendor,edge"

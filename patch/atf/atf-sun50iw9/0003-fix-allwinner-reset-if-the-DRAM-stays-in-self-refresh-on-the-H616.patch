@@ -1,0 +1,122 @@
+From 7fc25bf79be447a2523823b5ae82128463ac7fce Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 19 Nov 2026 11:30:16 +0000
+Subject: [PATCH] fix(allwinner): reset if the DRAM stays in self-refresh on
+ the H616
+
+If the DRAM did not leave self-refresh after a wakeup, the SRAM routine
+still wrote its report to DRAM and jumped to BL31 in DRAM. Reset the
+SoC through the watchdog instead, without touching DRAM. Restart the
+watchdog as well, so that it also fires when the OS left it running.
+
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ plat/allwinner/common/sunxi_native_suspend.c |  9 +-----
+ plat/allwinner/common/sunxi_standby_sram.S   | 34 ++++++++++++++------
+ 2 files changed, 26 insertions(+), 17 deletions(-)
+
+diff --git a/plat/allwinner/common/sunxi_native_suspend.c b/plat/allwinner/common/sunxi_native_suspend.c
+index e5b8b0612..e3e199070 100644
+--- a/plat/allwinner/common/sunxi_native_suspend.c
++++ b/plat/allwinner/common/sunxi_native_suspend.c
+@@ -28,9 +28,7 @@
+ #define STANDBY_POLL_LIMIT		(20U * 24000U)
+ 
+ #define STANDBY_RESULT_SR_ENTRY_TIMEOUT	BIT(0)
+-#define STANDBY_RESULT_SR_EXIT_TIMEOUT	BIT(1)
+ #define STANDBY_RESULT_SW_ENTRY_TIMEOUT	BIT(2)
+-#define STANDBY_RESULT_SW_EXIT_TIMEOUT	BIT(3)
+ #define STANDBY_RESULT_PLL_LOCK_TIMEOUT	BIT(4)
+ #define STANDBY_RESULT_VALID		BIT(31)
+ 
+@@ -38,7 +36,7 @@
+ struct sunxi_standby_report {
+ 	uint32_t result;
+ 	uint32_t statr_entry;	/* STATR: self-refresh reached / entry poll gave up */
+-	uint32_t statr_exit;	/* STATR: self-refresh left / exit poll gave up */
++	uint32_t statr_exit;	/* STATR: self-refresh left */
+ 	uint32_t pwrctl;	/* PWRCTL read back after the self-refresh request */
+ };
+ 
+@@ -108,11 +106,6 @@ void sunxi_native_system_suspend_finish(void)
+ 		     standby_report.statr_entry, standby_report.pwrctl,
+ 		     (result & STANDBY_RESULT_SW_ENTRY_TIMEOUT) != 0U ?
+ 		     ", no SWSTAT ack" : "");
+-	} else if ((result & STANDBY_RESULT_SR_EXIT_TIMEOUT) != 0U) {
+-		WARN("PSCI: DRAM did not leave self-refresh (STATR %x%s)\n",
+-		     standby_report.statr_exit,
+-		     (result & STANDBY_RESULT_SW_EXIT_TIMEOUT) != 0U ?
+-		     ", no SWSTAT ack" : "");
+ 	} else {
+ 		INFO("PSCI: system resumed, DRAM was in self-refresh\n");
+ 	}
+diff --git a/plat/allwinner/common/sunxi_standby_sram.S b/plat/allwinner/common/sunxi_standby_sram.S
+index 76af8b68d..9436f5b65 100644
+--- a/plat/allwinner/common/sunxi_standby_sram.S
++++ b/plat/allwinner/common/sunxi_standby_sram.S
+@@ -29,6 +29,12 @@
+ #define MCTL_COM_MAER1			0x024
+ #define MCTL_COM_MAER2			0x028
+ 
++/* Watchdog registers */
++#define WDOG_CTRL			0x10
++#define WDOG_CTRL_RESTART		((0xa57 << 1) | 1)
++#define WDOG_CFG			0x14
++#define WDOG_MODE			0x18
++
+ /* PLL_CPUX control register */
+ #define PLL_CPUX_ENABLE_BIT		31
+ #define PLL_CPUX_LOCK_ENABLE		(1 << 29)
+@@ -75,13 +81,12 @@ endfunc sunxi_standby_jump
+  * x3: time limit in counter ticks for each wait on the DRAM controller
+  *     and for the PLL lock (0: do not touch the DRAM controller at all)
+  * x4: address of the report (struct sunxi_standby_report, 4 x uint32_t),
+- *     written once DRAM is back: result (bit 31 valid, bit 0/1 entering/
+- *     leaving self-refresh timed out, bit 2/3 the SWCTL handshake timed out
+- *     on entry/exit, bit 4 PLL_CPUX did not lock, bits 15:8 / 23:16 the low
+- *     byte of the last STATR value seen by a timed-out poll), STATR when
++ *     written once DRAM is back: result (bit 31 valid, bit 0 entering
++ *     self-refresh timed out, bit 2/3 the SWCTL handshake timed out on
++ *     entry/exit, bit 4 PLL_CPUX did not lock, bits 15:8 the low byte of the
++ *     last STATR value seen by the timed-out entry poll), STATR when
+  *     self-refresh was reached (or the entry poll gave up), STATR when it
+- *     was left (or the exit poll gave up), and PWRCTL as read back after the
+- *     self-refresh request.
++ *     was left, and PWRCTL as read back after the self-refresh request.
+  * w5: PLL_CPUX control register value to restore (PLL not restarted if its
+  *     enable bit is clear)
+  * w6: CPUX_AXI_CFG value to restore (CPU clock source and dividers)
+@@ -93,6 +98,11 @@ endfunc sunxi_standby_jump
+  * MBUS master enables in MC_COM) are involved: the PHY keeps its clocks, so
+  * nothing there needs restoring on the way out.
+  *
++ * If the DRAM does not enter self-refresh it stays in normal operation and
++ * the routine carries on. If it does not leave self-refresh, nothing in DRAM
++ * can be used, BL31 included, so the routine resets the SoC through the
++ * watchdog.
++ *
+  * After the wakeup, PLL_CPUX is restarted at once, so that it locks while
+  * the DRAM leaves self-refresh, and the CPU is switched back to it before
+  * entering BL31. If the PLL does not lock in time, the CPU stays on the
+@@ -181,9 +191,15 @@ sunxi_standby_sram_start:
+ 	sub	x14, x14, x13
+ 	cmp	x14, x3
+ 	b.lo	3b
+-	orr	w10, w10, #2			/* leaving self-refresh timed out */
+-	and	w12, w16, #0xff
+-	orr	w10, w10, w12, lsl #16		/* last STATR seen */
++
++	/* DRAM is still in self-refresh: reset the SoC, touching only MMIO. */
++	mov_imm	x11, SUNXI_R_WDOG_BASE
++	mov	w12, #1
++	str	w12, [x11, #WDOG_CFG]		/* reset the whole system */
++	str	w12, [x11, #WDOG_MODE]		/* after 0.5 s */
++	mov	w12, #WDOG_CTRL_RESTART
++	str	w12, [x11, #WDOG_CTRL]
++31:	b	31b
+ 
+ 4:	str	w5, [x1, #MCTL_COM_MAER0]
+ 	str	w6, [x1, #MCTL_COM_MAER1]
+-- 
+2.55.0
+

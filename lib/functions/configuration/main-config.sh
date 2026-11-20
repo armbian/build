@@ -330,6 +330,7 @@ function do_main_configuration() {
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $PLYMOUTH ]] && PLYMOUTH="yes"
+	[[ -z $BOOT_LOGO ]] && BOOT_LOGO="desktop" # Plymouth logo on desktop images; "yes" also on minimal, "no" never
 	[[ -z $AUFS ]] && AUFS="yes"
 	[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 	[[ -z $EXTRA_BSP_NAME ]] && EXTRA_BSP_NAME=""

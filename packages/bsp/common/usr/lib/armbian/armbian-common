@@ -9,6 +9,8 @@
 # Functions:
 #
 # atomic_write
+# armbian_firstlogin_preset_unattended
+# armbian_firstlogin_prepare_preset
 # show_motd_warning
 # generate_random_mac
 # set_fixed_mac
@@ -48,6 +50,48 @@ atomic_write() {
 	sync -f "${dest}" 2>/dev/null || sync || return
 	sync -f "$(dirname "${dest}")" 2>/dev/null || sync
 }
+
+# True when all required account credentials are present; other first-login
+# questions take their defaults during a preset run.
+armbian_firstlogin_preset_unattended() {
+	[[ -n "${PRESET_ROOT_PASSWORD}" && -n "${PRESET_USER_NAME}" && -n "${PRESET_USER_PASSWORD}" ]]
+}
+
+# Resolve a remote first-login preset once, before a gadget getty decides
+# whether it must wait for a terminal. Cache the exact downloaded bytes so
+# agetty and firstlogin cannot make different decisions if the URL changes.
+# With no remote preset, only check for the marker here. Its existing
+# consumers have historically evaluated partial or non-zero-exit files too.
+armbian_firstlogin_prepare_preset() (
+	umask 077
+	marker=/root/.not_logged_in_yet
+	cache=/run/armbian-firstlogin-preset.conf
+	url_file=/run/armbian-firstlogin-preset.url
+
+	[[ -f "${marker}" ]] || exit 1
+	# shellcheck disable=SC1090 # preset file is chosen by the caller
+	. "${marker}" 2>/dev/null
+	[[ -n "${PRESET_CONFIGURATION}" ]] || {
+		rm -f "${cache}" "${url_file}"
+		exit 0
+	}
+
+	[[ -s "${cache}" && -s "${url_file}" && "$(< "${url_file}")" == "${PRESET_CONFIGURATION}" ]] && exit 0
+
+	(umask 077; : > "${cache}.tmp" && : > "${url_file}.tmp") || exit 1
+	if ! { curl --fail --location --retry 5 --connect-timeout 3 --max-time 60 \
+		"${PRESET_CONFIGURATION}" > "${cache}.tmp" 2>/dev/null &&
+		bash -n "${cache}.tmp" 2>/dev/null; }; then
+		rm -f "${cache}.tmp" "${url_file}.tmp"
+		exit 1
+	fi
+	printf '%s\n' "${PRESET_CONFIGURATION}" > "${url_file}.tmp" || {
+		rm -f "${cache}.tmp" "${url_file}.tmp"
+		exit 1
+	}
+	mv -f "${cache}.tmp" "${cache}" || exit 1
+	mv -f "${url_file}.tmp" "${url_file}"
+)
 
 # Generate a random MAC address
 generate_random_mac ()
