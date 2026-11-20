@@ -68,6 +68,7 @@ function post_family_tweaks_bsp__add_grub_with_dtb_kernel_hook() {
 		declare tmp_dtb_file="${target_dtb_file}.tmp"
 		declare -a overlay_prefixes=() overlays=() user_overlays=() dtbos=()
 		declare name prefix found
+		declare -i merge_failed=0
 		trap 'rm -f "${tmp_dtb_file}"' EXIT
 
 		function armbian_env_value() {
@@ -110,15 +111,21 @@ function post_family_tweaks_bsp__add_grub_with_dtb_kernel_hook() {
 		if [[ ${#dtbos[@]} -gt 0 ]]; then
 			if ! command -v fdtoverlay > /dev/null; then
 				echo "Armbian: fdtoverlay not found, install device-tree-compiler; using the DTB without overlays" >&2
+				merge_failed=1
 			elif fdtoverlay -i "${source_dtb_file}" -o "${tmp_dtb_file}" "${dtbos[@]}"; then
 				echo "Armbian: applied overlays: ${dtbos[*]##*/}" >&2
 			else
 				echo "Armbian: applying the overlays failed; using the DTB without overlays" >&2
 				cp "${source_dtb_file}" "${tmp_dtb_file}"
+				merge_failed=1
 			fi
 		fi
 		mv "${tmp_dtb_file}" "${target_dtb_file}"
 		echo "Armbian: installing DTB for GRUB: done." >&2
+		# Only the overlay helper gets a failed merge as an error, package installs keep going
+		if [[ ${merge_failed} -ne 0 && -n "${ARMBIAN_GRUB_DTB_STRICT}" ]]; then
+			exit 2
+		fi
 	EOD
 	run_host_command_logged chmod -v +x "${destination}"/etc/kernel/postinst.d/armbian-grub-with-dtb
 }
@@ -136,7 +143,7 @@ function post_family_tweaks_bsp__add_grub_with_dtb_overlay_watch() {
 			stamp="$(stat -c '%y %s' "${env_file}" 2> /dev/null)"
 			rc=0
 			while read -r kver; do
-				/etc/kernel/postinst.d/armbian-grub-with-dtb "${kver}" || rc=1
+				ARMBIAN_GRUB_DTB_STRICT=1 /etc/kernel/postinst.d/armbian-grub-with-dtb "${kver}" || rc=1
 			done < <(linux-version list)
 			[[ "${stamp}" == "$(stat -c '%y %s' "${env_file}" 2> /dev/null)" ]] && break
 			echo "Armbian: ${env_file} changed during pass ${pass}, rebuilding again" >&2
