@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Fri, 20 Nov 2026 00:00:00 +0000
+Subject: irqchip/meson-gpio: Restore the channel setup after hibernation
+
+The GPIO interrupt mux takes the first free channel when an interrupt is
+mapped, so the channel a pad gets depends on probe order. A hibernation
+image is restored by a freshly booted kernel that maps the interrupts in
+its own order, and the controller may lose power while the image is on
+disk. The restored kernel keeps its channel table, but the hardware
+routes the pads as the boot kernel set them up.
+
+On ODROID-HC4, after a power cut during hibernation, PIN_03_SEL changed
+from 0x54521a3b to 0x001a523b: the PHY and RTC channels swapped, the
+PHY interrupt ran the pcf8563 handler and the link was never reported.
+This happened on 7 of 11 restores.
+
+Save the register block in syscore suspend and write it back in syscore
+resume. create_image() calls them around the snapshot, so the image's
+own setup comes back.
+
+Tested on ODROID-HC4: 10 restores after a power cut, the registers and
+the network came back every time.
+
+Link: https://lore.kernel.org/r/20261120-meson-gpio-hibernate-v1-1-462fdd55810a@iav.lv
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+diff --git a/drivers/irqchip/irq-meson-gpio.c b/drivers/irqchip/irq-meson-gpio.c
+--- a/drivers/irqchip/irq-meson-gpio.c
++++ b/drivers/irqchip/irq-meson-gpio.c
+@@ -15,6 +15,7 @@
+ #include <linux/irqchip.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
++#include <linux/syscore_ops.h>
+ 
+ #define MAX_NUM_CHANNEL 64
+ #define MAX_INPUT_MUX 256
+@@ -245,6 +246,9 @@
+ 	u32 channel_irqs[MAX_NUM_CHANNEL];
+ 	DECLARE_BITMAP(channel_map, MAX_NUM_CHANNEL);
+ 	raw_spinlock_t lock;
++	struct syscore syscore;
++	unsigned int nr_regs;
++	u32 *saved_regs;
+ };
+ 
+ static void meson_gpio_irq_update_bits(struct meson_gpio_irq_controller *ctl,
+@@ -633,6 +637,35 @@
+ 	.translate	= meson_gpio_irq_domain_translate,
+ };
+ 
++/*
++ * The kernel that restores a hibernation image routes the channels in its
++ * own order; write back the image's setup.
++ */
++static int meson_gpio_irq_suspend(void *data)
++{
++	struct meson_gpio_irq_controller *ctl = data;
++	unsigned int i;
++
++	for (i = 0; i < ctl->nr_regs; i++)
++		ctl->saved_regs[i] = readl_relaxed(ctl->base + 4 * i);
++
++	return 0;
++}
++
++static void meson_gpio_irq_resume(void *data)
++{
++	struct meson_gpio_irq_controller *ctl = data;
++	unsigned int i;
++
++	for (i = 0; i < ctl->nr_regs; i++)
++		writel_relaxed(ctl->saved_regs[i], ctl->base + 4 * i);
++}
++
++static const struct syscore_ops meson_gpio_irq_syscore_ops = {
++	.suspend	= meson_gpio_irq_suspend,
++	.resume		= meson_gpio_irq_resume,
++};
++
+ static int meson_gpio_irq_parse_dt(struct device_node *node, struct meson_gpio_irq_controller *ctl)
+ {
+ 	const struct of_device_id *match;
+@@ -664,6 +697,7 @@
+ 	struct device_node *node = pdev->dev.of_node;
+ 	struct irq_domain *domain, *parent_domain;
+ 	struct meson_gpio_irq_controller *ctl;
++	struct resource res;
+ 	int ret;
+ 
+ 	if (!parent) {
+@@ -683,10 +717,21 @@
+ 
+ 	raw_spin_lock_init(&ctl->lock);
+ 
++	ret = of_address_to_resource(node, 0, &res);
++	if (ret)
++		goto free_ctl;
++
++	ctl->nr_regs = resource_size(&res) / 4;
++	ctl->saved_regs = kzalloc_objs(*ctl->saved_regs, ctl->nr_regs);
++	if (!ctl->saved_regs) {
++		ret = -ENOMEM;
++		goto free_ctl;
++	}
++
+ 	ctl->base = of_iomap(node, 0);
+ 	if (!ctl->base) {
+ 		ret = -ENOMEM;
+-		goto free_ctl;
++		goto free_saved_regs;
+ 	}
+ 
+ 	ret = meson_gpio_irq_parse_dt(node, ctl);
+@@ -704,6 +749,10 @@
+ 		goto free_channel_irqs;
+ 	}
+ 
++	ctl->syscore.ops = &meson_gpio_irq_syscore_ops;
++	ctl->syscore.data = ctl;
++	register_syscore(&ctl->syscore);
++
+ 	pr_info("%d to %d gpio interrupt mux initialized\n",
+ 		ctl->params->nr_hwirq, ctl->params->nr_channels);
+ 
+@@ -711,6 +760,8 @@
+ 
+ free_channel_irqs:
+ 	iounmap(ctl->base);
++free_saved_regs:
++	kfree(ctl->saved_regs);
+ free_ctl:
+ 	kfree(ctl);
+ 
