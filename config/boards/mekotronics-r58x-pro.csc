@@ -32,6 +32,9 @@ fi
 display_alert "$BOARD" "applying mainline configuration for $BOARD / $BRANCH" "info"
 declare -g BOOT_SCENARIO="tpl-blob-atf-mainline" # Mainline ATF
 
+# The segment LCD is not in the (upstream) board DT; it's an Armbian overlay. The vendor DT has it inline.
+[[ "${BRANCH}" != vendor* ]] && declare -g DEFAULT_OVERLAYS="mekotronics-r58x-pro-lcd"
+
 function post_family_config__meko_r58x_pro_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline u-boot overrides for $BOARD / $BRANCH" "info"
 
@@ -137,10 +140,10 @@ function post_family_tweaks_bsp__meko_r58x_pro_lcd_clock_add_systemd_service() {
 	cat <<- 'LCD_CLOCK_SYSTEMD_SERVICE' > "$destination"/lib/systemd/system/lcd-clock.service
 		[Unit]
 		Description=Update segment LCD clock display
-		ConditionPathExists=/sys/devices/platform/lcd_vk2c21/display
+		ConditionPathExistsGlob=/sys/bus/platform/drivers/lcd-vk2c21/*/display
 		[Service]
 		Type=oneshot
-		ExecStart=bash -c 'echo " $(date +%%H)-$(date +%%M) " > /sys/devices/platform/lcd_vk2c21/display'
+		ExecStart=bash -c 'for d in /sys/bus/platform/drivers/lcd-vk2c21/*/display; do echo " $(date +%%H)-$(date +%%M) " > "$d"; done'
 	LCD_CLOCK_SYSTEMD_SERVICE
 
 	cat <<- 'LCD_CLOCK_SYSTEMD_TIMER' > "$destination"/lib/systemd/system/lcd-clock.timer
