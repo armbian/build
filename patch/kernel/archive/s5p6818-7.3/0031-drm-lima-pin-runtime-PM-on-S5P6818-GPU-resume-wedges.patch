@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Fri, 11 Sep 2026 15:30:00 +0200
+Subject: drm/lima: pin runtime PM on S5P6818 (GPU resume wedges the SoC)
+
+The Mali-400 comes up fine from the bootloader power-up, but the first
+runtime-PM suspend/resume cycle hard-wedges the whole SoC: lima idles the
+GPU (200 ms autosuspend), and the reset-deassert + GPU re-init on the next
+resume hangs the interconnect (LED heartbeat stops = total wedge). It is
+reproducible with a bare `echo on > .../c0070000.gpu/power/control`, and it
+is what makes any compositor (GNOME/mutter idles->suspends->resumes the GPU
+every frame) hang. The clock is not the cause - the VR clock reads enabled
+across the wedge - so this is the boot blob's GPU clock/reset handoff not
+being re-entrant, which a from-scratch mainline bring-up cannot fix from the
+kernel side.
+
+Pin a runtime-PM reference on this SoC so the GPU stays in its known-good
+boot state and never suspend/resume-cycles. The GPU clock stays on and Lima
+GLES2 keeps working; only runtime power-gating of the GPU is given up. Gated
+on the S5P6818 machine compatible so other Lima platforms are unaffected.
+
+System sleep and hibernation force the same cycle despite the reference.
+A .prepare callback refuses them with -EBUSY on S5P6818. The sleep request
+fails and the board keeps running.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/lima/lima_drv.c | 27 ++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/gpu/drm/lima/lima_drv.c b/drivers/gpu/drm/lima/lima_drv.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_drv.c
++++ b/drivers/gpu/drm/lima/lima_drv.c
+@@ -420,6 +420,18 @@ static int lima_pdev_probe(struct platform_device *pdev)
+ 	pm_runtime_use_autosuspend(ldev->dev);
+ 	pm_runtime_enable(ldev->dev);
+ 
++	/*
++	 * S5P6818: a runtime-PM suspend/resume cycle hard-wedges the SoC (the
++	 * reset-deassert + GPU re-init on resume hangs the interconnect; the boot
++	 * blob's GPU clock/reset handoff is not re-entrant, and forcing a resume
++	 * via power/control=on reproduces the wedge every time). Pin a runtime-PM
++	 * reference on this SoC so the GPU stays in its known-good boot state and
++	 * never suspend/resume-cycles - the clock stays on and GLES2 keeps
++	 * working, only runtime power-gating of the GPU is given up.
++	 */
++	if (of_machine_is_compatible("nexell,s5p6818"))
++		pm_runtime_get_sync(ldev->dev);
++
+ 	/*
+ 	 * Register the DRM device with the core and the connectors with
+ 	 * sysfs.
+@@ -480,7 +492,22 @@ static const struct of_device_id dt_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+ 
++/*
++ * S5P6818: system sleep and hibernation force the same GPU suspend/resume
++ * cycle that wedges the SoC, despite the pinned runtime-PM reference.
++ * Refuse them so the sleep request fails instead of hanging the board.
++ */
++static int lima_pm_prepare(struct device *dev)
++{
++	if (of_machine_is_compatible("nexell,s5p6818")) {
++		dev_warn(dev, "system sleep is not supported on S5P6818\n");
++		return -EBUSY;
++	}
++	return 0;
++}
++
+ static const struct dev_pm_ops lima_pm_ops = {
++	.prepare = lima_pm_prepare,
+ 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	SET_RUNTIME_PM_OPS(lima_device_suspend, lima_device_resume, NULL)
+ };
+-- 
+Armbian
+
