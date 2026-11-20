@@ -331,12 +331,16 @@ def _exclude_rule_matches(rule: dict, invocation: dict) -> bool:
 		else:
 			return False
 		patterns = wanted if isinstance(wanted, list) else [wanted]
-		if not any(fnmatch.fnmatchcase(_exclude_str(actual), _exclude_str(pattern)) for pattern in patterns):
+		# A list-valued key (e.g. BOARD_MAINTAINERS) matches when any member matches.
+		values = actual if isinstance(actual, list) else [actual]
+		if not any(fnmatch.fnmatchcase(_exclude_str(value), _exclude_str(pattern)) for value in values for pattern in patterns):
 			return False
 	return True
 
 
-exclude_rules = targets.get("exclude") or []
+exclude_rules = targets.get("exclude", [])
+if exclude_rules is None:  # "exclude:" with no entries
+	exclude_rules = []
 if not isinstance(exclude_rules, list) or not all(isinstance(rule, dict) and rule for rule in exclude_rules):
 	log.error("Invalid 'exclude' in targets file: it must be a list of non-empty mappings")
 	sys.exit(1)
