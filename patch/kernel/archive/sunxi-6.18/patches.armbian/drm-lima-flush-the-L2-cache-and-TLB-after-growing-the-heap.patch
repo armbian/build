@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 1 Nov 2026 08:00:22 +0100
+Subject: drm/lima: flush the L2 cache and TLB after growing the heap
+
+On a PLBU out-of-memory interrupt, lima_sched_recover_work() flushes the
+L2 cache and zaps the MMU TLB, and only then lima_gp_task_recover() grows
+the heap (mapping new pages) and restarts the PLBU allocation. The Mali
+MMU fetches page table entries through the L2 cache. Any table walk in
+between (most likely by a PP core rendering the previous frame, which
+shares the L2 and the page table lines) can leave the not yet valid
+entries of the new heap pages cached, and the restarted PLBU then faults
+on a page whose PTE is valid in memory:
+
+  lima 1c40000.gpu: gpmmu page fault at 0x45c9000 from bus id 0 of type read
+
+Here the tile heap is mapped at 0x45c1000 and has just grown from 32 KiB
+to 64 KiB: the fault hits the first new page, and the PTE read by the CPU
+at fault time is valid. The fault always came with the second GP job of
+a new GL context, as the first PP job of that context completed.
+
+Flush the caches after the heap has been grown, right before the PLBU
+allocation is updated. ARM's Mali-400 kernel driver (r3p0,
+mali_group_resume_gp_with_new_heap()) also invalidates the L2 and zaps
+the TLB right before it resumes the GP with the new heap.
+
+Tested on an Allwinner A10 (Mali-400 MP1) with a three-scene glmark2
+sequence and the other patches of this series applied: with
+lima.heap_init_nr_pages=1 (many heap grows per frame) the fault hit 5 of
+20 runs before this change and 0 of 40 runs after it. With the default
+heap size it showed up after 5 and 28 runs in two sessions before, and
+0 of 80 runs after (indicative only at that rate). Also running on an
+Allwinner A20 (Mali-400 MP2), where the fault is rarer.
+
+Fixes: 2081e8dcf1ee ("drm/lima: recover task by enlarging heap buffer")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/lima/lima_gp.c    |  6 ++++++
+ drivers/gpu/drm/lima/lima_sched.c | 10 +++++++---
+ drivers/gpu/drm/lima/lima_sched.h |  1 +
+ 3 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/lima/lima_gp.c b/drivers/gpu/drm/lima/lima_gp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_gp.c
++++ b/drivers/gpu/drm/lima/lima_gp.c
+@@ -264,6 +264,12 @@ static int lima_gp_task_recover(struct lima_sched_pipe *pipe)
+ 			return ret;
+ 	}
+ 
++	/*
++	 * The MMU walks the page tables through the L2 cache: drop stale
++	 * entries of the new heap pages only after they have been mapped.
++	 */
++	lima_sched_pipe_flush_caches(pipe);
++
+ 	gp_write(LIMA_GP_INT_MASK, LIMA_GP_IRQ_MASK_USED);
+ 	/* Resume from where we stopped, i.e. new start is old end */
+ 	gp_write(LIMA_GP_PLBU_ALLOC_START_ADDR,
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -510,10 +510,8 @@ static const struct drm_sched_backend_ops lima_sched_ops = {
+ 	.free_job = lima_sched_free_job,
+ };
+ 
+-static void lima_sched_recover_work(struct work_struct *work)
++void lima_sched_pipe_flush_caches(struct lima_sched_pipe *pipe)
+ {
+-	struct lima_sched_pipe *pipe =
+-		container_of(work, struct lima_sched_pipe, recover_work);
+ 	int i;
+ 
+ 	for (i = 0; i < pipe->num_l2_cache; i++)
+@@ -525,6 +523,12 @@ static void lima_sched_recover_work(struct work_struct *work)
+ 		for (i = 0; i < pipe->num_mmu; i++)
+ 			lima_mmu_flush_tlb(pipe->mmu[i]);
+ 	}
++}
++
++static void lima_sched_recover_work(struct work_struct *work)
++{
++	struct lima_sched_pipe *pipe =
++		container_of(work, struct lima_sched_pipe, recover_work);
+ 
+ 	if (pipe->task_recover(pipe))
+ 		drm_sched_fault(&pipe->base);
+diff --git a/drivers/gpu/drm/lima/lima_sched.h b/drivers/gpu/drm/lima/lima_sched.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.h
++++ b/drivers/gpu/drm/lima/lima_sched.h
+@@ -106,6 +106,7 @@ struct dma_fence *lima_sched_context_queue_task(struct lima_sched_task *task);
+ int lima_sched_pipe_init(struct lima_sched_pipe *pipe, const char *name);
+ void lima_sched_pipe_fini(struct lima_sched_pipe *pipe);
+ void lima_sched_pipe_task_done(struct lima_sched_pipe *pipe);
++void lima_sched_pipe_flush_caches(struct lima_sched_pipe *pipe);
+ 
+ static inline void lima_sched_pipe_mmu_error(struct lima_sched_pipe *pipe)
+ {
+-- 
+Armbian
