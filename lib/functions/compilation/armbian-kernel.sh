@@ -516,6 +516,15 @@ function armbian_kernel_config__enable_various_filesystems() {
 	opts_m+=("EROFS_FS")           # Enhanced Read-Only FS (useful for Docker images)
 }
 
+# Enables dm-crypt for an encrypted root (CRYPTROOT_ENABLE, armbian-install).
+# BLK_DEV_DM is built-in: DM_INIT and a built-in DM_VERITY need it, and =m would downgrade them.
+function armbian_kernel_config__enable_dm_crypt() {
+	opts_y+=("MD")          # Parent menu of the device mapper
+	opts_y+=("BLK_DEV_DM")  # Device mapper core
+	opts_m+=("DM_CRYPT")    # dm-crypt target (cryptsetup, LUKS)
+	opts_m+=("CRYPTO_XTS")  # aes-xts-plain64, the LUKS default cipher mode
+}
+
 # Enables SMB/CIFS file sharing as modules: the client and the ksmbd server.
 function armbian_kernel_config__enable_smb_cifs() {
 	opts_y+=("NETWORK_FILESYSTEMS") # Parent menu, off in some minimal configs
