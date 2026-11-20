@@ -1,0 +1,2763 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:34 +0100
+Subject: drm/bridge: synopsys: dw-dp: Register DP AUX on bridge attach
+
+Unregister the DP AUX device at the right spot as documented in the
+drm_dp_aux_register() function description. This helps that it is
+only accessed when the DRM device is ready and the bridge is powered
+and initialized (further fixes are required for that).
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-1-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 55 ++++++----
+ 1 file changed, 35 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1813,7 +1813,36 @@ static struct drm_bridge_state *dw_dp_bridge_atomic_duplicate_state(struct drm_b
+ 	return &state->base;
+ }
+ 
++static int dw_dp_bridge_attach(struct drm_bridge *bridge,
++			       struct drm_encoder *encoder,
++			       enum drm_bridge_attach_flags flags)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++	struct device *dev = dp->dev;
++	int ret;
++
++	dp->aux.dev = dev;
++	dp->aux.drm_dev = encoder->dev;
++	dp->aux.name = dev_name(dev);
++	dp->aux.transfer = dw_dp_aux_transfer;
++
++	ret = drm_dp_aux_register(&dp->aux);
++	if (ret)
++		dev_err(dev, "Aux register failed: %d\n", ret);
++
++	return ret;
++}
++
++static void dw_dp_bridge_detach(struct drm_bridge *bridge)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	drm_dp_aux_unregister(&dp->aux);
++}
++
+ static const struct drm_bridge_funcs dw_dp_bridge_funcs = {
++	.attach = dw_dp_bridge_attach,
++	.detach = dw_dp_bridge_detach,
+ 	.atomic_duplicate_state = dw_dp_bridge_atomic_duplicate_state,
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_create_state = drm_atomic_helper_bridge_create_state,
+@@ -2043,20 +2072,10 @@ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+-	dp->aux.dev = dev;
+-	dp->aux.drm_dev = encoder->dev;
+-	dp->aux.name = dev_name(dev);
+-	dp->aux.transfer = dw_dp_aux_transfer;
+-	ret = drm_dp_aux_register(&dp->aux);
+-	if (ret) {
+-		dev_err_probe(dev, ret, "Aux register failed\n");
+-		return ERR_PTR(ret);
+-	}
+-
+ 	ret = drm_bridge_attach(encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+ 	if (ret) {
+ 		dev_err_probe(dev, ret, "Failed to attach bridge\n");
+-		goto unregister_aux;
++		return ERR_PTR(ret);
+ 	}
+ 
+ 	dw_dp_init_hw(dp);
+@@ -2064,35 +2083,31 @@ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+ 	ret = phy_init(dp->phy);
+ 	if (ret) {
+ 		dev_err_probe(dev, ret, "phy init failed\n");
+-		goto unregister_aux;
++		return ERR_PTR(ret);
+ 	}
+ 
+ 	ret = devm_add_action_or_reset(dev, dw_dp_phy_exit, dp);
+ 	if (ret)
+-		goto unregister_aux;
++		return ERR_PTR(ret);
+ 
+ 	dp->irq = platform_get_irq(pdev, 0);
+ 	if (dp->irq < 0) {
+ 		ret = dp->irq;
+-		goto unregister_aux;
++		return ERR_PTR(ret);
+ 	}
+ 
+ 	ret = devm_request_threaded_irq(dev, dp->irq, NULL, dw_dp_irq,
+ 					IRQF_ONESHOT, dev_name(dev), dp);
+ 	if (ret)
+-		goto unregister_aux;
++		return ERR_PTR(ret);
+ 
+ 	return dp;
+-
+-unregister_aux:
+-	drm_dp_aux_unregister(&dp->aux);
+-	return ERR_PTR(ret);
+ }
+ EXPORT_SYMBOL_GPL(dw_dp_bind);
+ 
+ void dw_dp_unbind(struct dw_dp *dp)
+ {
+-	drm_dp_aux_unregister(&dp->aux);
++	/* nothing to do */
+ }
+ EXPORT_SYMBOL_GPL(dw_dp_unbind);
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:35 +0100
+Subject: drm/bridge: synopsys: dw-dp: Fix incorrect resource lifetimes in bind
+ callback
+
+Currently the Synopsys DesignWare DP controller driver's bind function
+requests lots of resources using device managed functions. These are
+free'd on driver removal instead of at unbind time. Fix this discrepancy
+by introducing a new probe helper function and moving over the whole
+bind function. This results in a fully functional DRM bridge once probe
+succeeded. The only thing still happening when the component is bound
+is the bridge attachment, which requires the encoder.
+
+The interrupt is kept disabled while the bridge is detached to ensure no
+spurious interrupts can arrive as the interrupt handler triggers a
+worker, which accesses the DRM device.
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Acked-by: Andy Yan <andy.yan@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-2-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c   | 69 +++++-----
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c | 53 ++++---
+ include/drm/bridge/dw_dp.h                |  5 +-
+ 3 files changed, 70 insertions(+), 57 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1827,16 +1827,22 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 	dp->aux.transfer = dw_dp_aux_transfer;
+ 
+ 	ret = drm_dp_aux_register(&dp->aux);
+-	if (ret)
++	if (ret) {
+ 		dev_err(dev, "Aux register failed: %d\n", ret);
++		return ret;
++	}
+ 
+-	return ret;
++	enable_irq(dp->irq);
++
++	return 0;
+ }
+ 
+ static void dw_dp_bridge_detach(struct drm_bridge *bridge)
+ {
+ 	struct dw_dp *dp = bridge_to_dp(bridge);
+ 
++	disable_irq(dp->irq);
++	cancel_work_sync(&dp->hpd_work);
+ 	drm_dp_aux_unregister(&dp->aux);
+ }
+ 
+@@ -1982,6 +1988,18 @@ static const struct regmap_config dw_dp_regmap_config = {
+ 	.rd_table = &dw_dp_readable_table,
+ };
+ 
++int dw_dp_bind(struct dw_dp *dp, struct drm_encoder *encoder)
++{
++	return drm_bridge_attach(encoder, &dp->bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
++}
++EXPORT_SYMBOL_GPL(dw_dp_bind);
++
++void dw_dp_unbind(struct dw_dp *dp)
++{
++	/* nothing to do as bridge is detached automatically */
++}
++EXPORT_SYMBOL_GPL(dw_dp_unbind);
++
+ static void dw_dp_phy_exit(void *data)
+ {
+ 	struct dw_dp *dp = data;
+@@ -1989,13 +2007,12 @@ static void dw_dp_phy_exit(void *data)
+ 	phy_exit(dp->phy);
+ }
+ 
+-struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+-			 const struct dw_dp_plat_data *plat_data)
++struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data)
+ {
+-	struct platform_device *pdev = to_platform_device(dev);
+-	struct dw_dp *dp;
++	struct device *dev = &pdev->dev;
+ 	struct drm_bridge *bridge;
+ 	void __iomem *res;
++	struct dw_dp *dp;
+ 	int ret;
+ 
+ 	dp = devm_drm_bridge_alloc(dev, struct dw_dp, bridge, &dw_dp_bridge_funcs);
+@@ -2004,9 +2021,8 @@ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+ 
+ 	dp->dev = dev;
+ 	dp->pixel_mode = plat_data->pixel_mode;
+-
+ 	dp->plat_data.max_link_rate = plat_data->max_link_rate;
+-	bridge = &dp->bridge;
++
+ 	mutex_init(&dp->irq_lock);
+ 	INIT_WORK(&dp->hpd_work, dw_dp_hpd_work);
+ 	init_completion(&dp->complete);
+@@ -2063,21 +2079,15 @@ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+ 		return ERR_CAST(dp->rstc);
+ 	}
+ 
+-	bridge->of_node = dev->of_node;
+-	bridge->ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID | DRM_BRIDGE_OP_HPD;
+-	bridge->type = DRM_MODE_CONNECTOR_DisplayPort;
+-	bridge->ycbcr_420_allowed = true;
++	dp->irq = platform_get_irq(pdev, 0);
++	if (dp->irq < 0)
++		return ERR_PTR(dp->irq);
+ 
+-	ret = devm_drm_bridge_add(dev, bridge);
++	ret = devm_request_threaded_irq(dev, dp->irq, NULL, dw_dp_irq,
++					IRQF_ONESHOT | IRQF_NO_AUTOEN, dev_name(dev), dp);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+-	ret = drm_bridge_attach(encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+-	if (ret) {
+-		dev_err_probe(dev, ret, "Failed to attach bridge\n");
+-		return ERR_PTR(ret);
+-	}
+-
+ 	dw_dp_init_hw(dp);
+ 
+ 	ret = phy_init(dp->phy);
+@@ -2090,26 +2100,19 @@ struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+-	dp->irq = platform_get_irq(pdev, 0);
+-	if (dp->irq < 0) {
+-		ret = dp->irq;
+-		return ERR_PTR(ret);
+-	}
++	bridge = &dp->bridge;
++	bridge->of_node = dev->of_node;
++	bridge->ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID | DRM_BRIDGE_OP_HPD;
++	bridge->type = DRM_MODE_CONNECTOR_DisplayPort;
++	bridge->ycbcr_420_allowed = true;
+ 
+-	ret = devm_request_threaded_irq(dev, dp->irq, NULL, dw_dp_irq,
+-					IRQF_ONESHOT, dev_name(dev), dp);
++	ret = devm_drm_bridge_add(dev, bridge);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+ 	return dp;
+ }
+-EXPORT_SYMBOL_GPL(dw_dp_bind);
+-
+-void dw_dp_unbind(struct dw_dp *dp)
+-{
+-	/* nothing to do */
+-}
+-EXPORT_SYMBOL_GPL(dw_dp_unbind);
++EXPORT_SYMBOL_GPL(dw_dp_probe);
+ 
+ MODULE_AUTHOR("Andy Yan <andyshrk@163.com>");
+ MODULE_DESCRIPTION("DW DP Core Library");
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -26,7 +26,7 @@
+ struct rockchip_dw_dp {
+ 	struct dw_dp *base;
+ 	struct device *dev;
+-	struct rockchip_encoder encoder;
++	struct rockchip_encoder *encoder;
+ };
+ 
+ static int dw_dp_encoder_atomic_check(struct drm_encoder *encoder,
+@@ -73,37 +73,28 @@ static const struct drm_encoder_helper_funcs dw_dp_encoder_helper_funcs = {
+ 
+ static int dw_dp_rockchip_bind(struct device *dev, struct device *master, void *data)
+ {
+-	struct platform_device *pdev = to_platform_device(dev);
+-	const struct dw_dp_plat_data *plat_data;
++	struct rockchip_dw_dp *dp = dev_get_drvdata(dev);
+ 	struct drm_device *drm_dev = data;
+-	struct rockchip_dw_dp *dp;
+ 	struct drm_encoder *encoder;
+ 	struct drm_connector *connector;
+ 	int ret;
+ 
+-	dp = drmm_kzalloc(drm_dev, sizeof(*dp), GFP_KERNEL);
+-	if (!dp)
++	dp->encoder = drmm_kzalloc(drm_dev, sizeof(*dp->encoder), GFP_KERNEL);
++	if (!dp->encoder)
+ 		return -ENOMEM;
+ 
+-	dp->dev = dev;
+-	platform_set_drvdata(pdev, dp);
+-
+-	plat_data = of_device_get_match_data(dev);
+-	if (!plat_data)
+-		return -ENODEV;
+-
+-	encoder = &dp->encoder.encoder;
++	encoder = &dp->encoder->encoder;
+ 	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm_dev, dev->of_node);
+-	rockchip_drm_encoder_set_crtc_endpoint_id(&dp->encoder, dev->of_node, 0, 0);
++	rockchip_drm_encoder_set_crtc_endpoint_id(dp->encoder, dev->of_node, 0, 0);
+ 
+ 	ret = drmm_encoder_init(drm_dev, encoder, NULL, DRM_MODE_ENCODER_TMDS, NULL);
+ 	if (ret)
+ 		return ret;
+ 	drm_encoder_helper_add(encoder, &dw_dp_encoder_helper_funcs);
+ 
+-	dp->base = dw_dp_bind(dev, encoder, plat_data);
+-	if (IS_ERR(dp->base))
+-		return PTR_ERR(dp->base);
++	ret = dw_dp_bind(dp->base, encoder);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to bind DW-DP bridge\n");
+ 
+ 	connector = drm_bridge_connector_init(drm_dev, encoder);
+ 	if (IS_ERR(connector)) {
+@@ -128,12 +119,30 @@ static const struct component_ops dw_dp_rockchip_component_ops = {
+ 	.unbind = dw_dp_rockchip_unbind,
+ };
+ 
+-static int dw_dp_probe(struct platform_device *pdev)
++static int dw_dp_rockchip_probe(struct platform_device *pdev)
+ {
++	const struct dw_dp_plat_data *plat_data;
++	struct device *dev = &pdev->dev;
++	struct rockchip_dw_dp *dp;
++
++	plat_data = of_device_get_match_data(dev);
++	if (!plat_data)
++		return -ENODEV;
++
++	dp = devm_kzalloc(dev, sizeof(*dp), GFP_KERNEL);
++	if (!dp)
++		return -ENOMEM;
++	platform_set_drvdata(pdev, dp);
++	dp->dev = dev;
++
++	dp->base = dw_dp_probe(pdev, plat_data);
++	if (IS_ERR(dp->base))
++		return PTR_ERR(dp->base);
++
+ 	return component_add(&pdev->dev, &dw_dp_rockchip_component_ops);
+ }
+ 
+-static void dw_dp_remove(struct platform_device *pdev)
++static void dw_dp_rockchip_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &dw_dp_rockchip_component_ops);
+ }
+@@ -161,8 +170,8 @@ static const struct of_device_id dw_dp_of_match[] = {
+ MODULE_DEVICE_TABLE(of, dw_dp_of_match);
+ 
+ struct platform_driver dw_dp_driver = {
+-	.probe	= dw_dp_probe,
+-	.remove = dw_dp_remove,
++	.probe	= dw_dp_rockchip_probe,
++	.remove = dw_dp_rockchip_remove,
+ 	.driver = {
+ 		.name = "dw-dp",
+ 		.of_match_table = dw_dp_of_match,
+diff --git a/include/drm/bridge/dw_dp.h b/include/drm/bridge/dw_dp.h
+index 111111111111..222222222222 100644
+--- a/include/drm/bridge/dw_dp.h
++++ b/include/drm/bridge/dw_dp.h
+@@ -22,7 +22,8 @@ struct dw_dp_plat_data {
+ 	u8 pixel_mode;
+ };
+ 
+-struct dw_dp *dw_dp_bind(struct device *dev, struct drm_encoder *encoder,
+-			 const struct dw_dp_plat_data *plat_data);
++int dw_dp_bind(struct dw_dp *dp, struct drm_encoder *encoder);
+ void dw_dp_unbind(struct dw_dp *dp);
++
++struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data);
+ #endif /* __DW_DP__ */
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:36 +0100
+Subject: drm/bridge: synopsys: dw-dp: Fix error handling for DP link
+ enablement
+
+dw_dp_link_disable() may be called in atomic mode disable even when
+dw_dp_link_enable() (or an earlier step) failed during atomic mode
+enable as there is no error tracking. This would result in broken PHY
+power state.
+
+This is fixed by introducing a new enabled state in the link structure
+to ensure the link disabling only happens if it has been properly
+enabled in the first place.
+
+The patch also adds missing error handling in dw_dp_link_enable()
+itself to ensure the link enablement becomes an atomic operation.
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Acked-by: Andy Yan <andy.yan@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-3-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 20 +++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -279,6 +279,7 @@ struct dw_dp_link {
+ 	unsigned char revision;
+ 	unsigned int rate;
+ 	unsigned int lanes;
++	bool enabled;
+ 	u8 sink_count;
+ 	u8 vsc_sdp_supported;
+ 	struct dw_dp_link_caps caps;
+@@ -1614,6 +1615,9 @@ static void dw_dp_link_disable(struct dw_dp *dp)
+ {
+ 	struct dw_dp_link *link = &dp->link;
+ 
++	if (!link->enabled)
++		return;
++
+ 	if (dw_dp_hpd_detect(dp))
+ 		drm_dp_link_power_down(&dp->aux, dp->link.revision);
+ 
+@@ -1623,6 +1627,7 @@ static void dw_dp_link_disable(struct dw_dp *dp)
+ 
+ 	link->train.clock_recovered = false;
+ 	link->train.channel_equalized = false;
++	link->enabled = false;
+ }
+ 
+ static int dw_dp_link_enable(struct dw_dp *dp)
+@@ -1635,10 +1640,23 @@ static int dw_dp_link_enable(struct dw_dp *dp)
+ 
+ 	ret = drm_dp_link_power_up(&dp->aux, dp->link.revision);
+ 	if (ret < 0)
+-		return ret;
++		goto err_phy_power_off;
+ 
+ 	ret = dw_dp_link_train(dp);
++	if (ret < 0)
++		goto err_link_power_down;
++
++	dp->link.enabled = true;
++
++	return 0;
++
++err_link_power_down:
++	if (dw_dp_hpd_detect(dp))
++		drm_dp_link_power_down(&dp->aux, dp->link.revision);
++	dw_dp_phy_xmit_enable(dp, 0);
+ 
++err_phy_power_off:
++	phy_power_off(dp->phy);
+ 	return ret;
+ }
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:37 +0100
+Subject: drm/bridge: synopsys: dw-dp: Document missing reset line deassert
+
+If the driver uses devm_reset_control_get_exclusive_deasserted() instead
+of devm_reset_control_get() and thus automatically deasserts during
+probe, the SoC will hang when the device is unbound.
+
+This does not happen, when runtime PM is being used (not yet supported
+in mainline), which suggests the power-domain involved requires this reset
+line to be deasserted.
+
+Even with runtime PM there is no guarantee that the power-domain is
+disabled as it is shared. Considering the power-domain does not have
+the reset dependency described in DT, document the problem but leave
+things in the current state until a better solution is found as the
+reset line is deasserted by default on all supported platforms.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Reviewed-by: Andy Yan <andy.yan@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-4-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -2091,6 +2091,10 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 		return ERR_CAST(dp->hdcp_clk);
+ 	}
+ 
++	/*
++	 * This reset line is deasserted by default; asserting it hangs the SoC if the
++	 * related power-domain is still active.
++	 */
+ 	dp->rstc = devm_reset_control_get(dev, NULL);
+ 	if (IS_ERR(dp->rstc)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->rstc), "failed to get reset control\n");
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:38 +0100
+Subject: drm/bridge: synopsys: dw-dp: Add missing mutex cleanups on module
+ removal
+
+The driver is currently missing to fully clean up after itself. Ensure
+that the mutex is cleaned up.
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Reviewed-by: Andy Yan <andy.yan@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-5-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -2041,10 +2041,13 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 	dp->pixel_mode = plat_data->pixel_mode;
+ 	dp->plat_data.max_link_rate = plat_data->max_link_rate;
+ 
+-	mutex_init(&dp->irq_lock);
+ 	INIT_WORK(&dp->hpd_work, dw_dp_hpd_work);
+ 	init_completion(&dp->complete);
+ 
++	ret = devm_mutex_init(dev, &dp->irq_lock);
++	if (ret)
++		return ERR_PTR(ret);
++
+ 	res = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(res))
+ 		return ERR_CAST(res);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:39 +0100
+Subject: drm/bridge: synopsys: dw-dp: Fix AUX transfer timeout race condition
+
+The DP AUX transfer method uses a completion triggered by an interrupt,
+which can timeout. If the function runs into the timeout and the
+interrupt fires afterwards, the following DP aux transfer completion
+would trigger immediately without waiting for the interrupt. This in
+turn means the next one would also be broken and so on.
+
+Fix this potential issue by re-initializing the completion directly
+before sending the AUX command.
+
+As this is racy (the interrupt might arrive between the completion
+re-init and the new command being programmed), also reset the AUX
+controller on timeouts and synchronize pending interrupts to guarantee
+that there are no pending AUX transfers when the dw_dp_aux_transfer()
+returns.
+
+Due to lack of a sink, which generates AUX timeouts, this change is
+effectively untested.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-6-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1465,6 +1465,8 @@ static ssize_t dw_dp_aux_transfer(struct drm_dp_aux *aux,
+ 	if (WARN_ON(msg->size > 16))
+ 		return -E2BIG;
+ 
++	reinit_completion(&dp->complete);
++
+ 	switch (msg->request & ~DP_AUX_I2C_MOT) {
+ 	case DP_AUX_NATIVE_WRITE:
+ 	case DP_AUX_I2C_WRITE:
+@@ -1491,6 +1493,12 @@ static ssize_t dw_dp_aux_transfer(struct drm_dp_aux *aux,
+ 	status = wait_for_completion_timeout(&dp->complete, timeout);
+ 	if (!status) {
+ 		dev_err(dp->dev, "timeout waiting for AUX reply\n");
++		regmap_update_bits(dp->regmap, DW_DP_SOFT_RESET_CTRL,
++				   AUX_RESET, FIELD_PREP(AUX_RESET, 1));
++		usleep_range(10, 20);
++		regmap_update_bits(dp->regmap, DW_DP_SOFT_RESET_CTRL,
++				   AUX_RESET, FIELD_PREP(AUX_RESET, 0));
++		synchronize_irq(dp->irq);
+ 		return -ETIMEDOUT;
+ 	}
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:40 +0100
+Subject: drm/bridge: synopsys: dw-dp: Fix support for short I2C reads
+
+The transfer functions returns the amount of bytes read for
+DP_AUX_I2C_READ. By returning -EBUSY for short reads, the caller has
+less information available what is going wrong and possibly simply
+resends the read request. On sinks not supporting long reads, this will
+simply run into the same issue again.
+
+Instead it makes more sense to return the data from the short read with
+the length information, which allows drm_dp_i2c_do_msg() to read data in
+smaller chunks and succeed in the end.
+
+Due to lack of a sink, which only supports short reads, this change is
+effectively untested.
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Reviewed-by: Andy Yan <andy.yan@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-7-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1512,7 +1512,7 @@ static ssize_t dw_dp_aux_transfer(struct drm_dp_aux *aux,
+ 		if (msg->request & DP_AUX_I2C_READ) {
+ 			size_t count = FIELD_GET(AUX_BYTES_READ, value) - 1;
+ 
+-			if (count != msg->size)
++			if (!count || count > msg->size)
+ 				return -EBUSY;
+ 
+ 			ret = dw_dp_aux_read_data(dp, msg->buffer, count);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:41 +0100
+Subject: drm/bridge: synopsys: dw-dp: Free output_fmts when none are valid
+
+If dw_dp_bandwidth_ok() returns false for all formats, *num_output_fmts
+might end up becoming 0. In this case functions calling it assume that
+nothing needs to be free'd, so free output_fmts within the function to
+avoid leaking memory.
+
+Fixes: 86eecc3a9c2e ("drm/bridge: synopsys: Add DW DPTX Controller support library")
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Reviewed-by: Andy Yan <andy.yan@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-8-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1821,6 +1821,11 @@ static u32 *dw_dp_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 		output_fmts[j++] = fmt->bus_format;
+ 	}
+ 
++	if (j == 0) {
++		kfree(output_fmts);
++		output_fmts = NULL;
++	}
++
+ 	*num_output_fmts = j;
+ 
+ 	return output_fmts;
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:42 +0100
+Subject: drm/bridge: synopsys: dw-dp: Support MEDIA_BUS_FMT_FIXED
+
+Add support for MEDIA_BUS_FMT_FIXED, which is e.g. requested for USB-C
+DP chains as the last bridge in the chain (aux-hpd-bridge) does not
+implement atomic_get_output_bus_fmts(), which results in the generic
+drm_atomic_bridge_chain_select_bus_fmts() code using MEDIA_BUS_FMT_FIXED
+instead. For decent support of this, two areas are changed:
+
+1. In atomic_check, resolving MEDIA_BUS_FMT_FIXED output format by
+   using the negotiated input format.
+
+2. Implementing a custom .atomic_get_input_bus_fmts hook that, on
+   MEDIA_BUS_FMT_FIXED, advertises all bandwidth-validated formats
+   from dw_dp_bridge_atomic_get_output_bus_fmts(). This lets the
+   upstream encoder negotiate the best mutually supported format.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-9-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 34 +++++++++-
+ 1 file changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1536,6 +1536,7 @@ static int dw_dp_bridge_atomic_check(struct drm_bridge *bridge,
+ 				     struct drm_connector_state *conn_state)
+ {
+ 	struct drm_display_mode *adjusted_mode = &crtc_state->adjusted_mode;
++	unsigned int out_bus_format = bridge_state->output_bus_cfg.format;
+ 	struct dw_dp *dp = bridge_to_dp(bridge);
+ 	struct dw_dp_bridge_state *state;
+ 	const struct dw_dp_output_format *fmt;
+@@ -1546,7 +1547,10 @@ static int dw_dp_bridge_atomic_check(struct drm_bridge *bridge,
+ 	state = to_dw_dp_bridge_state(bridge_state);
+ 	mode = &state->mode;
+ 
+-	fmt = dw_dp_get_output_format(bridge_state->output_bus_cfg.format);
++	if (out_bus_format == MEDIA_BUS_FMT_FIXED)
++		out_bus_format = bridge_state->input_bus_cfg.format;
++
++	fmt = dw_dp_get_output_format(out_bus_format);
+ 	if (!fmt)
+ 		return -EINVAL;
+ 
+@@ -1831,6 +1835,32 @@ static u32 *dw_dp_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 	return output_fmts;
+ }
+ 
++static u32 *
++dw_dp_bridge_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
++				       struct drm_bridge_state *bridge_state,
++				       struct drm_crtc_state *crtc_state,
++				       struct drm_connector_state *conn_state,
++				       u32 output_fmt,
++				       unsigned int *num_input_fmts)
++{
++	/*
++	 * MEDIA_BUS_FMT_FIXED means the downstream bridge does not constrain
++	 * the bus format. In that case, advertise all formats supported by the
++	 * DP link so the upstream encoder can negotiate the best match.
++	 */
++	if (output_fmt == MEDIA_BUS_FMT_FIXED)
++		return dw_dp_bridge_atomic_get_output_bus_fmts(bridge,
++							       bridge_state,
++							       crtc_state,
++							       conn_state,
++							       num_input_fmts);
++
++	return drm_atomic_helper_bridge_propagate_bus_fmt(bridge, bridge_state,
++							 crtc_state, conn_state,
++							 output_fmt,
++							 num_input_fmts);
++}
++
+ static struct drm_bridge_state *dw_dp_bridge_atomic_duplicate_state(struct drm_bridge *bridge)
+ {
+ 	struct dw_dp_bridge_state *state;
+@@ -1883,7 +1913,7 @@ static const struct drm_bridge_funcs dw_dp_bridge_funcs = {
+ 	.atomic_duplicate_state = dw_dp_bridge_atomic_duplicate_state,
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_create_state = drm_atomic_helper_bridge_create_state,
+-	.atomic_get_input_bus_fmts = drm_atomic_helper_bridge_propagate_bus_fmt,
++	.atomic_get_input_bus_fmts = dw_dp_bridge_atomic_get_input_bus_fmts,
+ 	.atomic_get_output_bus_fmts = dw_dp_bridge_atomic_get_output_bus_fmts,
+ 	.atomic_check = dw_dp_bridge_atomic_check,
+ 	.mode_valid = dw_dp_bridge_mode_valid,
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:43 +0100
+Subject: drm/bridge: synopsys: dw-dp: Add follow-up bridge support
+
+Add support to use USB-C connectors with the DP altmode helper code on
+devicetree based platforms. To get this working there must be a DRM
+bridge chain from the DisplayPort controller to the USB-C connector.
+E.g. on Rockchip RK3576:
+
+root@rk3576 # cat /sys/kernel/debug/dri/0/encoder-0/bridges
+bridge[0]: dw_dp_bridge_funcs
+        refcount: 7
+        type: [10] DP
+        OF: /soc/dp@27e40000:rockchip,rk3576-dp
+        ops: [0x47] detect edid hpd
+bridge[1]: drm_aux_bridge_funcs
+        refcount: 4
+        type: [0] Unknown
+        OF: /soc/phy@2b010000:rockchip,rk3576-usbdp-phy
+        ops: [0x0]
+bridge[2]: drm_aux_hpd_bridge_funcs
+        refcount: 5
+        type: [10] DP
+        OF: /soc/i2c@2ac50000/typec-portc@22/connector:usb-c-connector
+        ops: [0x4] hpd
+
+It's fine to fatally error out when there is no follow-up bridge
+as the Rockchip Designware Displayport controller is the only
+user of the bridge helper and has the port marked as required
+in its binding.
+
+Reviewed-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-10-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 33 ++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -327,6 +327,7 @@ struct dw_dp {
+ 
+ 	struct dw_dp_link link;
+ 	struct dw_dp_plat_data plat_data;
++	struct drm_bridge *next_bridge;
+ 	u8 pixel_mode;
+ 
+ 	DECLARE_BITMAP(sdp_reg_bank, SDP_REG_BANK_SIZE);
+@@ -1895,7 +1896,22 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 
+ 	enable_irq(dp->irq);
+ 
++	ret = drm_bridge_attach(encoder, dp->next_bridge, bridge,
++				DRM_BRIDGE_ATTACH_NO_CONNECTOR);
++	if (ret) {
++		dev_err(dev, "Failed to attach next bridge: %d\n", ret);
++		goto err_disable_irq;
++	}
++
+ 	return 0;
++
++err_disable_irq:
++	disable_irq(dp->irq);
++	cancel_work_sync(&dp->hpd_work);
++
++	drm_dp_aux_unregister(&dp->aux);
++
++	return ret;
+ }
+ 
+ static void dw_dp_bridge_detach(struct drm_bridge *bridge)
+@@ -2061,6 +2077,13 @@ void dw_dp_unbind(struct dw_dp *dp)
+ }
+ EXPORT_SYMBOL_GPL(dw_dp_unbind);
+ 
++static void dw_dp_put_next_bridge(void *data)
++{
++	struct dw_dp *dp = data;
++
++	drm_bridge_put(dp->next_bridge);
++}
++
+ static void dw_dp_phy_exit(void *data)
+ {
+ 	struct dw_dp *dp = data;
+@@ -2156,6 +2179,16 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
++	dp->next_bridge = of_drm_get_bridge_by_endpoint(dev->of_node, 1, 0);
++	if (IS_ERR(dp->next_bridge)) {
++		dev_err_probe(dev, PTR_ERR(dp->next_bridge), "failed to get follow-up bridge\n");
++		return ERR_CAST(dp->next_bridge);
++	}
++
++	ret = devm_add_action_or_reset(dev, dw_dp_put_next_bridge, dp);
++	if (ret)
++		return ERR_PTR(ret);
++
+ 	dw_dp_init_hw(dp);
+ 
+ 	ret = phy_init(dp->phy);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:44 +0100
+Subject: drm/bridge: Add out-of-band HPD notify handler
+
+For DP bridges, that can be used for DP AltMode, it might be necessary
+to enforce HPD status. There is an existing ->oob_hotplug_event() on
+the DRM connector, but it currently just calls into hpd_notify().
+
+As DP bridge drivers usually also implement .detect and that also
+generates calls into hpd_notify, this is a bad place to force the
+HPD status as the follow-up detect call might force it off again
+resulting in all follow-up calls to the detection routine also
+failing.
+
+Avoid this by having a dedicated function for OOB events.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-11-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/display/drm_bridge_connector.c |  6 ++++
+ include/drm/drm_bridge.h                       | 14 ++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -181,6 +181,12 @@ static void drm_bridge_connector_oob_hotplug_event(struct drm_connector *connect
+ 	struct drm_bridge_connector *bridge_connector =
+ 		to_drm_bridge_connector(connector);
+ 
++	/* Notify all bridges in the pipeline of hotplug events. */
++	drm_for_each_bridge_in_chain(bridge_connector->encoder, bridge) {
++		if (bridge->funcs->oob_notify)
++			bridge->funcs->oob_notify(bridge, connector, status);
++	}
++
+ 	drm_bridge_connector_handle_hpd(bridge_connector, status);
+ }
+ 
+diff --git a/include/drm/drm_bridge.h b/include/drm/drm_bridge.h
+index 111111111111..222222222222 100644
+--- a/include/drm/drm_bridge.h
++++ b/include/drm/drm_bridge.h
+@@ -540,6 +540,20 @@ struct drm_bridge_funcs {
+ 	 */
+ 	void (*hpd_disable)(struct drm_bridge *bridge);
+ 
++	/**
++	 * @oob_notify:
++	 *
++	 * Notify the bridge of out of band hot plug detection.
++	 *
++	 * This callback is optional, it may be implemented by bridges that
++	 * need to be notified of display connection or disconnection for
++	 * internal reasons. One use case is to force the DP controllers HPD
++	 * signal for USB-C DP AltMode.
++	 */
++	void (*oob_notify)(struct drm_bridge *bridge,
++			   struct drm_connector *connector,
++			   enum drm_connector_status status);
++
+ 	/**
+ 	 * @hdmi_tmds_char_rate_valid:
+ 	 *
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:45 +0100
+Subject: drm/bridge: synopsys: dw-dp: Support software triggered OOB HPD
+
+Add support for USB-C DP AltMode out-of-band hotplug handling. The
+handling itself is implemented in the platform specific driver as the
+registers to force HPD state are not part of the Designware DisplayPort
+IP itself. Instead the platform integration might provide the necessary
+functionality to mux the HPD signal.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-12-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 41 ++++++++++
+ include/drm/bridge/dw_dp.h              |  3 +
+ 2 files changed, 44 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1875,6 +1875,19 @@ static struct drm_bridge_state *dw_dp_bridge_atomic_duplicate_state(struct drm_b
+ 	return &state->base;
+ }
+ 
++static bool dw_dp_is_routed_to_usb_c(struct drm_encoder *encoder)
++{
++	struct drm_bridge *last_bridge __free(drm_bridge_put) = NULL;
++	struct fwnode_handle *fwnode;
++
++	last_bridge = drm_bridge_chain_get_last_bridge(encoder);
++	if (!last_bridge)
++		return false;
++
++	fwnode = of_fwnode_handle(last_bridge->of_node);
++	return fwnode_device_is_compatible(fwnode, "usb-c-connector");
++}
++
+ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 			       struct drm_encoder *encoder,
+ 			       enum drm_bridge_attach_flags flags)
+@@ -1903,6 +1916,13 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 		goto err_disable_irq;
+ 	}
+ 
++	if (dw_dp_is_routed_to_usb_c(encoder)) {
++		dev_dbg(dev, "USB-C mode\n");
++
++		if (dp->plat_data.hpd_sw_sel)
++			dp->plat_data.hpd_sw_sel(dp->plat_data.data, 1);
++	}
++
+ 	return 0;
+ 
+ err_disable_irq:
+@@ -1923,6 +1943,22 @@ static void dw_dp_bridge_detach(struct drm_bridge *bridge)
+ 	drm_dp_aux_unregister(&dp->aux);
+ }
+ 
++static void dw_dp_bridge_oob_notify(struct drm_bridge *bridge,
++				    struct drm_connector *connector,
++				    enum drm_connector_status status)
++{
++	bool hpd_high = status != connector_status_disconnected;
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	if (!dp->plat_data.hpd_sw_cfg) {
++		dev_err_once(dp->dev, "Missing platform handler for OOB HPD handling\n");
++		return;
++	}
++
++	dev_dbg(dp->dev, "Force HPD connected=%s\n", str_yes_no(hpd_high));
++	dp->plat_data.hpd_sw_cfg(dp->plat_data.data, hpd_high);
++}
++
+ static const struct drm_bridge_funcs dw_dp_bridge_funcs = {
+ 	.attach = dw_dp_bridge_attach,
+ 	.detach = dw_dp_bridge_detach,
+@@ -1937,6 +1973,7 @@ static const struct drm_bridge_funcs dw_dp_bridge_funcs = {
+ 	.atomic_disable = dw_dp_bridge_atomic_disable,
+ 	.detect = dw_dp_bridge_detect,
+ 	.edid_read = dw_dp_bridge_edid_read,
++	.oob_notify = dw_dp_bridge_oob_notify,
+ };
+ 
+ static int dw_dp_link_retrain(struct dw_dp *dp)
+@@ -2105,6 +2142,10 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 
+ 	dp->dev = dev;
+ 	dp->pixel_mode = plat_data->pixel_mode;
++
++	dp->plat_data.hpd_sw_sel = plat_data->hpd_sw_sel;
++	dp->plat_data.hpd_sw_cfg = plat_data->hpd_sw_cfg;
++	dp->plat_data.data = plat_data->data;
+ 	dp->plat_data.max_link_rate = plat_data->max_link_rate;
+ 
+ 	INIT_WORK(&dp->hpd_work, dw_dp_hpd_work);
+diff --git a/include/drm/bridge/dw_dp.h b/include/drm/bridge/dw_dp.h
+index 111111111111..222222222222 100644
+--- a/include/drm/bridge/dw_dp.h
++++ b/include/drm/bridge/dw_dp.h
+@@ -20,6 +20,9 @@ enum {
+ struct dw_dp_plat_data {
+ 	u32 max_link_rate;
+ 	u8 pixel_mode;
++	void *data;
++	void (*hpd_sw_sel)(void *data, bool hpd);
++	void (*hpd_sw_cfg)(void *data, bool hpd);
+ };
+ 
+ int dw_dp_bind(struct dw_dp *dp, struct drm_encoder *encoder);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:46 +0100
+Subject: drm/rockchip: dw_dp: Implement out-of-band HPD handling
+
+Implement out-of-band hotplug handling, which will be used to receive
+external hotplug information from the USB-C state machine. This is
+currently handled by the USBDP PHY, which brings quite some trouble
+as the register being accessed requires the power-domain from the DP
+controller. Thus this patch prevents massive SError problems once
+runtime PM is implemented (and enabled) in the DP driver. Apart from
+that it avoids custom TypeC HPD info parsing in the USBDP PHY driver.
+
+In contrast to the USBDP PHY this does not just enable the hotplug
+signal when a DP AltMode capable adapter is plugged in, but instead
+properly detects if a cable is plugged in for things like USB-C to
+HDMI adapters.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-13-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c | 116 +++++++++-
+ 1 file changed, 111 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -7,9 +7,12 @@
+  */
+ 
+ #include <linux/component.h>
++#include <linux/hw_bitfield.h>
+ #include <linux/media-bus-format.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/of_device.h>
+ #include <linux/platform_device.h>
++#include <linux/regmap.h>
+ #include <linux/videodev2.h>
+ 
+ #include <drm/bridge/dw_dp.h>
+@@ -23,12 +26,46 @@
+ 
+ #include "rockchip_drm_drv.h"
+ 
++#define ROCKCHIP_MAX_CTRLS 2
++
++#define ROCKCHIP_VO_GRF_DP_SINK_HPD_SEL BIT(10)
++#define ROCKCHIP_VO_GRF_DP_SINK_HPD_CFG BIT(11)
++
++struct rockchip_dw_dp_plat_data {
++	u8 num_ctrls;
++	u64 ctrl_ids[ROCKCHIP_MAX_CTRLS];
++	u32 max_link_rate;
++	u8 pixel_mode;
++	u32 hpd_reg[ROCKCHIP_MAX_CTRLS];
++};
++
+ struct rockchip_dw_dp {
+ 	struct dw_dp *base;
+ 	struct device *dev;
++	const struct rockchip_dw_dp_plat_data *pdata;
++	struct regmap *vo_grf;
+ 	struct rockchip_encoder *encoder;
++	int id;
+ };
+ 
++static void dw_dp_rockchip_hpd_sw_sel(void *data, bool force_hpd_from_sw)
++{
++	struct rockchip_dw_dp *dp = data;
++	u32 hpd_reg = dp->pdata->hpd_reg[dp->id];
++
++	regmap_write(dp->vo_grf, hpd_reg,
++		     FIELD_PREP_WM16(ROCKCHIP_VO_GRF_DP_SINK_HPD_SEL, force_hpd_from_sw));
++}
++
++static void dw_dp_rockchip_hpd_sw_cfg(void *data, bool hpd)
++{
++	struct rockchip_dw_dp *dp = data;
++	u32 hpd_reg = dp->pdata->hpd_reg[dp->id];
++
++	regmap_write(dp->vo_grf, hpd_reg,
++		     FIELD_PREP_WM16(ROCKCHIP_VO_GRF_DP_SINK_HPD_CFG, hpd));
++}
++
+ static int dw_dp_encoder_atomic_check(struct drm_encoder *encoder,
+ 				      struct drm_crtc_state *crtc_state,
+ 				      struct drm_connector_state *conn_state)
+@@ -71,6 +108,35 @@ static const struct drm_encoder_helper_funcs dw_dp_encoder_helper_funcs = {
+ 	.atomic_check		= dw_dp_encoder_atomic_check,
+ };
+ 
++static struct regmap *dw_dp_rockchip_get_vo_grf(struct rockchip_dw_dp *dp)
++{
++	struct device_node *np = dev_of_node(dp->dev);
++	struct of_phandle_args args;
++	struct regmap *regmap;
++	int ret;
++
++	ret = of_parse_phandle_with_args(np, "phys", "#phy-cells", 0, &args);
++	if (ret)
++		return ERR_PTR(-ENODEV);
++
++	/*
++	 * Limit this workaround to RK3576 and RK3588, potential future platforms
++	 * reusing the driver should just add a VO GRF phandle in the DisplayPort
++	 * controller DT node.
++	 */
++	if (!of_device_is_compatible(args.np, "rockchip,rk3576-usbdp-phy") &&
++	    !of_device_is_compatible(args.np, "rockchip,rk3588-usbdp-phy")) {
++		regmap = ERR_PTR(-ENODEV);
++		goto out_put_node;
++	}
++
++	regmap = syscon_regmap_lookup_by_phandle(args.np, "rockchip,vo-grf");
++
++out_put_node:
++	of_node_put(args.np);
++	return regmap;
++}
++
+ static int dw_dp_rockchip_bind(struct device *dev, struct device *master, void *data)
+ {
+ 	struct rockchip_dw_dp *dp = dev_get_drvdata(dev);
+@@ -121,19 +187,53 @@ static const struct component_ops dw_dp_rockchip_component_ops = {
+ 
+ static int dw_dp_rockchip_probe(struct platform_device *pdev)
+ {
+-	const struct dw_dp_plat_data *plat_data;
++	const struct rockchip_dw_dp_plat_data *plat_data_const;
++	struct dw_dp_plat_data *plat_data;
+ 	struct device *dev = &pdev->dev;
+ 	struct rockchip_dw_dp *dp;
++	struct resource *res;
++	int id;
+ 
+-	plat_data = of_device_get_match_data(dev);
+-	if (!plat_data)
++	plat_data_const = device_get_match_data(dev);
++	if (!plat_data_const)
+ 		return -ENODEV;
+ 
++	plat_data = devm_kzalloc(dev, sizeof(*plat_data), GFP_KERNEL);
++	if (!plat_data)
++		return -ENOMEM;
++
+ 	dp = devm_kzalloc(dev, sizeof(*dp), GFP_KERNEL);
+ 	if (!dp)
+ 		return -ENOMEM;
+ 	platform_set_drvdata(pdev, dp);
+ 	dp->dev = dev;
++	dp->pdata = plat_data_const;
++
++	res = platform_get_mem_or_io(pdev, 0);
++	if (!res)
++		return -ENODEV;
++
++	/* find the DisplayPort ID from the io address */
++	dp->id = -ENODEV;
++	for (id = 0; id < plat_data_const->num_ctrls; id++) {
++		if (res->start == plat_data_const->ctrl_ids[id]) {
++			dp->id = id;
++			break;
++		}
++	}
++
++	if (dp->id < 0)
++		return dp->id;
++
++	dp->vo_grf = dw_dp_rockchip_get_vo_grf(dp);
++	if (IS_ERR(dp->vo_grf))
++		return PTR_ERR(dp->vo_grf);
++
++	plat_data->max_link_rate = plat_data_const->max_link_rate;
++	plat_data->pixel_mode = plat_data_const->pixel_mode;
++	plat_data->hpd_sw_sel = dw_dp_rockchip_hpd_sw_sel;
++	plat_data->hpd_sw_cfg = dw_dp_rockchip_hpd_sw_cfg;
++	plat_data->data = dp;
+ 
+ 	dp->base = dw_dp_probe(pdev, plat_data);
+ 	if (IS_ERR(dp->base))
+@@ -147,14 +247,20 @@ static void dw_dp_rockchip_remove(struct platform_device *pdev)
+ 	component_del(&pdev->dev, &dw_dp_rockchip_component_ops);
+ }
+ 
+-static const struct dw_dp_plat_data rk3588_dp_plat_data = {
++static const struct rockchip_dw_dp_plat_data rk3588_dp_plat_data = {
++	.num_ctrls = 2,
++	.ctrl_ids = {0xfde50000, 0xfde60000},
+ 	.max_link_rate = 810000,
+ 	.pixel_mode = DW_DP_MP_QUAD_PIXEL,
++	.hpd_reg = {0x0000, 0x0008},
+ };
+ 
+-static const struct dw_dp_plat_data rk3576_dp_plat_data = {
++static const struct rockchip_dw_dp_plat_data rk3576_dp_plat_data = {
++	.num_ctrls = 1,
++	.ctrl_ids = {0x27e40000},
+ 	.max_link_rate = 810000,
+ 	.pixel_mode = DW_DP_MP_DUAL_PIXEL,
++	.hpd_reg = {0x0000},
+ };
+ 
+ static const struct of_device_id dw_dp_of_match[] = {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:47 +0100
+Subject: drm/bridge: synopsys: dw-dp: Add Runtime PM support
+
+Add runtime PM stubs to the Synopsys DesignWare DisplayPort bridge
+driver. Support is not enabled automatically and must be hooked up
+in the platform specific glue code.
+
+The early bits of the dw_dp_probe function are split into a new
+function called dw_dp_alloc, so that the platform driver can assign
+it before running dw_dp_probe. This is necessary because the runtime
+PM resume/suspend events land at the platform driver and must be
+forwarded to the helper once runtime PM is enabled in the middle
+of the probe function.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-14-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c   | 207 ++++++++--
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c |   8 +-
+ include/drm/bridge/dw_dp.h                |   7 +-
+ 3 files changed, 187 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -329,6 +329,9 @@ struct dw_dp {
+ 	struct dw_dp_plat_data plat_data;
+ 	struct drm_bridge *next_bridge;
+ 	u8 pixel_mode;
++	bool usbc_mode;
++	bool usbc_hpd;
++	bool pm_active;
+ 
+ 	DECLARE_BITMAP(sdp_reg_bank, SDP_REG_BANK_SIZE);
+ };
+@@ -1466,6 +1469,11 @@ static ssize_t dw_dp_aux_transfer(struct drm_dp_aux *aux,
+ 	if (WARN_ON(msg->size > 16))
+ 		return -E2BIG;
+ 
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(dp->dev, pm);
++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
++	if (ret)
++		return ret;
++
+ 	reinit_completion(&dp->complete);
+ 
+ 	switch (msg->request & ~DP_AUX_I2C_MOT) {
+@@ -1681,6 +1689,13 @@ static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 	struct drm_connector_state *conn_state;
+ 	int ret;
+ 
++	ret = pm_runtime_get_active(dp->dev, RPM_TRANSPARENT);
++	if (ret) {
++		dev_err(dp->dev, "runtime PM failure\n");
++		return;
++	}
++	dp->pm_active = true;
++
+ 	connector = drm_atomic_get_new_connector_for_encoder(state, bridge->encoder);
+ 	if (!connector) {
+ 		dev_err(dp->dev, "failed to get connector\n");
+@@ -1731,10 +1746,15 @@ static void dw_dp_bridge_atomic_disable(struct drm_bridge *bridge,
+ {
+ 	struct dw_dp *dp = bridge_to_dp(bridge);
+ 
++	if (!dp->pm_active)
++		return;
++	dp->pm_active = false;
++
+ 	dw_dp_video_disable(dp);
+ 	dw_dp_link_disable(dp);
+ 	bitmap_zero(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
+ 	dw_dp_reset(dp);
++	pm_runtime_put_autosuspend(dp->dev);
+ }
+ 
+ static bool dw_dp_hpd_detect_link(struct dw_dp *dp, struct drm_connector *connector)
+@@ -1755,6 +1775,10 @@ static enum drm_connector_status dw_dp_bridge_detect(struct drm_bridge *bridge,
+ {
+ 	struct dw_dp *dp = bridge_to_dp(bridge);
+ 
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(dp->dev, pm);
++	if (PM_RUNTIME_ACQUIRE_ERR(&pm))
++		return connector_status_disconnected;
++
+ 	if (!dw_dp_hpd_detect(dp))
+ 		return connector_status_disconnected;
+ 
+@@ -1896,6 +1920,10 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 	struct device *dev = dp->dev;
+ 	int ret;
+ 
++	ret = pm_runtime_get_active(dp->dev, RPM_TRANSPARENT);
++	if (ret)
++		return ret;
++
+ 	dp->aux.dev = dev;
+ 	dp->aux.drm_dev = encoder->dev;
+ 	dp->aux.name = dev_name(dev);
+@@ -1904,7 +1932,7 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 	ret = drm_dp_aux_register(&dp->aux);
+ 	if (ret) {
+ 		dev_err(dev, "Aux register failed: %d\n", ret);
+-		return ret;
++		goto err_runtime_pm_put;
+ 	}
+ 
+ 	enable_irq(dp->irq);
+@@ -1916,11 +1944,15 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 		goto err_disable_irq;
+ 	}
+ 
+-	if (dw_dp_is_routed_to_usb_c(encoder)) {
+-		dev_dbg(dev, "USB-C mode\n");
++	dp->usbc_mode = dw_dp_is_routed_to_usb_c(encoder);
++
++	if (dp->plat_data.hpd_sw_sel)
++		dp->plat_data.hpd_sw_sel(dp->plat_data.data, dp->usbc_mode);
+ 
+-		if (dp->plat_data.hpd_sw_sel)
+-			dp->plat_data.hpd_sw_sel(dp->plat_data.data, 1);
++	/* USB-C has out-of-band hotplug detection, so device may runtime suspend */
++	if (dp->usbc_mode) {
++		dev_dbg(dev, "USB-C mode\n");
++		pm_runtime_put_autosuspend(dp->dev);
+ 	}
+ 
+ 	return 0;
+@@ -1931,6 +1963,9 @@ static int dw_dp_bridge_attach(struct drm_bridge *bridge,
+ 
+ 	drm_dp_aux_unregister(&dp->aux);
+ 
++err_runtime_pm_put:
++	pm_runtime_put_sync(dp->dev);
++
+ 	return ret;
+ }
+ 
+@@ -1941,6 +1976,9 @@ static void dw_dp_bridge_detach(struct drm_bridge *bridge)
+ 	disable_irq(dp->irq);
+ 	cancel_work_sync(&dp->hpd_work);
+ 	drm_dp_aux_unregister(&dp->aux);
++
++	if (!dp->usbc_mode)
++		pm_runtime_put_sync(dp->dev);
+ }
+ 
+ static void dw_dp_bridge_oob_notify(struct drm_bridge *bridge,
+@@ -1949,12 +1987,20 @@ static void dw_dp_bridge_oob_notify(struct drm_bridge *bridge,
+ {
+ 	bool hpd_high = status != connector_status_disconnected;
+ 	struct dw_dp *dp = bridge_to_dp(bridge);
++	int ret;
++
++	dp->usbc_hpd = hpd_high;
+ 
+ 	if (!dp->plat_data.hpd_sw_cfg) {
+ 		dev_err_once(dp->dev, "Missing platform handler for OOB HPD handling\n");
+ 		return;
+ 	}
+ 
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(dp->dev, pm);
++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
++	if (ret)
++		return;
++
+ 	dev_dbg(dp->dev, "Force HPD connected=%s\n", str_yes_no(hpd_high));
+ 	dp->plat_data.hpd_sw_cfg(dp->plat_data.data, hpd_high);
+ }
+@@ -2011,6 +2057,11 @@ static void dw_dp_hpd_work(struct work_struct *work)
+ 	bool long_hpd;
+ 	int ret;
+ 
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(dp->dev, pm);
++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
++	if (ret)
++		return;
++
+ 	mutex_lock(&dp->irq_lock);
+ 	long_hpd = dp->hotplug.long_hpd;
+ 	mutex_unlock(&dp->irq_lock);
+@@ -2128,13 +2179,24 @@ static void dw_dp_phy_exit(void *data)
+ 	phy_exit(dp->phy);
+ }
+ 
+-struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data)
++static void dw_dp_manual_suspend(void *data)
++{
++	struct dw_dp *dp = data;
++
++	dw_dp_runtime_suspend(dp);
++}
++
++static void dw_dp_enable_irq(void *data)
++{
++	struct dw_dp *dp = data;
++
++	enable_irq(dp->irq);
++}
++
++struct dw_dp *dw_dp_alloc(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data)
+ {
+ 	struct device *dev = &pdev->dev;
+-	struct drm_bridge *bridge;
+-	void __iomem *res;
+ 	struct dw_dp *dp;
+-	int ret;
+ 
+ 	dp = devm_drm_bridge_alloc(dev, struct dw_dp, bridge, &dw_dp_bridge_funcs);
+ 	if (IS_ERR(dp))
+@@ -2147,58 +2209,71 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 	dp->plat_data.hpd_sw_cfg = plat_data->hpd_sw_cfg;
+ 	dp->plat_data.data = plat_data->data;
+ 	dp->plat_data.max_link_rate = plat_data->max_link_rate;
++	dp->plat_data.autosuspend_delay = plat_data->autosuspend_delay;
+ 
+ 	INIT_WORK(&dp->hpd_work, dw_dp_hpd_work);
+ 	init_completion(&dp->complete);
+ 
++	return dp;
++}
++EXPORT_SYMBOL_GPL(dw_dp_alloc);
++
++int dw_dp_probe(struct dw_dp *dp)
++{
++	struct device *dev = dp->dev;
++	struct platform_device *pdev = to_platform_device(dev);
++	struct drm_bridge *bridge;
++	void __iomem *res;
++	int ret;
++
+ 	ret = devm_mutex_init(dev, &dp->irq_lock);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
+ 
+ 	res = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(res))
+-		return ERR_CAST(res);
++		return PTR_ERR(res);
+ 
+ 	dp->regmap = devm_regmap_init_mmio(dev, res, &dw_dp_regmap_config);
+ 	if (IS_ERR(dp->regmap)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->regmap), "failed to create regmap\n");
+-		return ERR_CAST(dp->regmap);
++		return PTR_ERR(dp->regmap);
+ 	}
+ 
+ 	dp->phy = devm_of_phy_get(dev, dev->of_node, NULL);
+ 	if (IS_ERR(dp->phy)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->phy), "failed to get phy\n");
+-		return ERR_CAST(dp->phy);
++		return PTR_ERR(dp->phy);
+ 	}
+ 
+-	dp->apb_clk = devm_clk_get_enabled(dev, "apb");
++	dp->apb_clk = devm_clk_get(dev, "apb");
+ 	if (IS_ERR(dp->apb_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->apb_clk), "failed to get apb clock\n");
+-		return ERR_CAST(dp->apb_clk);
++		return PTR_ERR(dp->apb_clk);
+ 	}
+ 
+-	dp->aux_clk = devm_clk_get_enabled(dev, "aux");
++	dp->aux_clk = devm_clk_get(dev, "aux");
+ 	if (IS_ERR(dp->aux_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->aux_clk), "failed to get aux clock\n");
+-		return ERR_CAST(dp->aux_clk);
++		return PTR_ERR(dp->aux_clk);
+ 	}
+ 
+ 	dp->i2s_clk = devm_clk_get_optional(dev, "i2s");
+ 	if (IS_ERR(dp->i2s_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->i2s_clk), "failed to get i2s clock\n");
+-		return ERR_CAST(dp->i2s_clk);
++		return PTR_ERR(dp->i2s_clk);
+ 	}
+ 
+ 	dp->spdif_clk = devm_clk_get_optional(dev, "spdif");
+ 	if (IS_ERR(dp->spdif_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->spdif_clk), "failed to get spdif clock\n");
+-		return ERR_CAST(dp->spdif_clk);
++		return PTR_ERR(dp->spdif_clk);
+ 	}
+ 
+ 	dp->hdcp_clk = devm_clk_get(dev, "hdcp");
+ 	if (IS_ERR(dp->hdcp_clk)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->hdcp_clk), "failed to get hdcp clock\n");
+-		return ERR_CAST(dp->hdcp_clk);
++		return PTR_ERR(dp->hdcp_clk);
+ 	}
+ 
+ 	/*
+@@ -2208,39 +2283,67 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 	dp->rstc = devm_reset_control_get(dev, NULL);
+ 	if (IS_ERR(dp->rstc)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->rstc), "failed to get reset control\n");
+-		return ERR_CAST(dp->rstc);
++		return PTR_ERR(dp->rstc);
+ 	}
+ 
+ 	dp->irq = platform_get_irq(pdev, 0);
+ 	if (dp->irq < 0)
+-		return ERR_PTR(dp->irq);
++		return dp->irq;
+ 
+ 	ret = devm_request_threaded_irq(dev, dp->irq, NULL, dw_dp_irq,
+ 					IRQF_ONESHOT | IRQF_NO_AUTOEN, dev_name(dev), dp);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
++
++	/*
++	 * Disable IRQ a second time; this ensures the interrupt is only
++	 * enabled when the bridge is attached AND runtime PM is enabled.
++	 * Also register a devm action to restore the correct balance during
++	 * device removal.
++	 */
++	disable_irq(dp->irq);
++
++	ret = devm_add_action_or_reset(dev, dw_dp_enable_irq, dp);
++	if (ret)
++		return ret;
+ 
+ 	dp->next_bridge = of_drm_get_bridge_by_endpoint(dev->of_node, 1, 0);
+ 	if (IS_ERR(dp->next_bridge)) {
+ 		dev_err_probe(dev, PTR_ERR(dp->next_bridge), "failed to get follow-up bridge\n");
+-		return ERR_CAST(dp->next_bridge);
++		return PTR_ERR(dp->next_bridge);
+ 	}
+ 
+ 	ret = devm_add_action_or_reset(dev, dw_dp_put_next_bridge, dp);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
+ 
+-	dw_dp_init_hw(dp);
++	if (dp->plat_data.autosuspend_delay > 0) {
++		pm_runtime_use_autosuspend(dev);
++		pm_runtime_set_autosuspend_delay(dev, dp->plat_data.autosuspend_delay);
++		ret = devm_pm_runtime_enable(dev);
++		if (ret)
++			return ret;
++	}
++
++	if (!pm_runtime_enabled(dev)) {
++		ret = dw_dp_runtime_resume(dp);
++		if (ret)
++			return ret;
++
++		ret = devm_add_action_or_reset(dev, dw_dp_manual_suspend, dp);
++		if (ret)
++			return ret;
++	}
+ 
+ 	ret = phy_init(dp->phy);
+ 	if (ret) {
+ 		dev_err_probe(dev, ret, "phy init failed\n");
+-		return ERR_PTR(ret);
++		return ret;
+ 	}
+ 
+ 	ret = devm_add_action_or_reset(dev, dw_dp_phy_exit, dp);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
+ 
+ 	bridge = &dp->bridge;
+ 	bridge->of_node = dev->of_node;
+@@ -2248,13 +2351,53 @@ struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_
+ 	bridge->type = DRM_MODE_CONNECTOR_DisplayPort;
+ 	bridge->ycbcr_420_allowed = true;
+ 
+-	ret = devm_drm_bridge_add(dev, bridge);
++	return devm_drm_bridge_add(dev, bridge);
++}
++EXPORT_SYMBOL_GPL(dw_dp_probe);
++
++int dw_dp_runtime_suspend(struct dw_dp *dp)
++{
++	disable_irq(dp->irq);
++
++	clk_disable_unprepare(dp->aux_clk);
++	clk_disable_unprepare(dp->apb_clk);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(dw_dp_runtime_suspend);
++
++int dw_dp_runtime_resume(struct dw_dp *dp)
++{
++	int ret;
++
++	ret = clk_prepare_enable(dp->apb_clk);
+ 	if (ret)
+-		return ERR_PTR(ret);
++		return ret;
+ 
+-	return dp;
++	ret = clk_prepare_enable(dp->aux_clk);
++	if (ret) {
++		clk_disable_unprepare(dp->apb_clk);
++		return ret;
++	}
++
++	if (dp->plat_data.hpd_sw_sel)
++		dp->plat_data.hpd_sw_sel(dp->plat_data.data, dp->usbc_mode);
++	if (dp->plat_data.hpd_sw_cfg)
++		dp->plat_data.hpd_sw_cfg(dp->plat_data.data, dp->usbc_hpd);
++
++	dw_dp_init_hw(dp);
++
++	enable_irq(dp->irq);
++
++	/*
++	 * HPD_HOT_PLUG bit is asserted only after the sink holds HPD
++	 * high for at least 100ms.
++	 */
++	msleep(110);
++
++	return 0;
+ }
+-EXPORT_SYMBOL_GPL(dw_dp_probe);
++EXPORT_SYMBOL_GPL(dw_dp_runtime_resume);
+ 
+ MODULE_AUTHOR("Andy Yan <andyshrk@163.com>");
+ MODULE_DESCRIPTION("DW DP Core Library");
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -192,7 +192,7 @@ static int dw_dp_rockchip_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct rockchip_dw_dp *dp;
+ 	struct resource *res;
+-	int id;
++	int id, ret;
+ 
+ 	plat_data_const = device_get_match_data(dev);
+ 	if (!plat_data_const)
+@@ -235,10 +235,14 @@ static int dw_dp_rockchip_probe(struct platform_device *pdev)
+ 	plat_data->hpd_sw_cfg = dw_dp_rockchip_hpd_sw_cfg;
+ 	plat_data->data = dp;
+ 
+-	dp->base = dw_dp_probe(pdev, plat_data);
++	dp->base = dw_dp_alloc(pdev, plat_data);
+ 	if (IS_ERR(dp->base))
+ 		return PTR_ERR(dp->base);
+ 
++	ret = dw_dp_probe(dp->base);
++	if (ret)
++		return ret;
++
+ 	return component_add(&pdev->dev, &dw_dp_rockchip_component_ops);
+ }
+ 
+diff --git a/include/drm/bridge/dw_dp.h b/include/drm/bridge/dw_dp.h
+index 111111111111..222222222222 100644
+--- a/include/drm/bridge/dw_dp.h
++++ b/include/drm/bridge/dw_dp.h
+@@ -18,6 +18,7 @@ enum {
+ };
+ 
+ struct dw_dp_plat_data {
++	int autosuspend_delay;
+ 	u32 max_link_rate;
+ 	u8 pixel_mode;
+ 	void *data;
+@@ -28,5 +29,9 @@ struct dw_dp_plat_data {
+ int dw_dp_bind(struct dw_dp *dp, struct drm_encoder *encoder);
+ void dw_dp_unbind(struct dw_dp *dp);
+ 
+-struct dw_dp *dw_dp_probe(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data);
++struct dw_dp *dw_dp_alloc(struct platform_device *pdev, const struct dw_dp_plat_data *plat_data);
++int dw_dp_probe(struct dw_dp *dp);
++
++int dw_dp_runtime_suspend(struct dw_dp *dp);
++int dw_dp_runtime_resume(struct dw_dp *dp);
+ #endif /* __DW_DP__ */
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:48 +0100
+Subject: drm/rockchip: dw_dp: Add runtime PM support
+
+Add support for runtime PM to the Rockchip RK3576/3588 Synopsys
+DesignWare DisplayPort driver.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-15-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c | 21 ++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -12,6 +12,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/of_device.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/videodev2.h>
+ 
+@@ -229,6 +230,7 @@ static int dw_dp_rockchip_probe(struct platform_device *pdev)
+ 	if (IS_ERR(dp->vo_grf))
+ 		return PTR_ERR(dp->vo_grf);
+ 
++	plat_data->autosuspend_delay = 500;
+ 	plat_data->max_link_rate = plat_data_const->max_link_rate;
+ 	plat_data->pixel_mode = plat_data_const->pixel_mode;
+ 	plat_data->hpd_sw_sel = dw_dp_rockchip_hpd_sw_sel;
+@@ -251,6 +253,24 @@ static void dw_dp_rockchip_remove(struct platform_device *pdev)
+ 	component_del(&pdev->dev, &dw_dp_rockchip_component_ops);
+ }
+ 
++static int dw_dp_rockchip_runtime_suspend(struct device *dev)
++{
++	struct rockchip_dw_dp *dp = dev_get_drvdata(dev);
++
++	return dw_dp_runtime_suspend(dp->base);
++}
++
++static int dw_dp_rockchip_runtime_resume(struct device *dev)
++{
++	struct rockchip_dw_dp *dp = dev_get_drvdata(dev);
++
++	return dw_dp_runtime_resume(dp->base);
++}
++
++static const struct dev_pm_ops dw_dp_pm_ops = {
++	RUNTIME_PM_OPS(dw_dp_rockchip_runtime_suspend, dw_dp_rockchip_runtime_resume, NULL)
++};
++
+ static const struct rockchip_dw_dp_plat_data rk3588_dp_plat_data = {
+ 	.num_ctrls = 2,
+ 	.ctrl_ids = {0xfde50000, 0xfde60000},
+@@ -285,5 +305,6 @@ struct platform_driver dw_dp_driver = {
+ 	.driver = {
+ 		.name = "dw-dp",
+ 		.of_match_table = dw_dp_of_match,
++		.pm = pm_ptr(&dw_dp_pm_ops),
+ 	},
+ };
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:49 +0100
+Subject: drm/rockchip: dw_dp: Add system PM support
+
+Explicitly suspend the DP controller when the system goes to sleep and
+more importantly resume it properly after system sleep exit to recover
+USB-C HPD register state, which is lost when the system goes to sleep.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-16-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/rockchip/dw_dp-rockchip.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_dp-rockchip.c
+@@ -269,6 +269,7 @@ static int dw_dp_rockchip_runtime_resume(struct device *dev)
+ 
+ static const struct dev_pm_ops dw_dp_pm_ops = {
+ 	RUNTIME_PM_OPS(dw_dp_rockchip_runtime_suspend, dw_dp_rockchip_runtime_resume, NULL)
++	LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ };
+ 
+ static const struct rockchip_dw_dp_plat_data rk3588_dp_plat_data = {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:50 +0100
+Subject: drm/bridge: synopsys: dw-dp: Protect sdp_reg_bank from concurrent
+ access
+
+Right now sdp_reg_bank is only used during atomic enable/disable and
+thus there is no risk of two threads accidently claiming the same bit.
+
+This changes once more SDP users (like audio support) are added, so
+introduce a mutex to protect concurrent access to the bitmap.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-17-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 24 +++++++---
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -322,6 +322,8 @@ struct dw_dp {
+ 	struct dw_dp_hotplug hotplug;
+ 	/* Serialize hpd status access */
+ 	struct mutex irq_lock;
++	/* Serialize sdp_reg_bank access */
++	struct mutex sdp_lock;
+ 
+ 	struct drm_dp_aux aux;
+ 
+@@ -1046,11 +1048,13 @@ static int dw_dp_send_sdp(struct dw_dp *dp, struct dw_dp_sdp *sdp)
+ 	u32 reg;
+ 	int i, nr;
+ 
+-	nr = find_first_zero_bit(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
+-	if (nr < SDP_REG_BANK_SIZE)
+-		set_bit(nr, dp->sdp_reg_bank);
+-	else
+-		return -EBUSY;
++	scoped_guard(mutex, &dp->sdp_lock) {
++		nr = find_first_zero_bit(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
++		if (nr < SDP_REG_BANK_SIZE)
++			set_bit(nr, dp->sdp_reg_bank);
++		else
++			return -EBUSY;
++	}
+ 
+ 	reg = DW_DP_SDP_REGISTER_BANK + nr * 9 * 4;
+ 
+@@ -1708,7 +1712,8 @@ static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 		return;
+ 	}
+ 
+-	set_bit(0, dp->sdp_reg_bank);
++	scoped_guard(mutex, &dp->sdp_lock)
++		set_bit(0, dp->sdp_reg_bank);
+ 
+ 	ret = dw_dp_link_enable(dp);
+ 	if (ret < 0) {
+@@ -1752,7 +1757,8 @@ static void dw_dp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 
+ 	dw_dp_video_disable(dp);
+ 	dw_dp_link_disable(dp);
+-	bitmap_zero(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
++	scoped_guard(mutex, &dp->sdp_lock)
++		bitmap_zero(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
+ 	dw_dp_reset(dp);
+ 	pm_runtime_put_autosuspend(dp->dev);
+ }
+@@ -2230,6 +2236,10 @@ int dw_dp_probe(struct dw_dp *dp)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_mutex_init(dev, &dp->sdp_lock);
++	if (ret)
++		return ret;
++
+ 	res = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(res))
+ 		return PTR_ERR(res);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:51 +0100
+Subject: drm/bridge: synopsys: dw-dp: Drop useless reservation of first slot
+
+The origin of this reservation is unclear, but it is a problem in the
+atomic_enable code since it potentially races with the audio SDP
+reservation once that feature is added. I suppose it was either meant to
+be bitmap_zero(), but that is obviously not needed (and would also be a
+problem for audio support) or some left-over development code before the
+VSC SDP slot was allocated automatically.
+
+>From my tests SDP slot 0 works fine and can be used. If SDP slot 0
+really needs to be reserved for some reason, the bit should be set in
+the probe function to ensure there are no race conditions.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-18-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1712,9 +1712,6 @@ static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 		return;
+ 	}
+ 
+-	scoped_guard(mutex, &dp->sdp_lock)
+-		set_bit(0, dp->sdp_reg_bank);
+-
+ 	ret = dw_dp_link_enable(dp);
+ 	if (ret < 0) {
+ 		dev_err(dp->dev, "failed to enable link: %d\n", ret);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:52 +0100
+Subject: drm/bridge: synopsys: dw-dp: Clear only enabled SDPs on atomic
+ disable
+
+dw_dp_bridge_atomic_disable() bulk-cleared the whole SDP register bank
+allocation bitmap via bitmap_zero() resulting in the loss of all
+tracking information. This results in a slot potentially being handed
+out again by dw_dp_send_sdp(), which is still considered to be held
+by the previous owner. Then the previous owner might free up the wrong
+SDP later on.
+
+Instead of bulk clearing the tracking information, the new
+implementation only clears the SDPs actually configured during
+dw_dp_bridge_atomic_enable() instead of the entire bank. The
+introduced functionality for that will also be used by the to-be-added
+audio infrastructure.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-19-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 27 ++++++++--
+ 1 file changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -335,6 +335,7 @@ struct dw_dp {
+ 	bool usbc_hpd;
+ 	bool pm_active;
+ 
++	int vsc_sdp_nr;
+ 	DECLARE_BITMAP(sdp_reg_bank, SDP_REG_BANK_SIZE);
+ };
+ 
+@@ -1076,7 +1077,19 @@ static int dw_dp_send_sdp(struct dw_dp *dp, struct dw_dp_sdp *sdp)
+ 				   EN_HORIZONTAL_SDP << nr,
+ 				   EN_HORIZONTAL_SDP << nr);
+ 
+-	return 0;
++	return nr;
++}
++
++static void dw_dp_clear_sdp(struct dw_dp *dp, int nr)
++{
++	regmap_clear_bits(dp->regmap, DW_DP_SDP_VERTICAL_CTRL,
++			  EN_VERTICAL_SDP << nr);
++
++	regmap_clear_bits(dp->regmap, DW_DP_SDP_HORIZONTAL_CTRL,
++			  EN_HORIZONTAL_SDP << nr);
++
++	scoped_guard(mutex, &dp->sdp_lock)
++		clear_bit(nr, dp->sdp_reg_bank);
+ }
+ 
+ static int dw_dp_send_vsc_sdp(struct dw_dp *dp)
+@@ -1394,7 +1407,7 @@ static int dw_dp_video_enable(struct dw_dp *dp)
+ 			   FIELD_PREP(VIDEO_STREAM_ENABLE, 1));
+ 
+ 	if (dw_dp_video_need_vsc_sdp(dp))
+-		dw_dp_send_vsc_sdp(dp);
++		dp->vsc_sdp_nr = dw_dp_send_vsc_sdp(dp);
+ 
+ 	return 0;
+ }
+@@ -1754,8 +1767,12 @@ static void dw_dp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 
+ 	dw_dp_video_disable(dp);
+ 	dw_dp_link_disable(dp);
+-	scoped_guard(mutex, &dp->sdp_lock)
+-		bitmap_zero(dp->sdp_reg_bank, SDP_REG_BANK_SIZE);
++
++	if (dp->vsc_sdp_nr >= 0) {
++		dw_dp_clear_sdp(dp, dp->vsc_sdp_nr);
++		dp->vsc_sdp_nr = -1;
++	}
++
+ 	dw_dp_reset(dp);
+ 	pm_runtime_put_autosuspend(dp->dev);
+ }
+@@ -2352,6 +2369,8 @@ int dw_dp_probe(struct dw_dp *dp)
+ 	if (ret)
+ 		return ret;
+ 
++	dp->vsc_sdp_nr = -1;
++
+ 	bridge = &dp->bridge;
+ 	bridge->of_node = dev->of_node;
+ 	bridge->ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID | DRM_BRIDGE_OP_HPD;
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:53 +0100
+Subject: drm/bridge: synopsys: dw-dp: Use regmap_set_bits in dw_dp_send_sdp
+
+Simplify dw_dp_send_sdp() a little bit by making use of
+regmap_set_bits.
+
+No functional change intended.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-20-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -1068,14 +1068,12 @@ static int dw_dp_send_sdp(struct dw_dp *dp, struct dw_dp_sdp *sdp)
+ 			     FIELD_PREP(SDP_REGS, get_unaligned_le32(payload)));
+ 
+ 	if (sdp->flags & DW_DP_SDP_VERTICAL_INTERVAL)
+-		regmap_update_bits(dp->regmap, DW_DP_SDP_VERTICAL_CTRL,
+-				   EN_VERTICAL_SDP << nr,
+-				   EN_VERTICAL_SDP << nr);
++		regmap_set_bits(dp->regmap, DW_DP_SDP_VERTICAL_CTRL,
++				EN_VERTICAL_SDP << nr);
+ 
+ 	if (sdp->flags & DW_DP_SDP_HORIZONTAL_INTERVAL)
+-		regmap_update_bits(dp->regmap, DW_DP_SDP_HORIZONTAL_CTRL,
+-				   EN_HORIZONTAL_SDP << nr,
+-				   EN_HORIZONTAL_SDP << nr);
++		regmap_set_bits(dp->regmap, DW_DP_SDP_HORIZONTAL_CTRL,
++				EN_HORIZONTAL_SDP << nr);
+ 
+ 	return nr;
+ }
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:54 +0100
+Subject: dt-bindings: display: rockchip: dw-dp: Fix sound DAI cells
+
+The RK3588 and RK3576 DesignWare DisplayPort controllers both have two
+possible DAI interfaces: I2S and S/PDIF. Thus an argument is needed to
+to select the right interface.
+
+In addition to that the RK3576 DisplayPort controller is configured
+with Multi Stream Transport (MST) enabled for up to 3 displays and
+thus has a total of 6 DAI interfaces (I2S and S/PDIF for each possible
+stream). Meanwhile the RK3588 does not support MST and thus has only 2
+DAI interfaces.
+
+The binding update from this patch has only been tested with the simple
+single stream transport (SST) setup as the Linux driver does not yet
+support MST. Once MST support is added, the plan is to simply add more
+numbers to the argument, so that it looks like this for RK3576:
+
+0 = I2S on stream 0,
+1 = S/PDIF on stream 0
+2 = I2S on stream 1,
+3 = S/PDIF on stream 1
+4 = I2S on stream 2,
+5 = S/PDIF on stream 2
+
+As the arguments are not part of the binding itself the audio side
+is also ready for MST after this change.
+
+Switching '#sound-dai-cells' from 0 to 1 without keeping compatibility
+is an ABI break. The rationale for going that way is, that there is not
+a single known driver implementation for the current binding. It's also
+unclear how the current binding would be used (only support I2S or
+S/PDIF for stream 0?). The mainline rk3588 DTS include sets it to 0, but
+does not have any soundcard using the DAI. This will be fixed up
+separately. The RK3576 does not set it at all.
+
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-21-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ Documentation/devicetree/bindings/display/rockchip/rockchip,dw-dp.yaml | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/display/rockchip/rockchip,dw-dp.yaml b/Documentation/devicetree/bindings/display/rockchip/rockchip,dw-dp.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/display/rockchip/rockchip,dw-dp.yaml
++++ b/Documentation/devicetree/bindings/display/rockchip/rockchip,dw-dp.yaml
+@@ -25,7 +25,7 @@ description: |
+   * Supports up to 8/10 bits per color component
+   * Supports RBG, YCbCr4:4:4, YCbCr4:2:2, YCbCr4:2:0
+   * Pixel clock up to 594MHz
+-  * I2S, SPDIF audio interface
++  * I2S, S/PDIF audio interface
+ 
+ properties:
+   compatible:
+@@ -46,7 +46,7 @@ properties:
+       - description: DisplayPort AUX clock
+       - description: HDCP clock
+       - description: I2S interface clock
+-      - description: SPDIF interfce clock
++      - description: S/PDIF interfce clock
+ 
+   clock-names:
+     minItems: 3
+@@ -83,7 +83,8 @@ properties:
+     maxItems: 1
+ 
+   "#sound-dai-cells":
+-    const: 0
++    const: 1
++    description: 0 for I2S, 1 for S/PDIF
+ 
+ required:
+   - compatible
+@@ -144,7 +145,7 @@ examples:
+         resets = <&cru SRST_DP0>;
+         phys = <&usbdp_phy0 PHY_TYPE_DP>;
+         power-domains = <&power RK3588_PD_VO0>;
+-        #sound-dai-cells = <0>;
++        #sound-dai-cells = <1>;
+ 
+         ports {
+           #address-cells = <1>;
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 06:00:55 +0100
+Subject: drm/bridge: synopsys: dw-dp: Add audio support
+
+Implement audio support for the Synopsys DesignWare DisplayPort
+controller.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-22-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 316 +++++++++-
+ 1 file changed, 315 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -23,16 +23,20 @@
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_bridge_connector.h>
+ #include <drm/display/drm_dp_helper.h>
++#include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_of.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
+ 
++#include <sound/hdmi-codec.h>
++
+ #define DW_DP_VERSION_NUMBER			0x0000
+ #define DW_DP_VERSION_TYPE			0x0004
+ #define DW_DP_ID				0x0008
+ 
+ #define DW_DP_CONFIG_REG1			0x0100
++#define AUDIO_SELECT				GENMASK(2, 1)
+ #define DW_DP_CONFIG_REG2			0x0104
+ #define DW_DP_CONFIG_REG3			0x0108
+ 
+@@ -109,6 +113,10 @@
+ #define HBR_MODE_ENABLE				BIT(10)
+ #define AUDIO_DATA_WIDTH			GENMASK(9, 5)
+ #define AUDIO_DATA_IN_EN			GENMASK(4, 1)
++#define AUDIO_DATA_IN_EN_CHANNEL12		BIT(0)
++#define AUDIO_DATA_IN_EN_CHANNEL34		BIT(1)
++#define AUDIO_DATA_IN_EN_CHANNEL56		BIT(2)
++#define AUDIO_DATA_IN_EN_CHANNEL78		BIT(3)
+ #define AUDIO_INF_SELECT			BIT(0)
+ 
+ #define DW_DP_SDP_VERTICAL_CTRL			0x0500
+@@ -252,6 +260,8 @@
+ 
+ #define SDP_REG_BANK_SIZE			16
+ 
++#define DW_DP_SDP_VERSION			0x12
++
+ struct dw_dp_link_caps {
+ 	bool enhanced_framing;
+ 	bool tps3_supported;
+@@ -305,6 +315,19 @@ struct dw_dp_hotplug {
+ 	bool long_hpd;
+ };
+ 
++enum dw_dp_audio_interface_support {
++	DW_DP_AUDIO_I2S_ONLY = 0,
++	DW_DP_AUDIO_SPDIF_ONLY = 1,
++	DW_DP_AUDIO_I2S_AND_SPDIF = 2,
++	DW_DP_AUDIO_NONE = 3,
++};
++
++enum dw_dp_audio_interface {
++	DW_DP_AUDIO_I2S = 0,
++	DW_DP_AUDIO_SPDIF = 1,
++	DW_DP_AUDIO_UNUSED,
++};
++
+ struct dw_dp {
+ 	struct drm_bridge bridge;
+ 	struct device *dev;
+@@ -320,10 +343,18 @@ struct dw_dp {
+ 	int irq;
+ 	struct work_struct hpd_work;
+ 	struct dw_dp_hotplug hotplug;
++	enum dw_dp_audio_interface audio_interface;
++	int audio_channels;
++	int audio_channel_allocation;
++	int audio_sample_width;
++	bool audio_muted;
++	int audio_sdp_nr;
+ 	/* Serialize hpd status access */
+ 	struct mutex irq_lock;
+ 	/* Serialize sdp_reg_bank access */
+ 	struct mutex sdp_lock;
++	/* Serialize audio state */
++	struct mutex audio_lock;
+ 
+ 	struct drm_dp_aux aux;
+ 
+@@ -1696,6 +1727,261 @@ static int dw_dp_link_enable(struct dw_dp *dp)
+ 	return ret;
+ }
+ 
++static int dw_dp_audio_infoframe_send(struct dw_dp *dp)
++{
++	struct hdmi_audio_infoframe frame;
++	struct dw_dp_sdp sdp;
++	int ret;
++
++	ret = hdmi_audio_infoframe_init(&frame);
++	if (ret < 0)
++		return ret;
++
++	frame.coding_type = HDMI_AUDIO_CODING_TYPE_STREAM;
++	frame.sample_frequency = HDMI_AUDIO_SAMPLE_FREQUENCY_STREAM;
++	frame.sample_size = HDMI_AUDIO_SAMPLE_SIZE_STREAM;
++	frame.channels = dp->audio_channels;
++	frame.channel_allocation = dp->audio_channel_allocation;
++
++	ret = hdmi_audio_infoframe_pack_for_dp(&frame, &sdp.base, DW_DP_SDP_VERSION);
++	if (ret < 0)
++		return ret;
++
++	sdp.flags = DW_DP_SDP_VERTICAL_INTERVAL;
++
++	return dw_dp_send_sdp(dp, &sdp);
++}
++
++static void dw_dp_audio_infoframe_clear(struct dw_dp *dp)
++{
++	if (dp->audio_sdp_nr >= 0) {
++		dw_dp_clear_sdp(dp, dp->audio_sdp_nr);
++		dp->audio_sdp_nr = -1;
++	}
++
++	regmap_clear_bits(dp->regmap, DW_DP_SDP_VERTICAL_CTRL,
++			  EN_AUDIO_STREAM_SDP | EN_AUDIO_TIMESTAMP_SDP);
++	regmap_clear_bits(dp->regmap, DW_DP_SDP_HORIZONTAL_CTRL,
++			  EN_AUDIO_STREAM_SDP);
++
++	regmap_clear_bits(dp->regmap, DW_DP_AUD_CONFIG1, AUDIO_DATA_IN_EN);
++}
++
++static void __dw_dp_audio_disable(struct dw_dp *dp)
++{
++	dw_dp_audio_infoframe_clear(dp);
++
++	if (dp->audio_interface == DW_DP_AUDIO_SPDIF)
++		clk_disable_unprepare(dp->spdif_clk);
++	else if (dp->audio_interface == DW_DP_AUDIO_I2S)
++		clk_disable_unprepare(dp->i2s_clk);
++
++	dp->audio_interface = DW_DP_AUDIO_UNUSED;
++}
++
++static int __dw_dp_audio_enable(struct dw_dp *dp)
++{
++	u8 audio_data_in_en;
++
++	switch (dp->audio_channels) {
++	case 1:
++	case 2:
++		audio_data_in_en = AUDIO_DATA_IN_EN_CHANNEL12;
++		break;
++	case 8:
++		audio_data_in_en = AUDIO_DATA_IN_EN_CHANNEL12 |
++				   AUDIO_DATA_IN_EN_CHANNEL34 |
++				   AUDIO_DATA_IN_EN_CHANNEL56 |
++				   AUDIO_DATA_IN_EN_CHANNEL78;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(dp->regmap, DW_DP_AUD_CONFIG1,
++			   AUDIO_DATA_IN_EN | NUM_CHANNELS | AUDIO_DATA_WIDTH |
++			   AUDIO_INF_SELECT | HBR_MODE_ENABLE | AUDIO_MUTE,
++			   FIELD_PREP(AUDIO_DATA_IN_EN, audio_data_in_en) |
++			   FIELD_PREP(NUM_CHANNELS, dp->audio_channels - 1) |
++			   FIELD_PREP(AUDIO_DATA_WIDTH, dp->audio_sample_width) |
++			   FIELD_PREP(AUDIO_INF_SELECT, dp->audio_interface) |
++			   FIELD_PREP(HBR_MODE_ENABLE, 0) |
++			   FIELD_PREP(AUDIO_MUTE, dp->audio_muted));
++
++	/* Wait for inf switch */
++	usleep_range(20, 40);
++
++	/*
++	 * Send audio stream during vertical and horizontal blanking periods.
++	 * Send out audio timestamp SDP once per video frame during the vertical
++	 * blanking period
++	 */
++	regmap_update_bits(dp->regmap, DW_DP_SDP_VERTICAL_CTRL,
++			   EN_AUDIO_STREAM_SDP | EN_AUDIO_TIMESTAMP_SDP,
++			   FIELD_PREP(EN_AUDIO_STREAM_SDP, 1) |
++			   FIELD_PREP(EN_AUDIO_TIMESTAMP_SDP, 1));
++	regmap_update_bits(dp->regmap, DW_DP_SDP_HORIZONTAL_CTRL,
++			   EN_AUDIO_STREAM_SDP,
++			   FIELD_PREP(EN_AUDIO_STREAM_SDP, 1));
++
++	if (dp->audio_sdp_nr >= 0) {
++		dw_dp_clear_sdp(dp, dp->audio_sdp_nr);
++		dp->audio_sdp_nr = -1;
++	}
++
++	dp->audio_sdp_nr = dw_dp_audio_infoframe_send(dp);
++	if (dp->audio_sdp_nr < 0) {
++		dw_dp_audio_infoframe_clear(dp);
++		return dp->audio_sdp_nr;
++	}
++
++	return 0;
++}
++
++static int dw_dp_audio_startup(struct drm_bridge *bridge,
++			       struct drm_connector *connector)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	dev_dbg(dp->dev, "audio startup\n");
++
++	return pm_runtime_get_active(dp->dev, RPM_TRANSPARENT);
++}
++
++static void dw_dp_audio_unprepare(struct drm_bridge *bridge,
++				  struct drm_connector *connector)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	guard(mutex)(&dp->audio_lock);
++
++	__dw_dp_audio_disable(dp);
++}
++
++static int dw_dp_audio_prepare(struct drm_bridge *bridge,
++			       struct drm_connector *connector,
++			       struct hdmi_codec_daifmt *daifmt,
++			       struct hdmi_codec_params *params)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++	u8 supported_audio_interfaces;
++	enum dw_dp_audio_interface audio_interface;
++	u32 cfg1;
++	int ret;
++
++	guard(mutex)(&dp->audio_lock);
++
++	/*
++	 * prepare might be called multiple times, so release the clocks
++	 * from previous calls to keep the calls in balance.
++	 */
++	if (dp->audio_interface != DW_DP_AUDIO_UNUSED)
++		__dw_dp_audio_disable(dp);
++
++	/* The hardware is limited to 1,2 or 8 channels */
++	switch (params->cea.channels) {
++	case 1:
++	case 2:
++	case 8:
++		break;
++	default:
++		dev_err(dp->dev, "invalid audio channels %d\n", params->cea.channels);
++		return -EINVAL;
++	}
++
++	if (params->sample_width < 16 || params->sample_width > 24) {
++		dev_err(dp->dev, "invalid data sample width %d\n", params->sample_width);
++		return -EINVAL;
++	}
++
++	switch (daifmt->fmt) {
++	case HDMI_SPDIF:
++		audio_interface = DW_DP_AUDIO_SPDIF;
++		break;
++	case HDMI_I2S:
++		/*
++		 * It is recommended to use SPDIF instead of I2S, since I2S mode requires
++		 * manually inserting PCUV control bits from userspace and this is done
++		 * automatically in hardware for SPDIF mode.
++		 */
++		audio_interface = DW_DP_AUDIO_I2S;
++		break;
++	default:
++		dev_err(dp->dev, "invalid DAI format %d\n", daifmt->fmt);
++		return -EINVAL;
++	}
++
++	regmap_read(dp->regmap, DW_DP_CONFIG_REG1, &cfg1);
++	supported_audio_interfaces = FIELD_GET(AUDIO_SELECT, cfg1);
++
++	if (supported_audio_interfaces != DW_DP_AUDIO_I2S_AND_SPDIF &&
++	    supported_audio_interfaces != audio_interface) {
++		dev_err(dp->dev, "unsupported DAI %d\n", daifmt->fmt);
++		return -EINVAL;
++	}
++
++	ret = clk_prepare_enable(dp->spdif_clk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(dp->i2s_clk);
++	if (ret) {
++		clk_disable_unprepare(dp->spdif_clk);
++		return ret;
++	}
++
++	if (audio_interface == DW_DP_AUDIO_I2S)
++		clk_disable_unprepare(dp->spdif_clk);
++	else if (audio_interface == DW_DP_AUDIO_SPDIF)
++		clk_disable_unprepare(dp->i2s_clk);
++
++	dp->audio_channels = params->cea.channels;
++	dp->audio_channel_allocation = params->cea.channel_allocation;
++	dp->audio_sample_width = params->sample_width;
++	dp->audio_interface = audio_interface;
++
++	ret = __dw_dp_audio_enable(dp);
++	if (ret < 0) {
++		dev_err(dp->dev, "failed to enable audio\n");
++		__dw_dp_audio_disable(dp);
++		return ret;
++	}
++
++	dev_dbg(dp->dev, "audio prepare with %d channels using DAI=%d\n",
++		dp->audio_channels, dp->audio_interface);
++
++	return 0;
++}
++
++static void dw_dp_audio_shutdown(struct drm_bridge *bridge,
++				 struct drm_connector *connector)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	dev_dbg(dp->dev, "audio shutdown\n");
++
++	dw_dp_audio_unprepare(bridge, connector);
++	pm_runtime_put_autosuspend(dp->dev);
++}
++
++static int dw_dp_audio_mute_stream(struct drm_bridge *bridge,
++				   struct drm_connector *connector,
++				   bool enable, int direction)
++{
++	struct dw_dp *dp = bridge_to_dp(bridge);
++
++	dev_dbg(dp->dev, "audio %smute\n", enable ? "" : "un");
++
++	guard(mutex)(&dp->audio_lock);
++
++	dp->audio_muted = enable;
++
++	regmap_update_bits(dp->regmap, DW_DP_AUD_CONFIG1, AUDIO_MUTE,
++			   FIELD_PREP(AUDIO_MUTE, enable));
++
++	return 0;
++}
++
+ static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 				       struct drm_atomic_commit *state)
+ {
+@@ -1734,12 +2020,22 @@ static void dw_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 		dev_err(dp->dev, "failed to enable video: %d\n", ret);
+ 		return;
+ 	}
++
++	scoped_guard(mutex, &dp->audio_lock) {
++		if (dp->audio_interface != DW_DP_AUDIO_UNUSED) {
++			ret = __dw_dp_audio_enable(dp);
++			if (ret < 0)
++				dev_err(dp->dev, "failed to restore audio: %d\n", ret);
++		}
++	}
+ }
+ 
+ static void dw_dp_reset(struct dw_dp *dp)
+ {
+ 	int val;
+ 
++	guard(mutex)(&dp->audio_lock);
++
+ 	disable_irq(dp->irq);
+ 	regmap_update_bits(dp->regmap, DW_DP_SOFT_RESET_CTRL, CONTROLLER_RESET,
+ 			   FIELD_PREP(CONTROLLER_RESET, 1));
+@@ -2038,6 +2334,11 @@ static const struct drm_bridge_funcs dw_dp_bridge_funcs = {
+ 	.detect = dw_dp_bridge_detect,
+ 	.edid_read = dw_dp_bridge_edid_read,
+ 	.oob_notify = dw_dp_bridge_oob_notify,
++
++	.dp_audio_startup = dw_dp_audio_startup,
++	.dp_audio_prepare = dw_dp_audio_prepare,
++	.dp_audio_shutdown = dw_dp_audio_shutdown,
++	.dp_audio_mute_stream = dw_dp_audio_mute_stream,
+ };
+ 
+ static int dw_dp_link_retrain(struct dw_dp *dp)
+@@ -2252,6 +2553,10 @@ int dw_dp_probe(struct dw_dp *dp)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_mutex_init(dev, &dp->audio_lock);
++	if (ret)
++		return ret;
++
+ 	res = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(res))
+ 		return PTR_ERR(res);
+@@ -2368,12 +2673,21 @@ int dw_dp_probe(struct dw_dp *dp)
+ 		return ret;
+ 
+ 	dp->vsc_sdp_nr = -1;
++	dp->audio_interface = DW_DP_AUDIO_UNUSED;
++	dp->audio_sdp_nr = -1;
+ 
+ 	bridge = &dp->bridge;
+ 	bridge->of_node = dev->of_node;
+-	bridge->ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID | DRM_BRIDGE_OP_HPD;
++	bridge->ops = DRM_BRIDGE_OP_DP_AUDIO |
++		      DRM_BRIDGE_OP_DETECT |
++		      DRM_BRIDGE_OP_EDID |
++		      DRM_BRIDGE_OP_HPD;
+ 	bridge->type = DRM_MODE_CONNECTOR_DisplayPort;
+ 	bridge->ycbcr_420_allowed = true;
++	bridge->hdmi_audio_dev = dev;
++	bridge->hdmi_audio_max_i2s_playback_channels = 8;
++	bridge->hdmi_audio_dai_port = 1;
++	bridge->hdmi_audio_spdif_playback = true;
+ 
+ 	return devm_drm_bridge_add(dev, bridge);
+ }
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yury Smirnov <yurymonzon@gmail.com>
+Date: Sat, 14 Nov 2026 06:00:56 +0100
+Subject: drm/bridge: synopsys: dw-dp: Retrain on hotplug with pre-enabled link
+
+A long HPD pulse only sends a hotplug event. When the sink is replugged
+while the output stays enabled with an unchanged mode, the compositor
+might not do any modeset and the link is never trained again, so the
+sink shows no signal.
+
+On a long pulse with the link enabled and the sink present, retrain
+the link if its status shows it lost.
+
+Signed-off-by: Yury Smirnov <yurymonzon@gmail.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-synopsys-dw-dp-improvements-v12-23-d42d3dc5bdd4@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-dp.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-dp.c b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-dp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-dp.c
+@@ -2394,6 +2394,12 @@ static void dw_dp_hpd_work(struct work_struct *work)
+ 				dev_warn(dp->dev, "Retrain link failed\n");
+ 		}
+ 	} else {
++		if (dp->link.enabled && dw_dp_hpd_detect(dp)) {
++			ret = dw_dp_link_retrain(dp);
++			if (ret)
++				dev_warn(dp->dev, "Retrain link failed\n");
++		}
++
+ 		drm_helper_hpd_irq_event(dp->bridge.dev);
+ 	}
+ }
+-- 
+Armbian
+
