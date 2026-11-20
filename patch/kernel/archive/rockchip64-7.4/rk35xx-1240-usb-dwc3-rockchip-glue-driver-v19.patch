@@ -1,0 +1,907 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:00 +0100
+Subject: phy: rockchip: usbdp: Track PHY power state
+
+Track PHY state requested by software for DP and USB3 individually
+in preparation to rework and fix up power state handling.
+
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Tested-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-1-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 22 +++++++++-
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -175,6 +175,7 @@ struct rk_udphy {
+ 	bool phy_needs_reinit;
+ 	u8 mode;
+ 	u8 status;
++	u8 sw_mode; /* modes currently requested */
+ 
+ 	/* utilized for USB */
+ 	bool hs; /* flag for high-speed */
+@@ -1050,11 +1051,15 @@ static int rk_udphy_dp_phy_power_on(struct phy *phy)
+ 	int ret;
+ 
+ 	scoped_guard(mutex, &udphy->mutex) {
++		udphy->sw_mode |= UDPHY_MODE_DP;
++
+ 		phy_set_bus_width(phy, udphy->dp_lanes);
+ 
+ 		ret = rk_udphy_power_on(udphy, UDPHY_MODE_DP);
+-		if (ret)
++		if (ret) {
++			udphy->sw_mode &= ~UDPHY_MODE_DP;
+ 			return ret;
++		}
+ 
+ 		rk_udphy_dp_lane_enable(udphy, udphy->dp_lanes);
+ 
+@@ -1077,6 +1082,8 @@ static int rk_udphy_dp_phy_power_off(struct phy *phy)
+ 
+ 	guard(mutex)(&udphy->mutex);
+ 
++	udphy->sw_mode &= ~UDPHY_MODE_DP;
++
+ 	rk_udphy_dp_lane_enable(udphy, 0);
+ 	rk_udphy_power_off(udphy, UDPHY_MODE_DP);
+ 
+@@ -1285,16 +1292,25 @@ static const struct phy_ops rk_udphy_dp_phy_ops = {
+ static int rk_udphy_usb3_phy_init(struct phy *phy)
+ {
+ 	struct rk_udphy *udphy = phy_get_drvdata(phy);
++	int ret;
+ 
+ 	guard(mutex)(&udphy->mutex);
+ 
++	udphy->sw_mode |= UDPHY_MODE_USB;
++
+ 	/* DP only or high-speed, disable U3 port */
+ 	if (!(udphy->mode & UDPHY_MODE_USB) || udphy->hs) {
+ 		rk_udphy_u3_port_disable(udphy, true);
+ 		return 0;
+ 	}
+ 
+-	return rk_udphy_power_on(udphy, UDPHY_MODE_USB);
++	ret = rk_udphy_power_on(udphy, UDPHY_MODE_USB);
++	if (ret) {
++		udphy->sw_mode &= ~UDPHY_MODE_USB;
++		return ret;
++	}
++
++	return 0;
+ }
+ 
+ static int rk_udphy_usb3_phy_exit(struct phy *phy)
+@@ -1303,6 +1319,8 @@ static int rk_udphy_usb3_phy_exit(struct phy *phy)
+ 
+ 	guard(mutex)(&udphy->mutex);
+ 
++	udphy->sw_mode &= ~UDPHY_MODE_USB;
++
+ 	/* DP only or high-speed */
+ 	if (!(udphy->mode & UDPHY_MODE_USB) || udphy->hs)
+ 		return 0;
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:01 +0100
+Subject: phy: rockchip: usbdp: Add reset hook support for dwc3
+
+When TCPM (Type-C Port Manager) triggers an orientation or mux
+change, the PHY needs to reset. This results in the PHY no longer
+providing a clock to the USB controller. If the USB controller
+registers are accessed without the clock, SErrors are generated.
+
+This can be avoided by switching the clock provider for the USB
+controller. But after switching the clock, the USB PHY sometimes does
+not succeed to lock its "cmn ana lcpll" PLLs again. I suspect this is
+due to a clock glitch and after some debugging figured out that this
+can be avoided by disabling the USB controller's PIPE interface while
+the PHY reset is ongoing.
+
+Implement an API that allows the USBDP to actively request a reset
+from DWC3 as a quirk.
+
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Tested-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-2-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 60 +++++++++-
+ include/linux/phy/rockchip-usbdp.h        | 31 +++++
+ 2 files changed, 89 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -19,6 +19,7 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/phy/phy.h>
++#include <linux/phy/rockchip-usbdp.h>
+ #include <linux/platform_device.h>
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+@@ -179,6 +180,9 @@ struct rk_udphy {
+ 
+ 	/* utilized for USB */
+ 	bool hs; /* flag for high-speed */
++	void (*dwc3_reset_handler)(void *data, int port, bool pre);
++	void *dwc3_reset_data;
++	int dwc3_reset_port;
+ 
+ 	/* utilized for DP */
+ 	struct gpio_desc *sbu1_dc_gpio;
+@@ -994,6 +998,46 @@ static int rk_udphy_parse_dt(struct rk_udphy *udphy)
+ 	return rk_udphy_reset_init(udphy, dev);
+ }
+ 
++static void rk_udphy_run_reset_handler(struct rk_udphy *udphy, bool pre)
++{
++	if (!udphy->dwc3_reset_handler)
++		return;
++
++	if (!(udphy->sw_mode & UDPHY_MODE_USB))
++		return;
++
++	if (udphy->hs)
++		return;
++
++	udphy->dwc3_reset_handler(udphy->dwc3_reset_data, udphy->dwc3_reset_port, pre);
++}
++
++void rk_udphy_unregister_reset_handler(struct phy *phy)
++{
++	struct rk_udphy *udphy = phy_get_drvdata(phy);
++
++	guard(mutex)(&udphy->mutex);
++
++	udphy->dwc3_reset_handler = NULL;
++	udphy->dwc3_reset_data = NULL;
++	udphy->dwc3_reset_port = 0;
++}
++EXPORT_SYMBOL_GPL(rk_udphy_unregister_reset_handler);
++
++void rk_udphy_register_reset_handler(struct phy *phy,
++				     void (*reset_handler)(void *data, int port, bool pre),
++				     void *data, int port)
++{
++	struct rk_udphy *udphy = phy_get_drvdata(phy);
++
++	guard(mutex)(&udphy->mutex);
++
++	udphy->dwc3_reset_handler = reset_handler;
++	udphy->dwc3_reset_data = data;
++	udphy->dwc3_reset_port = port;
++}
++EXPORT_SYMBOL_GPL(rk_udphy_register_reset_handler);
++
+ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ {
+ 	int ret;
+@@ -1004,24 +1048,36 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ 	}
+ 
+ 	if (udphy->status == UDPHY_MODE_NONE) {
++		rk_udphy_run_reset_handler(udphy, true);
++
+ 		ret = rk_udphy_setup(udphy);
+-		if (ret)
++		if (ret) {
++			rk_udphy_run_reset_handler(udphy, false);
+ 			return ret;
++		}
+ 
+ 		if (!udphy->hs && udphy->mode & UDPHY_MODE_USB)
+ 			rk_udphy_u3_port_disable(udphy, false);
+ 		udphy->phy_needs_reinit = false;
++
++		rk_udphy_run_reset_handler(udphy, false);
+ 	} else if (udphy->phy_needs_reinit) {
++		rk_udphy_run_reset_handler(udphy, true);
++
+ 		rk_udphy_u3_port_disable(udphy, true);
+ 		udelay(10);
+ 
+ 		ret = rk_udphy_init(udphy);
+-		if (ret)
++		if (ret) {
++			rk_udphy_run_reset_handler(udphy, false);
+ 			return ret;
++		}
+ 
+ 		if (!udphy->hs && udphy->mode & UDPHY_MODE_USB)
+ 			rk_udphy_u3_port_disable(udphy, false);
+ 		udphy->phy_needs_reinit = false;
++
++		rk_udphy_run_reset_handler(udphy, false);
+ 	}
+ 
+ 	udphy->status |= mode;
+diff --git a/include/linux/phy/rockchip-usbdp.h b/include/linux/phy/rockchip-usbdp.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/phy/rockchip-usbdp.h
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Rockchip USBDP Combo PHY with Samsung IP block driver
++ *
++ * Copyright (C) 2026 Collabora Ltd
++ */
++
++#ifndef __ROCKCHIP_USBDP
++#define __ROCKCHIP_USBDP
++
++#include <linux/phy/phy.h>
++
++#if IS_ENABLED(CONFIG_PHY_ROCKCHIP_USBDP)
++
++void rk_udphy_unregister_reset_handler(struct phy *phy);
++void rk_udphy_register_reset_handler(struct phy *phy,
++				     void (*reset_handler)(void *data, int port, bool pre),
++				     void *data, int port);
++
++#else
++
++static inline void rk_udphy_unregister_reset_handler(struct phy *phy)
++{ }
++static inline void rk_udphy_register_reset_handler(struct phy *phy,
++					    void (*reset_handler)(void *data, int port, bool pre),
++					    void *data, int port)
++{ }
++
++#endif
++
++#endif
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:02 +0100
+Subject: usb: dwc3: rockchip: introduce glue driver
+
+Introduce Rockchip specific glue code for the Synopsys DWC3 USB driver.
+For now this handles things identical to the default glue.
+
+After this change the glue driver is mandatory for Rockchip RK3588 and
+RK3576; it does not make sense to fallback to the core driver as the
+whole purpose of the glue driver is fixing race conditions resulting in
+SErrors and non-functional USB.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Tested-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-3-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/dwc3/Kconfig         |  11 +
+ drivers/usb/dwc3/Makefile        |   1 +
+ drivers/usb/dwc3/core.c          |  15 ++
+ drivers/usb/dwc3/dwc3-rockchip.c | 106 ++++++++++
+ 4 files changed, 133 insertions(+)
+
+diff --git a/drivers/usb/dwc3/Kconfig b/drivers/usb/dwc3/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/Kconfig
++++ b/drivers/usb/dwc3/Kconfig
+@@ -190,6 +190,17 @@ config USB_DWC3_OCTEON
+ 	  Only the host mode is currently supported.
+ 	  Say 'Y' or 'M' here if you have one such device.
+ 
++config USB_DWC3_ROCKCHIP
++	tristate "Rockchip DWC3 Platform Driver"
++	depends on ARCH_ROCKCHIP || COMPILE_TEST
++	depends on OF
++	default USB_DWC3
++	help
++	  Rockchip SoCs with DesignWare Core USB3 IP inside,
++	  and IP Core configured for USB 2.0 and USB 3.0 in host
++	  or dual-role mode.
++	  Say 'Y' or 'M' if you have such device.
++
+ config USB_DWC3_RTK
+ 	tristate "Realtek DWC3 Platform Driver"
+ 	depends on OF && ARCH_REALTEK
+diff --git a/drivers/usb/dwc3/Makefile b/drivers/usb/dwc3/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/Makefile
++++ b/drivers/usb/dwc3/Makefile
+@@ -58,6 +58,7 @@ obj-$(CONFIG_USB_DWC3_IMX8MP)		+= dwc3-imx8mp.o
+ obj-$(CONFIG_USB_DWC3_IMX)		+= dwc3-imx.o
+ obj-$(CONFIG_USB_DWC3_XILINX)		+= dwc3-xilinx.o
+ obj-$(CONFIG_USB_DWC3_OCTEON)		+= dwc3-octeon.o
++obj-$(CONFIG_USB_DWC3_ROCKCHIP)		+= dwc3-rockchip.o
+ obj-$(CONFIG_USB_DWC3_RTK)		+= dwc3-rtk.o
+ obj-$(CONFIG_USB_DWC3_GENERIC_PLAT)	+= dwc3-generic-plat.o
+ obj-$(CONFIG_USB_DWC3_GOOGLE)		+= dwc3-google.o
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -2486,11 +2486,26 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
+ }
+ EXPORT_SYMBOL_GPL(dwc3_core_probe);
+ 
++/*
++ * List of compatibles, which have "synopsys,dwc3" as a fallback
++ * compatible, but have a vendor specific glue driver that should
++ * be used instead of this one.
++ */
++static const char *const dwc3_compatible_blocklist[] = {
++	"rockchip,rk3588-dwc3",
++	"rockchip,rk3576-dwc3",
++};
++
+ static int dwc3_probe(struct platform_device *pdev)
+ {
+ 	struct dwc3_probe_data probe_data = {};
+ 	struct resource *res;
+ 	struct dwc3 *dwc;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(dwc3_compatible_blocklist); i++)
++		if (device_is_compatible(&pdev->dev, dwc3_compatible_blocklist[i]))
++			return -ENODEV;
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res) {
+diff --git a/drivers/usb/dwc3/dwc3-rockchip.c b/drivers/usb/dwc3/dwc3-rockchip.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/usb/dwc3/dwc3-rockchip.c
+@@ -0,0 +1,106 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (c) 2026, Collabora Ltd. */
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include "glue.h"
++
++struct dwc3_rockchip {
++	struct dwc3		dwc;
++};
++
++static int dwc3_rockchip_probe(struct platform_device *pdev)
++{
++	struct dwc3_probe_data probe_data = {};
++	struct resource *res;
++	struct dwc3_rockchip *dwc_rk;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res) {
++		dev_err(&pdev->dev, "missing memory resource\n");
++		return -ENODEV;
++	}
++
++	dwc_rk = devm_kzalloc(&pdev->dev, sizeof(*dwc_rk), GFP_KERNEL);
++	if (!dwc_rk)
++		return -ENOMEM;
++
++	dwc_rk->dwc.dev = &pdev->dev;
++	dwc_rk->dwc.glue_ops = NULL;
++
++	probe_data.dwc = &dwc_rk->dwc;
++	probe_data.res = res;
++	probe_data.properties = DWC3_DEFAULT_PROPERTIES;
++
++	return dwc3_core_probe(&probe_data);
++}
++
++static void dwc3_rockchip_remove(struct platform_device *pdev)
++{
++	dwc3_core_remove(platform_get_drvdata(pdev));
++}
++
++static int dwc3_rockchip_runtime_suspend(struct device *dev)
++{
++	return dwc3_runtime_suspend(dev_get_drvdata(dev));
++}
++
++static int dwc3_rockchip_runtime_resume(struct device *dev)
++{
++	return dwc3_runtime_resume(dev_get_drvdata(dev));
++}
++
++static int dwc3_rockchip_runtime_idle(struct device *dev)
++{
++	return dwc3_runtime_idle(dev_get_drvdata(dev));
++}
++
++static int dwc3_rockchip_suspend(struct device *dev)
++{
++	return dwc3_pm_suspend(dev_get_drvdata(dev));
++}
++
++static int dwc3_rockchip_resume(struct device *dev)
++{
++	return dwc3_pm_resume(dev_get_drvdata(dev));
++}
++
++static void dwc3_rockchip_complete(struct device *dev)
++{
++	dwc3_pm_complete(dev_get_drvdata(dev));
++}
++
++static int dwc3_rockchip_prepare(struct device *dev)
++{
++	return dwc3_pm_prepare(dev_get_drvdata(dev));
++}
++
++static const struct dev_pm_ops dwc3_rockchip_dev_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(dwc3_rockchip_suspend, dwc3_rockchip_resume)
++	RUNTIME_PM_OPS(dwc3_rockchip_runtime_suspend, dwc3_rockchip_runtime_resume,
++		       dwc3_rockchip_runtime_idle)
++	.complete = pm_sleep_ptr(dwc3_rockchip_complete),
++	.prepare = pm_sleep_ptr(dwc3_rockchip_prepare),
++};
++
++static const struct of_device_id dwc3_rockchip_of_match[] = {
++	{ .compatible = "rockchip,rk3588-dwc3" },
++	{ .compatible = "rockchip,rk3576-dwc3" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, dwc3_rockchip_of_match);
++
++static struct platform_driver dwc3_rockchip_driver = {
++	.probe		= dwc3_rockchip_probe,
++	.remove		= dwc3_rockchip_remove,
++	.driver		= {
++		.name	= "dwc3-rockchip",
++		.pm	= pm_ptr(&dwc3_rockchip_dev_pm_ops),
++		.of_match_table	= dwc3_rockchip_of_match,
++	},
++};
++
++module_platform_driver(dwc3_rockchip_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("DesignWare DWC3 Rockchip Glue Driver");
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:03 +0100
+Subject: usb: dwc3: core: add post PHY registration hook for platform glue
+
+Add support for custom PHY handling steps in platform glue code
+by adding a post registration hook. This will be used for handling
+PHY reset notifications on the Rockchip platform.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Acked-by: Thinh Nguyen <Thinh.Nguyen@synopsys.com>
+Reviewed-by: Krishna Kurapati <krishna.kurapati@oss.qualcomm.com>
+Tested-by: Chaoyi Chen <chaoyi.chen@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-4-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/dwc3/core.c | 2 +-
+ drivers/usb/dwc3/core.h | 9 +++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -1649,7 +1649,7 @@ static int dwc3_core_get_phy(struct dwc3 *dwc)
+ 		}
+ 	}
+ 
+-	return 0;
++	return dwc3_post_phy_registration(dwc);
+ }
+ 
+ static int dwc3_core_init_mode(struct dwc3 *dwc)
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -1008,10 +1008,12 @@ struct dwc3_scratchpad_array {
+  *				need to be passed on to glue layer
+  * @pre_set_role: Notify glue of role switch notifications
+  * @pre_run_stop: Notify run stop enable/disable information to glue
++ * @post_phy_registration: Called directly after PHY got registered
+  */
+ struct dwc3_glue_ops {
+ 	void	(*pre_set_role)(struct dwc3 *dwc, enum usb_role role);
+ 	void	(*pre_run_stop)(struct dwc3 *dwc, bool is_on);
++	int	(*post_phy_registration)(struct dwc3 *dwc);
+ };
+ 
+ /**
+@@ -1688,6 +1690,13 @@ static inline void dwc3_pre_run_stop(struct dwc3 *dwc, bool is_on)
+ 		dwc->glue_ops->pre_run_stop(dwc, is_on);
+ }
+ 
++static inline int dwc3_post_phy_registration(struct dwc3 *dwc)
++{
++	if (dwc->glue_ops && dwc->glue_ops->post_phy_registration)
++		return dwc->glue_ops->post_phy_registration(dwc);
++	return 0;
++}
++
+ #if IS_ENABLED(CONFIG_USB_DWC3_HOST) || IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)
+ int dwc3_host_init(struct dwc3 *dwc);
+ void dwc3_host_exit(struct dwc3 *dwc);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:04 +0100
+Subject: usb: dwc3: core: only access GUSB3PIPECTL under lock
+
+Update dwc3_enable_susphy() to take dwc->lock while updating
+GUSB3PIPECTL to protect the read-modify-write cycle from other users
+accessing the same register, which is soon introduced.
+
+Note: technically there is already dwc3_ss_phy_setup() as a second user,
+but it runs and finishes before any call to dwc3_enable_susphy() should
+happen.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-5-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/dwc3/core.c | 19 ++++++++--
+ drivers/usb/dwc3/glue.h |  2 +-
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -108,11 +108,13 @@ static int dwc3_get_dr_mode(struct dwc3 *dwc)
+ 	return 0;
+ }
+ 
+-void dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
++static void __dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
+ {
+ 	u32 reg;
+ 	int i;
+ 
++	lockdep_assert_held(&dwc->lock);
++
+ 	for (i = 0; i < dwc->num_usb3_ports; i++) {
+ 		reg = dwc3_readl(dwc, DWC3_GUSB3PIPECTL(i));
+ 		if (enable && !dwc->dis_u3_susphy_quirk)
+@@ -133,6 +135,13 @@ void dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
+ 		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(i), reg);
+ 	}
+ }
++
++void dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
++{
++	guard(spinlock_irqsave)(&dwc->lock);
++
++	__dwc3_enable_susphy(dwc, enable);
++}
+ EXPORT_SYMBOL_GPL(dwc3_enable_susphy);
+ 
+ void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode, bool ignore_susphy)
+@@ -150,7 +159,7 @@ void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode, bool ignore_susphy)
+ 	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
+ 	if (hw_mode == DWC3_GHWPARAMS0_MODE_DRD && !ignore_susphy) {
+ 		if (DWC3_GCTL_PRTCAP(reg) != mode)
+-			dwc3_enable_susphy(dwc, false);
++			__dwc3_enable_susphy(dwc, false);
+ 	}
+ 
+ 	reg &= ~(DWC3_GCTL_PRTCAPDIR(DWC3_GCTL_PRTCAP_OTG));
+@@ -1660,7 +1669,8 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
+ 
+ 	switch (dwc->dr_mode) {
+ 	case USB_DR_MODE_PERIPHERAL:
+-		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_DEVICE, false);
++		scoped_guard(spinlock_irqsave, &dwc->lock)
++			dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_DEVICE, false);
+ 
+ 		if (dwc->usb2_phy)
+ 			otg_set_vbus(dwc->usb2_phy->otg, false);
+@@ -1672,7 +1682,8 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
+ 			return dev_err_probe(dev, ret, "failed to initialize gadget\n");
+ 		break;
+ 	case USB_DR_MODE_HOST:
+-		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_HOST, false);
++		scoped_guard(spinlock_irqsave, &dwc->lock)
++			dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_HOST, false);
+ 
+ 		if (dwc->usb2_phy)
+ 			otg_set_vbus(dwc->usb2_phy->otg, true);
+diff --git a/drivers/usb/dwc3/glue.h b/drivers/usb/dwc3/glue.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/glue.h
++++ b/drivers/usb/dwc3/glue.h
+@@ -172,7 +172,7 @@ void dwc3_gadget_exit(struct dwc3 *dwc);
+  * This is usually handled by the dwc3 core code and should only be used
+  * when skip_core_init_mode is used and the glue layer needs to manage SUSPHY
+  * settings itself, e.g., due to platform-specific requirements during mode
+- * switches.
++ * switches. It takes dwc->lock internally.
+  */
+ void dwc3_enable_susphy(struct dwc3 *dwc, bool enable);
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Sat, 14 Nov 2026 02:02:05 +0100
+Subject: usb: dwc3: rockchip: add USBDP PHY reset quirk
+
+On recent Rockchip platforms (at least RK3588 & RK3576), DWC3 IP is used
+with a USBDP PHY providing USB3 and DP. This PHY needs to be reset when
+the mode changes, which may happen when plugging in different USB-C
+devices.
+
+If the USBDP PHY resets with the DWC3 IP running, its internal state
+corrupts resulting in the USBDP PHY not being able to lock some PLL
+clocks, which effectively renders USB3 unusable.
+
+To fix the issue this adds a Rockchip USBDP specific quirk, which will
+assert PHYSOFTRST before the actual PHY is disabled and will deassert it
+once the PHY returns.
+
+The quirk is skipped while DWC3 is suspended, as its registers may be
+inaccessible and the device being suspended is a quirk in itself (the
+vendor BSP enables runtime PM with very short autosuspend as a
+workaround for this issue). Thus the code just ensures the PM state
+does not change while the PHY reset is going on.
+
+Note, that the same platforms also use DWC3 with a different PHY
+(rockchip-naneng-combphy), so the PHY calls are protected by a
+driver name check.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261114-b4-rockchip-dwc3-rockchip-glue-v19-6-b79fb5f4b42a@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/dwc3/Kconfig         |   1 +
+ drivers/usb/dwc3/dwc3-rockchip.c | 154 +++++++++-
+ drivers/usb/dwc3/trace.c         |   3 +
+ 3 files changed, 153 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/dwc3/Kconfig b/drivers/usb/dwc3/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/Kconfig
++++ b/drivers/usb/dwc3/Kconfig
+@@ -193,6 +193,7 @@ config USB_DWC3_OCTEON
+ config USB_DWC3_ROCKCHIP
+ 	tristate "Rockchip DWC3 Platform Driver"
+ 	depends on ARCH_ROCKCHIP || COMPILE_TEST
++	depends on PHY_ROCKCHIP_USBDP || !PHY_ROCKCHIP_USBDP
+ 	depends on OF
+ 	default USB_DWC3
+ 	help
+diff --git a/drivers/usb/dwc3/dwc3-rockchip.c b/drivers/usb/dwc3/dwc3-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/dwc3-rockchip.c
++++ b/drivers/usb/dwc3/dwc3-rockchip.c
+@@ -2,11 +2,120 @@
+ /* Copyright (c) 2026, Collabora Ltd. */
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/phy/rockchip-usbdp.h>
+ #include <linux/pm_runtime.h>
++#include <linux/wait.h>
+ #include "glue.h"
++#include "io.h"
+ 
+ struct dwc3_rockchip {
+ 	struct dwc3		dwc;
++	wait_queue_head_t	phy_reset_wq;
++	u8			phy_reset_active;
++	bool			pm_suspended;
++};
++
++static inline struct dwc3_rockchip *to_dwc3_rockchip(struct dwc3 *dwc)
++{
++	return container_of(dwc, struct dwc3_rockchip, dwc);
++}
++
++static void dwc3_rockchip_set_suspended(struct dwc3_rockchip *dwc_rk, bool suspended)
++{
++	struct dwc3 *dwc = &dwc_rk->dwc;
++
++	guard(spinlock_irq)(&dwc->lock);
++
++	wait_event_lock_irq(dwc_rk->phy_reset_wq, !dwc_rk->phy_reset_active, dwc->lock);
++	dwc_rk->pm_suspended = suspended;
++}
++
++static void dwc3_rockchip_phy_pre_reset(struct dwc3_rockchip *dwc_rk, int port)
++{
++	struct dwc3 *dwc = &dwc_rk->dwc;
++	u32 reg;
++
++	guard(spinlock_irqsave)(&dwc->lock);
++
++	dwc_rk->phy_reset_active |= BIT(port);
++
++	/* DWC3 being suspended also works as a quirk */
++	if (dwc_rk->pm_suspended)
++		return;
++
++	/*
++	 * Assert USB3 PHY soft reset within DWC3 before the external
++	 * PHY resets. This disconnects the PIPE interface, preventing
++	 * the DWC3 from interfering with PHY reinitialization and
++	 * avoiding LCPLL lock failures.
++	 */
++	reg = dwc3_readl(dwc, DWC3_GUSB3PIPECTL(port));
++	reg |= DWC3_GUSB3PIPECTL_PHYSOFTRST;
++	dwc3_writel(dwc, DWC3_GUSB3PIPECTL(port), reg);
++}
++
++static void dwc3_rockchip_phy_post_reset(struct dwc3_rockchip *dwc_rk, int port)
++{
++	struct dwc3 *dwc = &dwc_rk->dwc;
++	u32 reg;
++
++	scoped_guard(spinlock_irqsave, &dwc->lock) {
++		dwc_rk->phy_reset_active &= ~BIT(port);
++
++		if (!dwc_rk->pm_suspended) {
++			reg = dwc3_readl(dwc, DWC3_GUSB3PIPECTL(port));
++			reg &= ~DWC3_GUSB3PIPECTL_PHYSOFTRST;
++			dwc3_writel(dwc, DWC3_GUSB3PIPECTL(port), reg);
++		}
++	}
++
++	wake_up(&dwc_rk->phy_reset_wq);
++}
++
++static void dwc3_rockchip_phy_reset(void *data, int port, bool pre)
++{
++	struct dwc3_rockchip *dwc_rk = data;
++
++	if (pre)
++		dwc3_rockchip_phy_pre_reset(dwc_rk, port);
++	else
++		dwc3_rockchip_phy_post_reset(dwc_rk, port);
++}
++
++static void dwc3_rockchip_phy_unregister_reset_handler(void *data)
++{
++	struct dwc3_rockchip *dwc_rk = data;
++	struct dwc3 *dwc = &dwc_rk->dwc;
++	int i;
++
++	for (i = 0; i < dwc->num_usb3_ports; i++) {
++		struct phy *phy = dwc->usb3_generic_phy[i];
++
++		if (phy && !strcmp(dev_driver_string(phy->dev.parent), "rockchip-usbdp-phy"))
++			rk_udphy_unregister_reset_handler(phy);
++	}
++
++	WARN_ON(dwc_rk->phy_reset_active);
++}
++
++static int dwc3_rockchip_phy_register_reset_handler(struct dwc3 *dwc)
++{
++	struct dwc3_rockchip *dwc_rk = to_dwc3_rockchip(dwc);
++	int i;
++
++	for (i = 0; i < dwc->num_usb3_ports; i++) {
++		struct phy *phy = dwc->usb3_generic_phy[i];
++
++		if (phy && !strcmp(dev_driver_string(phy->dev.parent), "rockchip-usbdp-phy"))
++			rk_udphy_register_reset_handler(phy, dwc3_rockchip_phy_reset, dwc_rk, i);
++	}
++
++	return devm_add_action_or_reset(dwc->dev,
++					dwc3_rockchip_phy_unregister_reset_handler, dwc_rk);
++}
++
++static const struct dwc3_glue_ops dwc3_rockchip_glue_ops = {
++	.post_phy_registration = dwc3_rockchip_phy_register_reset_handler,
+ };
+ 
+ static int dwc3_rockchip_probe(struct platform_device *pdev)
+@@ -25,8 +134,9 @@ static int dwc3_rockchip_probe(struct platform_device *pdev)
+ 	if (!dwc_rk)
+ 		return -ENOMEM;
+ 
++	init_waitqueue_head(&dwc_rk->phy_reset_wq);
+ 	dwc_rk->dwc.dev = &pdev->dev;
+-	dwc_rk->dwc.glue_ops = NULL;
++	dwc_rk->dwc.glue_ops = &dwc3_rockchip_glue_ops;
+ 
+ 	probe_data.dwc = &dwc_rk->dwc;
+ 	probe_data.res = res;
+@@ -42,12 +152,29 @@ static void dwc3_rockchip_remove(struct platform_device *pdev)
+ 
+ static int dwc3_rockchip_runtime_suspend(struct device *dev)
+ {
+-	return dwc3_runtime_suspend(dev_get_drvdata(dev));
++	struct dwc3 *dwc = dev_get_drvdata(dev);
++	struct dwc3_rockchip *dwc_rk = to_dwc3_rockchip(dwc);
++	int ret;
++
++	ret = dwc3_runtime_suspend(dwc);
++	if (!ret)
++		dwc3_rockchip_set_suspended(dwc_rk, true);
++
++	return ret;
+ }
+ 
+ static int dwc3_rockchip_runtime_resume(struct device *dev)
+ {
+-	return dwc3_runtime_resume(dev_get_drvdata(dev));
++	struct dwc3 *dwc = dev_get_drvdata(dev);
++	struct dwc3_rockchip *dwc_rk = to_dwc3_rockchip(dwc);
++	int ret;
++
++	dwc3_rockchip_set_suspended(dwc_rk, false);
++	ret = dwc3_runtime_resume(dwc);
++	if (ret)
++		dwc3_rockchip_set_suspended(dwc_rk, true);
++
++	return ret;
+ }
+ 
+ static int dwc3_rockchip_runtime_idle(struct device *dev)
+@@ -57,12 +184,29 @@ static int dwc3_rockchip_runtime_idle(struct device *dev)
+ 
+ static int dwc3_rockchip_suspend(struct device *dev)
+ {
+-	return dwc3_pm_suspend(dev_get_drvdata(dev));
++	struct dwc3 *dwc = dev_get_drvdata(dev);
++	struct dwc3_rockchip *dwc_rk = to_dwc3_rockchip(dwc);
++	int ret;
++
++	ret = dwc3_pm_suspend(dwc);
++	if (!ret)
++		dwc3_rockchip_set_suspended(dwc_rk, true);
++
++	return ret;
+ }
+ 
+ static int dwc3_rockchip_resume(struct device *dev)
+ {
+-	return dwc3_pm_resume(dev_get_drvdata(dev));
++	struct dwc3 *dwc = dev_get_drvdata(dev);
++	struct dwc3_rockchip *dwc_rk = to_dwc3_rockchip(dwc);
++	int ret;
++
++	dwc3_rockchip_set_suspended(dwc_rk, false);
++	ret = dwc3_pm_resume(dwc);
++	if (ret)
++		dwc3_rockchip_set_suspended(dwc_rk, true);
++
++	return ret;
+ }
+ 
+ static void dwc3_rockchip_complete(struct device *dev)
+diff --git a/drivers/usb/dwc3/trace.c b/drivers/usb/dwc3/trace.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/dwc3/trace.c
++++ b/drivers/usb/dwc3/trace.c
+@@ -9,3 +9,6 @@
+ 
+ #define CREATE_TRACE_POINTS
+ #include "trace.h"
++
++EXPORT_TRACEPOINT_SYMBOL_GPL(dwc3_readl);
++EXPORT_TRACEPOINT_SYMBOL_GPL(dwc3_writel);
+-- 
+Armbian
+
