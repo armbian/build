@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 1 Nov 2026 06:57:23 +0100
+Subject: drm/lima: do not use the scheduler entity when saving an error task
+
+lima_sched_build_error_task_list() derives the lima_ctx from
+task->base.entity to record the process name and pid. Since
+drm_sched_entity_pop_job() clears job->entity once the job is handed to
+the scheduler, the timeout handler of a running job dereferences
+container_of(NULL, ...) whenever lima.max_error_tasks is non-zero:
+
+  Unable to handle kernel NULL pointer dereference at virtual address 000000f4 when read
+  PC is at lima_sched_timedout_job+0x304/0x5a0 [lima]
+
+The oops leaves error_task_list_lock held, so a later read of the error
+dump blocks forever.
+
+The lima code is from commit b78edd46f6a9 ("drm/lima: save task info
+dump when task fail"); it broke when the scheduler started clearing
+the entity.
+
+Copy the submitter's name and pid into the task at submit time and use
+those instead.
+
+Fixes: 96c7c2f4d5bd ("drm/scheduler: set entity to NULL in drm_sched_entity_pop_job()")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/lima/lima_gem.c   |  3 +++
+ drivers/gpu/drm/lima/lima_sched.c | 15 +++++----------
+ drivers/gpu/drm/lima/lima_sched.h |  5 +++++
+ 3 files changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/lima/lima_gem.c b/drivers/gpu/drm/lima/lima_gem.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_gem.c
++++ b/drivers/gpu/drm/lima/lima_gem.c
+@@ -345,6 +345,9 @@ int lima_gem_submit(struct drm_file *file, struct lima_submit *submit)
+ 	if (err)
+ 		goto err_out1;
+ 
++	strscpy(submit->task->pname, submit->ctx->pname);
++	submit->task->pid = submit->ctx->pid;
++
+ 	err = lima_gem_add_deps(file, submit);
+ 	if (err)
+ 		goto err_out2;
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -277,11 +277,6 @@ static void lima_sched_build_error_task_list(struct lima_sched_task *task)
+ 	struct lima_ip *ip = pipe->processor[0];
+ 	int pipe_id = ip->id == lima_ip_gp ? lima_pipe_gp : lima_pipe_pp;
+ 	struct lima_device *dev = ip->dev;
+-	struct lima_sched_context *sched_ctx =
+-		container_of(task->base.entity,
+-			     struct lima_sched_context, base);
+-	struct lima_ctx *ctx =
+-		container_of(sched_ctx, struct lima_ctx, context[pipe_id]);
+ 	struct lima_dump_task *dt;
+ 	struct lima_dump_chunk *chunk;
+ 	struct lima_dump_chunk_pid *pid_chunk;
+@@ -295,14 +290,14 @@ static void lima_sched_build_error_task_list(struct lima_sched_task *task)
+ 
+ 	if (dev->dump.num_tasks >= lima_max_error_tasks) {
+ 		dev_info(dev->dev, "fail to save task state from %s pid %d: "
+-			 "error task list is full\n", ctx->pname, ctx->pid);
++			 "error task list is full\n", task->pname, task->pid);
+ 		goto out;
+ 	}
+ 
+ 	/* frame chunk */
+ 	size = sizeof(struct lima_dump_chunk) + pipe->frame_size;
+ 	/* process name chunk */
+-	size += sizeof(struct lima_dump_chunk) + sizeof(ctx->pname);
++	size += sizeof(struct lima_dump_chunk) + sizeof(task->pname);
+ 	/* pid chunk */
+ 	size += sizeof(struct lima_dump_chunk);
+ 	/* buffer chunks */
+@@ -340,14 +335,14 @@ static void lima_sched_build_error_task_list(struct lima_sched_task *task)
+ 	chunk = (void *)(chunk + 1) + chunk->size;
+ 	memset(chunk, 0, sizeof(*chunk));
+ 	chunk->id = LIMA_DUMP_CHUNK_PROCESS_NAME;
+-	chunk->size = sizeof(ctx->pname);
+-	memcpy(chunk + 1, ctx->pname, sizeof(ctx->pname));
++	chunk->size = sizeof(task->pname);
++	memcpy(chunk + 1, task->pname, sizeof(task->pname));
+ 	dt->num_chunks++;
+ 
+ 	pid_chunk = (void *)(chunk + 1) + chunk->size;
+ 	memset(pid_chunk, 0, sizeof(*pid_chunk));
+ 	pid_chunk->id = LIMA_DUMP_CHUNK_PROCESS_ID;
+-	pid_chunk->pid = ctx->pid;
++	pid_chunk->pid = task->pid;
+ 	dt->num_chunks++;
+ 
+ 	buffer_chunk = (void *)(pid_chunk + 1) + pid_chunk->size;
+diff --git a/drivers/gpu/drm/lima/lima_sched.h b/drivers/gpu/drm/lima/lima_sched.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.h
++++ b/drivers/gpu/drm/lima/lima_sched.h
+@@ -6,6 +6,7 @@
+ 
+ #include <drm/gpu_scheduler.h>
+ #include <linux/list.h>
++#include <linux/sched.h>
+ #include <linux/xarray.h>
+ 
+ struct lima_device;
+@@ -29,6 +30,10 @@ struct lima_sched_task {
+ 	bool recoverable;
+ 	struct lima_bo *heap;
+ 
++	/* submitter for the error dump (base.entity is NULL once it runs) */
++	char pname[TASK_COMM_LEN];
++	pid_t pid;
++
+ 	/* pipe fence */
+ 	struct dma_fence *fence;
+ };
+-- 
+Armbian

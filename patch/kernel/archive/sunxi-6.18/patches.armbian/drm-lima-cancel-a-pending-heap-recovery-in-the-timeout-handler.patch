@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 1 Nov 2026 07:04:18 +0100
+Subject: drm/lima: cancel a pending heap recovery in the timeout handler
+
+An out-of-heap interrupt queues pipe->recover_work. If the job then
+fails for another reason (an MMU page fault or the scheduler timeout)
+before the work runs, the timeout handler resets the core and clears
+pipe->current_task, and the work later runs lima_gp_task_recover() on
+the idle core: it dereferences the NULL current_task and restarts the
+PLBU allocation of a job that no longer exists.
+
+After masking the irqs, disable the work until the reset is done. This
+cancels a queued recovery and waits for a running one; a running one
+unmasks the GP irqs and restarts the PLBU, so mask the irqs again and
+wait for an irq handler that may still be running. Its schedule_work()
+now fails instead of queueing a recovery that would run after the
+reset. Enable the work again once current_task is cleared.
+
+Found by review; this race has not been observed on hardware.
+
+Fixes: 2081e8dcf1ee ("drm/lima: recover task by enlarging heap buffer")
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/lima/lima_sched.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -434,6 +434,18 @@ static enum drm_gpu_sched_stat lima_sched_timedout_job(struct drm_sched_job *job
+ 	 */
+ 	pipe->task_mask_irq(pipe);
+ 
++	/*
++	 * A heap recovery queued before the error must not run on the reset
++	 * core. Disable it until the reset is done: this cancels a queued
++	 * recovery and waits for a running one. A running one unmasks the GP
++	 * irqs again, so mask them once more and wait for an irq handler that
++	 * may still be running; its schedule_work() now fails.
++	 */
++	disable_work_sync(&pipe->recover_work);
++	pipe->task_mask_irq(pipe);
++	for (i = 0; i < pipe->num_processor; i++)
++		synchronize_irq(pipe->processor[i]->irq);
++
+ 	if (!pipe->error)
+ 		DRM_ERROR("%s job timeout\n", lima_ip_name(ip));
+ 
+@@ -464,6 +476,9 @@ static enum drm_gpu_sched_stat lima_sched_timedout_job(struct drm_sched_job *job
+ 	pipe->current_vm = NULL;
+ 	pipe->current_task = NULL;
+ 
++	/* nothing left to recover on the reset core */
++	enable_work(&pipe->recover_work);
++
+ 	lima_pm_idle(ldev);
+ 
+ 	drm_sched_resubmit_jobs(&pipe->base);
+-- 
+Armbian
