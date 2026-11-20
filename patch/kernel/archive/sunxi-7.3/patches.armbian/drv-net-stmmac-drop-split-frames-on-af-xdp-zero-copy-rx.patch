@@ -1,0 +1,155 @@
+From 834ec95308320cbd8c162d86788ab95cc3fd6bf8 Mon Sep 17 00:00:00 2001
+From: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Date: Tue, 27 Oct 2026 14:48:37 +0100
+Subject: [PATCH] net: stmmac: drop split frames on AF_XDP zero-copy RX
+
+stmmac_rx_zc() assumes a 1:1 mapping between a received frame and an
+XSK pool buffer and drops any frame that spans more than one RX
+descriptor:
+
+        /* XSK pool expects RX frame 1:1 mapped to XSK buffer */
+        if (likely(status & rx_not_ls)) {
+                xsk_buff_free(buf->xdp);
+                buf->xdp = NULL;
+                dirty++;
+                count++;
+                goto read_again;
+        }
+
+The non-last descriptors are freed and dropped, but the frame is not
+marked as errored. When the poll reaches the last descriptor of the
+same frame, error is still 0, so the fragment is handled as a complete
+frame: it is passed to the XDP program, copied into an skb on XDP_PASS,
+or converted for XDP_TX. The tail starts in the middle of the original
+payload at a predictable offset and, parsed as a fresh frame (len == 0),
+stmmac_rx_buf1_len() reports the full dma_buf_sz length for it even
+though the DMA engine only wrote the tail remainder into that buffer, so
+the reads extend past the received bytes and can reach beyond the end of
+the XSK pool buffer. GMAC4 always enables jumbo frames (GMAC_CONFIG_JE
+in GMAC_CORE_INIT), so an on-link peer can trigger such a split even
+when the interface MTU is left at 1500.
+
+Set error when the 1:1 mapping check drops a descriptor, so the
+remaining descriptors of the frame - including the last one - are
+drained and released with xsk_buff_free() instead of being processed as
+a new frame. Account every freed buffer with dirty and count the
+dropped frame once in the poll budget / rx_pkt_n. The direct 1:1
+mapping drop also increments rx_dropped.
+
+Use a bit test instead of an equality test for discard_frame.
+Commit 644b8437ccef9e ("net: stmmac: dwmac4: report Rx checksum errors
+in status") made dwmac4_wrback_get_rx_status() set discard_frame on
+RDES3_ERROR_SUMMARY and OR in csum_none on RDES1_IP_HDR_ERROR or
+RDES1_IP_PAYLOAD_ERROR, so it can return discard_frame | csum_none.
+The old "status == discard_frame" test missed that value and delivered
+frames with CRC, overflow, watchdog or giant errors to the stack in
+stmmac_rx() - or to XDP/XSK in stmmac_rx_zc() - when they also failed
+the IP checksum. The change therefore affects the regular RX path, not
+only zero-copy. The bit test is also required for the
+discard_frame | rx_not_ls value returned for non-last legacy
+descriptors below.
+
+Normalize the legacy normal and enhanced descriptor callbacks to report
+rx_not_ls together with discard_frame for non-last descriptors. This
+allows both stmmac_rx_zc() and stmmac_rx() to drain split frames on
+dwmac100 and dwmac1000 instead of reparsing the final fragment as a new
+packet.
+
+Fixes: bba2556efad6 ("net: stmmac: Enable RX via AF_XDP zero-copy")
+Fixes: 644b8437ccef9e ("net: stmmac: dwmac4: report Rx checksum errors in status")
+Reviewed-by: Nicolai Buchwitz <nb@tipi-net.de>
+Signed-off-by: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261027-stmmac-xdp-fixes-v2-2-10eae8a093a8@oss.qualcomm.com
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+(cherry picked from commit 834ec95308320cbd8c162d86788ab95cc3fd6bf8)
+[ 7.3: stmmac_rx_extended_status() does not return the status here; only
+  the context of the two status checks differs. ]
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/enh_desc.c    |  2 +-
+ drivers/net/ethernet/stmicro/stmmac/norm_desc.c   |  2 +-
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 21 +++++++++++++--------
+ 3 files changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/enh_desc.c b/drivers/net/ethernet/stmicro/stmmac/enh_desc.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/enh_desc.c
++++ b/drivers/net/ethernet/stmicro/stmmac/enh_desc.c
+@@ -184,7 +184,7 @@ static int enh_desc_get_rx_status(struct stmmac_extra_stats *x,
+ 
+ 	if (unlikely(!(rdes0 & RDES0_LAST_DESCRIPTOR))) {
+ 		x->rx_length++;
+-		return discard_frame;
++		return discard_frame | rx_not_ls;
+ 	}
+ 
+ 	if (unlikely(rdes0 & RDES0_ERROR_SUMMARY)) {
+diff --git a/drivers/net/ethernet/stmicro/stmmac/norm_desc.c b/drivers/net/ethernet/stmicro/stmmac/norm_desc.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/norm_desc.c
++++ b/drivers/net/ethernet/stmicro/stmmac/norm_desc.c
+@@ -70,7 +70,7 @@ static int ndesc_get_rx_status(struct stmmac_extra_stats *x,
+ 
+ 	if (unlikely(!(rdes0 & RDES0_LAST_DESCRIPTOR))) {
+ 		x->rx_length++;
+-		return discard_frame;
++		return discard_frame | rx_not_ls;
+ 	}
+ 
+ 	if (unlikely(rdes0 & RDES0_ERROR_SUMMARY)) {
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -5628,18 +5628,21 @@ read_again:
+ 		if (priv->extend_desc)
+ 			stmmac_rx_extended_status(priv, &priv->xstats,
+ 						  rx_q->dma_erx + entry);
+-		if (unlikely(status == discard_frame)) {
+-			xsk_buff_free(buf->xdp);
+-			buf->xdp = NULL;
+-			dirty++;
++
++		if (unlikely(!error && (status & discard_frame))) {
+ 			error = 1;
+ 			if (!priv->hwts_rx_en)
+ 				rx_errors++;
+ 		}
+ 
+-		if (unlikely(error && (status & rx_not_ls)))
+-			goto read_again;
+ 		if (unlikely(error)) {
++			xsk_buff_free(buf->xdp);
++			buf->xdp = NULL;
++			dirty++;
++
++			if (status & rx_not_ls)
++				goto read_again;
++
+ 			count++;
+ 			continue;
+ 		}
+@@ -5648,8 +5651,9 @@ read_again:
+ 		if (likely(status & rx_not_ls)) {
+ 			xsk_buff_free(buf->xdp);
+ 			buf->xdp = NULL;
++			rx_dropped++;
++			error = 1;
+ 			dirty++;
+-			count++;
+ 			goto read_again;
+ 		}
+ 
+@@ -5810,7 +5814,8 @@ read_again:
+ 
+ 		if (priv->extend_desc)
+ 			stmmac_rx_extended_status(priv, &priv->xstats, rx_q->dma_erx + entry);
+-		if (unlikely(status == discard_frame)) {
++
++		if (unlikely(status & discard_frame)) {
+ 			page_pool_put_page(rx_q->page_pool, buf->page, 0, true);
+ 			buf->page = NULL;
+ 			error = 1;
+-- 
+Armbian
+
