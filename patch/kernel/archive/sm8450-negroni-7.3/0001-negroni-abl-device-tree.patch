@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kwaa <50108258+kwaa@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 12:00:00 +0000
+Subject: arm64: build the Negroni device tree for ABL handoff
+
+The stock OnePlus 10 Pro ABL boots a header v4 image and hands the kernel
+its own downstream device tree, assembled from vendor_boot and dtbo. It
+does not take an appended DTB, and the boot image has no DTB section.
+
+Build the mainline Negroni DTB into the kernel instead, and take only the
+boot data (memory, reservations, initrd) from the ABL tree; see the next
+patch. The command line and the USB peripheral mode live in this DTB.
+
+The option is only selected by the sm8450-negroni Armbian kernel config;
+with it off, setup_machine_fdt() is unchanged. A failed merge stops the
+same way as an invalid device tree does there.
+---
+ arch/arm64/Kconfig.platforms                        | 11 ++++++
+ arch/arm64/boot/dts/qcom/sm8450-oneplus-negroni.dts | 11 ++++++
+ arch/arm64/kernel/Makefile                          |  2 ++
+ arch/arm64/kernel/setup.c                           | 17 +++++++++-
+ 4 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index 111111111111..222222222222 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -332,6 +332,17 @@ config ARCH_QCOM
+ 	help
+ 	  This enables support for the ARMv8 based Qualcomm chipsets.
+ 
++config ARM64_NEGRONI_ABL
++	bool "OnePlus Negroni ABL device tree handoff"
++	depends on ARCH_QCOM
++	select GENERIC_BUILTIN_DTB
++	help
++	  Use the Negroni device tree with memory and initrd data from ABL.
++
++config BUILTIN_DTB_NAME
++	string
++	default "qcom/sm8450-oneplus-negroni" if ARM64_NEGRONI_ABL
++
+ config ARCH_REALTEK
+ 	bool "Realtek Platforms"
+ 	select RESET_CONTROLLER
+diff --git a/arch/arm64/boot/dts/qcom/sm8450-oneplus-negroni.dts b/arch/arm64/boot/dts/qcom/sm8450-oneplus-negroni.dts
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/qcom/sm8450-oneplus-negroni.dts
++++ b/arch/arm64/boot/dts/qcom/sm8450-oneplus-negroni.dts
+@@ -1761,3 +1761,14 @@ eeprom@51 {
+ };
+ 
+ 
++
++/* Negroni ABL boot settings */
++&{/chosen} {
++	bootargs = "rdinit=/init console=tty0 clk_ignore_unused pd_ignore_unused";
++};
++
++&usb_1 {
++	dr_mode = "peripheral";
++	maximum-speed = "high-speed";
++	/delete-property/ usb-role-switch;
++};
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -90,3 +90,5 @@ endif
+ 
+ # for cleaning
+ subdir- += vdso vdso32
++
++obj-$(CONFIG_ARM64_NEGRONI_ABL) += negroni-fdt.o
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 111111111111..222222222222 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -167,8 +167,11 @@ static void __init smp_build_mpidr_hash(void)
+ 		pr_warn("Large number of MPIDR hash buckets detected\n");
+ }
+ 
++int __init negroni_abl_fdt(const void *stock, void **result);
++
+ static void __init setup_machine_fdt(phys_addr_t dt_phys)
+ {
++	phys_addr_t fdt_phys = dt_phys;
+ 	int size = 0;
+ 	void *dt_virt = fixmap_remap_fdt(dt_phys, &size, PAGE_KERNEL);
+ 	const char *name;
+@@ -180,7 +183,19 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
+ 	 * dt_virt is a fixmap address, hence __pa(dt_virt) can't be used.
+ 	 * Pass dt_phys directly.
+ 	 */
+-	if (!early_init_dt_scan(dt_virt, dt_phys)) {
++	if (IS_ENABLED(CONFIG_ARM64_NEGRONI_ABL)) {
++		void *merged;
++		int error = negroni_abl_fdt(dt_virt, &merged);
++
++		if (error) {
++			pr_crit("Negroni ABL FDT setup failed: %d\n", error);
++			while (true)
++				cpu_relax();
++		}
++		dt_virt = merged;
++		fdt_phys = __pa_symbol(merged);
++	}
++	if (!early_init_dt_scan(dt_virt, fdt_phys)) {
+ 		pr_crit("\n"
+ 			"Error: invalid device tree blob: PA=%pa, VA=%px, size=%d bytes\n"
+ 			"The dtb must be 8-byte aligned and must not exceed 2 MB in size.\n"
+-- 
+Armbian
+

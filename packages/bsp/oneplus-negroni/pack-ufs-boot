@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+import argparse
+import fcntl
+import os
+import stat
+import struct
+import subprocess
+import tempfile
+from pathlib import Path
+
+PAGE_SIZE = 4096
+BOOT_PARTITION_SIZE = 192 * 1024 * 1024
+# Stock J.94 places its AVB metadata here. Release images must fit before it;
+# on the device, the AVB footer in boot_b sets the limit.
+BUILD_SIZE_LIMIT = 49_823_744
+AVB_FOOTER = struct.Struct(">4sIIQQQ28x")
+BOOT_B = Path("/dev/disk/by-partlabel/boot_b")
+BLKFLSBUF = 0x1261
+
+
+def pack(kernel, initramfs, output, size_limit=BUILD_SIZE_LIMIT):
+    with kernel.open("rb") as image:
+        image.seek(56)
+        if image.read(4) != b"ARMd":
+            raise ValueError("Expected an uncompressed ARM64 Image")
+    with initramfs.open("rb") as image:
+        if image.read(4) != b"\x02\x21\x4c\x18":
+            raise ValueError("Expected a legacy LZ4 initramfs")
+
+    with tempfile.TemporaryDirectory(dir=output.parent) as workdir:
+        candidate = Path(workdir) / "boot.img"
+        subprocess.run(
+            [
+                "mkbootimg",
+                "--header_version",
+                "4",
+                # Match the stock J.94 boot header.
+                "--os_version",
+                "12.0.0",
+                "--os_patch_level",
+                "2026-06-01",
+                "--kernel",
+                kernel,
+                "--ramdisk",
+                initramfs,
+                "--output",
+                candidate,
+            ],
+            check=True,
+        )
+        size = candidate.stat().st_size
+        if not 0 < size <= size_limit or size % PAGE_SIZE:
+            raise ValueError(f"Boot image does not fit before stock AVB metadata ({size} > {size_limit} bytes)")
+        candidate.replace(output)
+
+
+def read_avb(device):
+    size = device.seek(0, os.SEEK_END)
+    if size != BOOT_PARTITION_SIZE:
+        raise ValueError(f"Unexpected boot_b partition size ({size} bytes)")
+    device.seek(-AVB_FOOTER.size, os.SEEK_END)
+    footer = device.read(AVB_FOOTER.size)
+    magic, major, minor, image_end, offset, length = AVB_FOOTER.unpack(footer)
+    if (
+        (magic, major, minor) != (b"AVBf", 1, 0)
+        or not 0 < image_end <= offset
+        or offset % PAGE_SIZE
+        or not 256 <= length <= size - offset - AVB_FOOTER.size
+    ):
+        raise ValueError("boot_b does not have a valid stock AVB footer")
+    device.seek(offset)
+    vbmeta = device.read(length)
+    if len(vbmeta) != length or not vbmeta.startswith(b"AVB0"):
+        raise ValueError("Missing boot_b AVB metadata")
+    auth_size, aux_size = struct.unpack_from(">QQ", vbmeta, 12)
+    if 256 + auth_size + aux_size != length:
+        raise ValueError("Invalid boot_b AVB metadata length")
+    return offset, footer, vbmeta
+
+
+def write_boot(device, image):
+    original_avb = read_avb(device)
+    if len(image) > original_avb[0]:
+        raise ValueError(f"Boot image would overwrite stock AVB metadata at {original_avb[0]}")
+    device.seek(0)
+    if device.read(len(image)) == image:
+        return False
+
+    device.seek(0)
+    if device.write(image) != len(image):
+        raise OSError("Short write to boot_b")
+    fd = device.fileno()
+    os.fsync(fd)
+    if stat.S_ISBLK(os.fstat(fd).st_mode):
+        fcntl.ioctl(fd, BLKFLSBUF)
+    device.seek(0)
+    if device.read(len(image)) != image or read_avb(device) != original_avb:
+        raise OSError("boot_b read-back verification failed")
+    return True
+
+
+def update(kernel, initramfs):
+    with tempfile.TemporaryDirectory() as workdir:
+        candidate = Path(workdir) / "boot.img"
+        # O_EXCL claims the block device while it is open.
+        fd = os.open(BOOT_B, os.O_RDWR | os.O_EXCL)
+        with os.fdopen(fd, "r+b", buffering=0) as device:
+            if not stat.S_ISBLK(os.fstat(device.fileno()).st_mode):
+                raise ValueError(f"Expected a block device at {BOOT_B}")
+            fcntl.flock(device, fcntl.LOCK_EX)
+            pack(kernel, initramfs, candidate, size_limit=read_avb(device)[0])
+            changed = write_boot(device, candidate.read_bytes())
+    print(f"Negroni: boot_b {'updated and verified' if changed else 'already up to date'}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Build a Negroni UFS boot image")
+    parser.add_argument("kernel", type=Path)
+    parser.add_argument("initramfs", type=Path)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--output", type=Path)
+    target.add_argument("--update-boot-b", action="store_true")
+    args = parser.parse_args()
+    try:
+        if args.update_boot_b:
+            update(args.kernel, args.initramfs)
+        else:
+            pack(args.kernel, args.initramfs, args.output)
+    except (OSError, ValueError, struct.error, subprocess.CalledProcessError) as exc:
+        parser.exit(1, f"Negroni: {exc}\n")
+
+
+if __name__ == "__main__":
+    main()
