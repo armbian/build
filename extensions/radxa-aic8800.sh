@@ -1,4 +1,4 @@
-# @description Installs the AIC8800 WiFi DKMS driver and firmware for Radxa boards. Downloads the `aic8800-<type>-dkms` and firmware debs (`pcie`/`sdio`/`usb` per `AIC8800_TYPE`) from the latest `radxa-pkg/aic8800` release and builds the module in the chroot. Forces `INSTALL_HEADERS=yes`, needs working kernel headers, and skips kernels ≥ 7.3.
+# @description Installs the AIC8800 WiFi DKMS driver and firmware for Radxa boards. Downloads the `aic8800-<type>-dkms` and firmware debs (`pcie`/`sdio`/`usb` per `AIC8800_TYPE`) from the latest `radxa-pkg/aic8800` release, or the one set in `AIC8800_VERSION`, and builds the module in the chroot. Forces `INSTALL_HEADERS=yes` and needs working kernel headers. With `AIC8800_SDIO_BT=yes` it also installs the UART Bluetooth service, and `AIC8800_MODPROBE_OPTIONS` goes to /etc/modprobe.d/aic8800.conf.
 
 function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
@@ -14,7 +14,10 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 	[[ -z $AIC8800_TYPE ]] && return 0
-	latest_version="$(github_latest_release_tag "radxa-pkg/aic8800")" || return 1
+	declare latest_version="${AIC8800_VERSION:-}"
+	if [[ -z "${latest_version}" ]]; then
+		latest_version="$(github_latest_release_tag "radxa-pkg/aic8800")" || return 1
+	fi
 
 	# Determine the DKMS package name based on the requested AIC8800_TYPE.
 	declare aic8800_dkms_file_name
@@ -68,4 +71,27 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		[Link]
 		NamePolicy=kernel
 	EOF'
+}
+
+function post_family_tweaks_bsp__aic8800_config() {
+	if [[ -n "${AIC8800_MODPROBE_OPTIONS}" ]]; then
+		run_host_command_logged mkdir -p "${destination}/etc/modprobe.d"
+		echo "${AIC8800_MODPROBE_OPTIONS}" > "${destination}/etc/modprobe.d/aic8800.conf"
+	fi
+
+	[[ "${AIC8800_TYPE}" == "sdio" && "${AIC8800_SDIO_BT}" == "yes" ]] || return 0
+	display_alert "Installing AIC8800 UART Bluetooth service" "${EXTENSION}" "info"
+	run_host_command_logged mkdir -p "${destination}/etc/modules-load.d"
+	printf '%s\n' hidp rfcomm bnep aic8800_btlpm_sdio > "${destination}/etc/modules-load.d/aic8800-btlpm.conf"
+	run_host_command_logged install -D -m 0755 "${SRC}/packages/bsp/aic8800/aic-bluetooth" "${destination}/usr/bin/aic-bluetooth"
+	run_host_command_logged install -D -m 0644 "${SRC}/packages/bsp/aic8800/aic-bluetooth.service" "${destination}/usr/lib/systemd/system/aic-bluetooth.service"
+}
+
+function post_family_tweaks__aic8800_enable_bluetooth_service() {
+	[[ "${AIC8800_TYPE}" == "sdio" && "${AIC8800_SDIO_BT}" == "yes" ]] || return 0
+	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service; then
+		chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
+	else
+		display_alert "aic-bluetooth.service not found in image" "${EXTENSION}" "warn"
+	fi
 }
