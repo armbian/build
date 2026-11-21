@@ -1,0 +1,207 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 1 Nov 2026 06:59:46 +0100
+Subject: drm/lima: let a faulted core finish its bus transactions before the
+ reset
+
+When a job hits an MMU page fault, the MMU interrupt handler masks the
+MMU interrupts and leaves the MMU in page fault mode. The timeout handler
+then hard-resets the core first and resumes the MMU afterwards. The
+faulting transaction is still outstanding at that point, so the core
+cannot stop its bus:
+
+  lima 1c40000.gpu: gpmmu page fault at 0x45c9000 from bus id 0 of type read
+  lima 1c40000.gpu: gp task error int_state=0 status=a
+  lima 1c40000.gpu: gp bus stop timeout
+
+The hard reset is skipped, the core stays wedged and every following job
+times out the same way, which freezes the desktop until a reboot.
+
+Before the core reset, switch a faulted MMU to a page directory that maps
+every VA to one uncached scratch page and leave page fault mode, so that
+the transaction completes and the bus can stop. lima_mmu_page_fault_resume()
+then resets such an MMU as before. ARM's Mali-400 kernel driver (r3p0,
+mali_group_recovery_reset()) recovers with such a "fault flush" page
+directory as well; it stops the bus first, here task_error() does that
+right after the flush. The three pages are allocated once per device.
+
+The error path of lima_device_init() is reordered for the new
+allocation; this also makes a lima_vm_create() failure free the DLBU
+page, which it leaked before.
+
+Tested on an Allwinner A10 (Mali-400 MP1): the one fault observed with
+this change recovered within 1 ms and rendering continued. The Mali-450
+broadcast MMU path has not run; it uses the same MMU handle as
+lima_mmu_page_fault_resume().
+
+Fixes: a1d2a6339961 ("drm/lima: driver for ARM Mali4xx GPUs")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/lima/lima_device.c | 31 ++++++++++++++++++++++++++----
+ drivers/gpu/drm/lima/lima_device.h |  3 +++
+ drivers/gpu/drm/lima/lima_mmu.c    | 24 ++++++++++++++++++++++-
+ drivers/gpu/drm/lima/lima_mmu.h    |  1 +
+ drivers/gpu/drm/lima/lima_sched.c  |  7 +++++++
+ 5 files changed, 61 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/lima/lima_device.c b/drivers/gpu/drm/lima/lima_device.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_device.c
++++ b/drivers/gpu/drm/lima/lima_device.c
+@@ -17,6 +17,10 @@
+ #include "lima_dlbu.h"
+ #include "lima_bcast.h"
+ #include "lima_vm.h"
++#include "lima_regs.h"
++
++/* fault flush page directory, page table and scratch page */
++#define LIMA_FAULT_FLUSH_SIZE (3 * LIMA_PAGE_SIZE)
+ 
+ struct lima_ip_desc {
+ 	char *name;
+@@ -355,6 +359,7 @@ static void lima_fini_pp_pipe(struct lima_device *dev)
+ int lima_device_init(struct lima_device *ldev)
+ {
+ 	struct platform_device *pdev = to_platform_device(ldev->dev);
++	dma_addr_t dma;
+ 	int err, i;
+ 
+ 	dma_set_coherent_mask(ldev->dev, DMA_BIT_MASK(32));
+@@ -384,7 +389,21 @@ int lima_device_init(struct lima_device *ldev)
+ 	ldev->empty_vm = lima_vm_create(ldev);
+ 	if (!ldev->empty_vm) {
+ 		err = -ENOMEM;
+-		goto err_out1;
++		goto err_out2;
++	}
++
++	ldev->fault_flush_cpu = dma_alloc_wc(ldev->dev, LIMA_FAULT_FLUSH_SIZE,
++					     &dma, GFP_KERNEL);
++	if (!ldev->fault_flush_cpu) {
++		err = -ENOMEM;
++		goto err_out_vm;
++	}
++	ldev->fault_flush_dma = dma;
++	for (i = 0; i < LIMA_PAGE_ENT_NUM; i++) {
++		ldev->fault_flush_cpu[i] =
++			(dma + LIMA_PAGE_SIZE) | LIMA_VM_FLAG_PRESENT;
++		ldev->fault_flush_cpu[LIMA_PAGE_ENT_NUM + i] =
++			(dma + 2 * LIMA_PAGE_SIZE) | LIMA_VM_FLAGS_UNCACHE;
+ 	}
+ 
+ 	ldev->iomem = devm_platform_ioremap_resource(pdev, 0);
+@@ -425,12 +444,14 @@ err_out4:
+ 	while (--i >= 0)
+ 		lima_fini_ip(ldev, i);
+ err_out3:
++	dma_free_wc(ldev->dev, LIMA_FAULT_FLUSH_SIZE,
++		    ldev->fault_flush_cpu, ldev->fault_flush_dma);
++err_out_vm:
++	lima_vm_put(ldev->empty_vm);
++err_out2:
+ 	if (ldev->dlbu_cpu)
+ 		dma_free_wc(ldev->dev, LIMA_PAGE_SIZE,
+ 			    ldev->dlbu_cpu, ldev->dlbu_dma);
+-err_out2:
+-	lima_vm_put(ldev->empty_vm);
+-err_out1:
+ 	lima_regulator_fini(ldev);
+ err_out0:
+ 	lima_clk_fini(ldev);
+@@ -458,6 +479,8 @@ void lima_device_fini(struct lima_device *ldev)
+ 		dma_free_wc(ldev->dev, LIMA_PAGE_SIZE,
+ 			    ldev->dlbu_cpu, ldev->dlbu_dma);
+ 
++	dma_free_wc(ldev->dev, LIMA_FAULT_FLUSH_SIZE,
++		    ldev->fault_flush_cpu, ldev->fault_flush_dma);
+ 	lima_vm_put(ldev->empty_vm);
+ 
+ 	lima_regulator_fini(ldev);
+diff --git a/drivers/gpu/drm/lima/lima_device.h b/drivers/gpu/drm/lima/lima_device.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_device.h
++++ b/drivers/gpu/drm/lima/lima_device.h
+@@ -94,6 +94,9 @@ struct lima_device {
+ 	struct lima_sched_pipe pipe[lima_pipe_num];
+ 
+ 	struct lima_vm *empty_vm;
++	/* page fault recovery: PD, PT and a scratch page mapping every VA */
++	u32 *fault_flush_cpu;
++	dma_addr_t fault_flush_dma;
+ 	uint64_t va_start;
+ 	uint64_t va_end;
+ 
+diff --git a/drivers/gpu/drm/lima/lima_mmu.c b/drivers/gpu/drm/lima/lima_mmu.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_mmu.c
++++ b/drivers/gpu/drm/lima/lima_mmu.c
+@@ -150,13 +150,35 @@ void lima_mmu_switch_vm(struct lima_ip *ip, struct lima_vm *vm)
+ 			      !(v & LIMA_MMU_STATUS_STALL_ACTIVE));
+ }
+ 
++/*
++ * A core whose MMU is in page fault mode keeps the faulting transaction
++ * outstanding and cannot stop its bus for a hard reset. Let it complete:
++ * switch to the fault flush page directory, which maps every VA to one
++ * scratch page, and leave page fault mode.
++ */
++void lima_mmu_page_fault_flush(struct lima_ip *ip)
++{
++	struct lima_device *dev = ip->dev;
++
++	if (!(mmu_read(LIMA_MMU_STATUS) & LIMA_MMU_STATUS_PAGE_FAULT_ACTIVE))
++		return;
++
++	dev_dbg(dev->dev, "%s flush page fault\n", lima_ip_name(ip));
++
++	mmu_write(LIMA_MMU_DTE_ADDR, dev->fault_flush_dma);
++	mmu_write(LIMA_MMU_COMMAND, LIMA_MMU_COMMAND_ZAP_CACHE);
++	mmu_write(LIMA_MMU_COMMAND, LIMA_MMU_COMMAND_PAGE_FAULT_DONE);
++}
++
+ void lima_mmu_page_fault_resume(struct lima_ip *ip)
+ {
+ 	struct lima_device *dev = ip->dev;
+ 	u32 status = mmu_read(LIMA_MMU_STATUS);
+ 	u32 v;
+ 
+-	if (status & LIMA_MMU_STATUS_PAGE_FAULT_ACTIVE) {
++	/* also after lima_mmu_page_fault_flush(), which leaves IRQs masked */
++	if ((status & LIMA_MMU_STATUS_PAGE_FAULT_ACTIVE) ||
++	    mmu_read(LIMA_MMU_DTE_ADDR) == dev->fault_flush_dma) {
+ 		dev_info(dev->dev, "%s resume\n", lima_ip_name(ip));
+ 
+ 		mmu_write(LIMA_MMU_INT_MASK, 0);
+diff --git a/drivers/gpu/drm/lima/lima_mmu.h b/drivers/gpu/drm/lima/lima_mmu.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_mmu.h
++++ b/drivers/gpu/drm/lima/lima_mmu.h
+@@ -14,6 +14,7 @@ void lima_mmu_fini(struct lima_ip *ip);
+ 
+ void lima_mmu_flush_tlb(struct lima_ip *ip);
+ void lima_mmu_switch_vm(struct lima_ip *ip, struct lima_vm *vm);
++void lima_mmu_page_fault_flush(struct lima_ip *ip);
+ void lima_mmu_page_fault_resume(struct lima_ip *ip);
+ 
+ #endif
+diff --git a/drivers/gpu/drm/lima/lima_sched.c b/drivers/gpu/drm/lima/lima_sched.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/lima/lima_sched.c
++++ b/drivers/gpu/drm/lima/lima_sched.c
+@@ -444,6 +444,13 @@ static enum drm_gpu_sched_stat lima_sched_timedout_job(struct drm_sched_job *job
+ 	if (lima_max_error_tasks)
+ 		lima_sched_build_error_task_list(task);
+ 
++	if (pipe->bcast_mmu) {
++		lima_mmu_page_fault_flush(pipe->bcast_mmu);
++	} else {
++		for (i = 0; i < pipe->num_mmu; i++)
++			lima_mmu_page_fault_flush(pipe->mmu[i]);
++	}
++
+ 	pipe->task_error(pipe);
+ 
+ 	if (pipe->bcast_mmu)
+-- 
+Armbian
