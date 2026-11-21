@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+# Run after initramfs-tools successfully creates the archive for the kernel package.
+[[ ${DPKG_MAINTSCRIPT_PACKAGE:-} == linux-image-edge-negroni ]] || exit 0
+[[ -r /proc/device-tree/compatible ]] || exit 0
+grep -Fxq 'oplus,negroni' < <(tr '\0' '\n' </proc/device-tree/compatible) || exit 0
+[[ -f /etc/initramfs-tools/conf.d/negroni-root ]] || exit 0
+[[ -z ${DPKG_ROOT:-} ]] || exit 0
+
+fail() {
+	printf 'Negroni: %s\n' "$*" >&2
+	exit 1
+}
+
+version=${1:-}
+[[ $version =~ ^[[:alnum:]][[:alnum:].+_~-]*$ ]] || fail "Missing or invalid kernel version"
+kernel=/boot/vmlinuz-$version
+initramfs=${2:-}
+[[ $initramfs == "/boot/initrd.img-$version" ]] || fail "Unexpected initramfs path: $initramfs"
+[[ -s $kernel && -s $initramfs && -s /lib/modules/$version/modules.dep ]] ||
+	fail "Missing matching kernel, initramfs or modules for $version"
+
+root_device=$(findmnt -nro SOURCE --mountpoint /)
+[[ -b /dev/disk/by-partlabel/userdata && "$root_device" -ef /dev/disk/by-partlabel/userdata ]] ||
+	fail "Root filesystem is outside internal userdata"
+[[ $(findmnt -nro FSTYPE --mountpoint /) == ext4 ]] || fail "Expected ext4 on userdata"
+uuid=$(findmnt -nro UUID --mountpoint /)
+[[ -n $uuid ]] && grep -Fxq "ROOT=UUID=$uuid" /etc/initramfs-tools/conf.d/negroni-root ||
+	fail "Initramfs root UUID differs from mounted userdata"
+
+boot=/dev/disk/by-partlabel/boot_b
+[[ -b $boot && $(lsblk -dnro PARTLABEL "$boot") == boot_b ]] ||
+	fail "Cannot locate the boot_b partition"
+[[ -b /dev/disk/by-partlabel/boot_a && ! "$boot" -ef /dev/disk/by-partlabel/boot_a ]] ||
+	fail "Cannot locate a separate boot_a partition"
+
+exec /usr/lib/negroni/pack-ufs-boot "$kernel" "$initramfs" --update-boot-b
