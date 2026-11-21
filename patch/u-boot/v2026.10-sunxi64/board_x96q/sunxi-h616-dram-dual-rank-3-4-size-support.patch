@@ -1,0 +1,394 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: VirusBurst <VirusBurst@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 12:12:51 +0100
+Subject: [PATCH] sunxi: h616: dram: support dual-rank 3/4-size (6/12 Gbit)
+ DRAM
+
+Some H313/H616 TV boxes use dual-rank LPDDR3 built from 6 Gbit dies,
+e.g. the SK hynix H9TQ64AAETACUR-KUM eMCP (8 GB eMMC + 2x 768 MiB
+LPDDR3) in the X96Q Plus. Such a part (rows=15, cols=10, 2 ranks) is
+detected as 2 GiB. With the default address map the chip select is
+above the row bits, so each rank has a hole in its top quarter and the
+1.5 GiB are not contiguous. mctl_calc_size() only tests the 3/4 point
+of the whole window and cannot fix that; U-Boot proper then probes
+2 GiB (the eGON header with the SPL's size does not survive TOC0 +
+BL31) and relocates into the alias area and hangs.
+
+Add CONFIG_DRAM_SUN50I_H616_SHRINK (default n). When enabled:
+
+SPL:
+ - For dual-rank parts of 1 or 2 GiB nominal size, if the 3/4 point
+   works but the top of the window is missing or aliases (or
+   mctl_calc_size() already capped the size), re-initialise the
+   controller with the CS bit moved two HIF lines down and the upper
+   row bits shifted (based on iuncuim's "dram_shrink"). Both ranks then
+   form one contiguous 3/4-size window (for 2x 768 MiB: CS = physical
+   address bit 28, ranks interleaved in 256 MiB slices), and the SPL
+   reports 1536 MiB.
+
+U-Boot proper:
+ - If there is no valid SPL header, cap a 1 GiB / 2 GiB get_ram_size()
+   result to 3/4 when the 3/4 point is real memory but the top of the
+   window is missing or aliases.
+ - For such a 3/4 size (not a power of two), limit the MMU DRAM region
+   (sunxi_mem_map[1]) to the real size, so the hole is not mapped as
+   normal memory. 1 GiB / 2 GiB boards keep the existing mapping.
+ - For a 1536 MiB ram_size, keep the relocation address below
+   0x70000000 (top of a rank 0 slice). gd->ram_size, and so the memory
+   node for Linux, still covers the full 1536 MiB (the generic
+   dram_init_banksize() already uses gd->ram_size).
+
+With the option disabled (the default) the code is compiled out, so
+existing boards are not affected. With it enabled, boards with genuine
+1 GiB / 2 GiB (or single-rank) memory keep the same DRAM setup, memory
+map and relocation address.
+
+Tested on an X96Q Plus (H313, board BA301_627, H9TQ64AAETACURKUM):
+SPL "DRAM: 1536 MiB", U-Boot "DRAM: 1.5 GiB", Linux boots, memtester
+1000M passes, free -m shows 1470 MB.
+
+Suggested-by: iuncuim (original dram_shrink idea for 6 Gbit LPDDR3)
+Assisted-by: Grok
+Signed-off-by: VirusBurst <VirusBurst@users.noreply.github.com>
+---
+ .../include/asm/arch-sunxi/dram_sun50i_h616.h |  1 +
+ arch/arm/include/asm/arch-sunxi/sys_proto.h   |  6 ++
+ arch/arm/mach-sunxi/Kconfig                   | 19 ++++
+ arch/arm/mach-sunxi/board.c                   | 31 ++++++-
+ arch/arm/mach-sunxi/dram_sun50i_h616.c        | 89 +++++++++++++++++--
+ board/sunxi/board.c                           | 80 +++++++++++++++++
+ 6 files changed, 219 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-sunxi/dram_sun50i_h616.h b/arch/arm/include/asm/arch-sunxi/dram_sun50i_h616.h
+index a8fdda12..d8b88294 100644
+--- a/arch/arm/include/asm/arch-sunxi/dram_sun50i_h616.h
++++ b/arch/arm/include/asm/arch-sunxi/dram_sun50i_h616.h
+@@ -166,6 +166,7 @@ struct dram_config {
+ 	u8 rows;
+ 	u8 ranks;
+ 	u8 bus_full_width;
++	bool dram_shrink;	/* 3/4-size (6/12 Gbit) dual-rank address map */
+ };
+ 
+ static inline int ns_to_t(int nanoseconds)
+diff --git a/arch/arm/include/asm/arch-sunxi/sys_proto.h b/arch/arm/include/asm/arch-sunxi/sys_proto.h
+index 92c7721a..85344e47 100644
+--- a/arch/arm/include/asm/arch-sunxi/sys_proto.h
++++ b/arch/arm/include/asm/arch-sunxi/sys_proto.h
+@@ -29,4 +29,10 @@ void eth_init_board(void);
+ static inline void eth_init_board(void) {}
+ #endif
+ 
++#ifdef CONFIG_ARM64
++void sunxi_dram_update_mem_map(phys_size_t size);
++#else
++static inline void sunxi_dram_update_mem_map(phys_size_t size) {}
++#endif
++
+ #endif
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index b0c5d3cd..ec3a6134 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -172,6 +172,25 @@ config DRAM_SUNXI_TPR12
+ 	help
+ 	  TPR12 value from vendor DRAM settings.
+ 
++config DRAM_SUN50I_H616_SHRINK
++	bool "Support dual-rank DRAM built from 3/4-size (6/12 Gbit) dies"
++	depends on DRAM_SUN50I_H616
++	help
++	  Some H313/H616 TV boxes use dual-rank LPDDR3 made of 6 Gbit dies
++	  (2x 768 MiB = 1.5 GiB, e.g. SK hynix H9TQ64AAETACUR eMCP). Such
++	  parts are detected as the next power of two, and with the default
++	  address map each rank leaves a hole in its top quarter.
++
++	  When enabled, the SPL detects this case and re-initialises the
++	  controller with an address map that makes both ranks one
++	  contiguous 3/4-size window. U-Boot proper then also caps a
++	  power-of-two probe to 3/4 when the SPL header is not available
++	  (TOC0), limits the MMU DRAM region to the real size, and keeps
++	  its relocation address in rank 0.
++
++	  Boards whose DRAM is a power of two are not affected by the
++	  detection, but say N unless your board needs it.
++
+ config DRAM_SUNXI_TPR13
+ 	hex "DRAM TPR13 parameter"
+ 	depends on DRAM_SUN50I_A133
+diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
+index 432b1c10..761b3db8 100644
+--- a/arch/arm/mach-sunxi/board.c
++++ b/arch/arm/mach-sunxi/board.c
+@@ -67,13 +67,40 @@ static struct mm_region sunxi_mem_map[] = {
+ };
+ struct mm_region *mem_map = sunxi_mem_map;
+ 
++void sunxi_dram_update_mem_map(phys_size_t size)
++{
++	/*
++	 * Called from dram_init(), before arch_reserve_mmu() walks mem_map.
++	 * The static DRAM region spans CONFIG_SUNXI_DRAM_MAX_SIZE; for a
++	 * 3/4-size part, do not map the hole above the real memory as
++	 * normal (cacheable) memory.
++	 */
++	if (size && size < sunxi_mem_map[1].size)
++		sunxi_mem_map[1].size = size;
++}
++
+ phys_addr_t board_get_usable_ram_top(phys_size_t total_size)
+ {
++	phys_addr_t top = gd->ram_top;
++
++	/*
++	 * 1.5 GiB parts with the dram_shrink map: the chip select is
++	 * physical address bit 28, so the ranks interleave in 256 MiB
++	 * slices (0x4/0x6/0x8xxxxxxx rank 0, 0x5/0x7/0x9xxxxxxx rank 1).
++	 * Relocate U-Boot to the top of the rank 0 slice below 0x70000000
++	 * so U-Boot itself does not depend on rank 1; gd->ram_size, and
++	 * so the memory node passed to Linux, still covers 1536 MiB.
++	 */
++	if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK) &&
++	    gd->ram_size == 0x60000000ULL &&
++	    top > CFG_SYS_SDRAM_BASE + 0x30000000ULL)
++		top = CFG_SYS_SDRAM_BASE + 0x30000000ULL;
++
+ 	/* Some devices (like the EMAC) have a 32-bit DMA limit. */
+-	if (gd->ram_top > (1ULL << 32))
++	if (top > (1ULL << 32))
+ 		return 1ULL << 32;
+ 
+-	return gd->ram_top;
++	return top;
+ }
+ #endif /* CONFIG_ARM64 */
+ 
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 42a0550e..b73d51a3 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -153,10 +153,19 @@ static void mctl_set_addrmap(const struct dram_config *config)
+ 		cols -= 1;
+ 
+ 	/* Ranks */
+-	if (ranks == 2)
+-		mctl_ctl->addrmap[0] = rows + cols - 3;
+-	else
++	if (ranks == 2) {
++		/*
++		 * 3/4-size (6/12 Gbit) ranks: move the CS bit two HIF lines
++		 * down so both ranks form one contiguous window.
++		 */
++		if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK) &&
++		    config->dram_shrink)
++			mctl_ctl->addrmap[0] = rows + cols - 5;
++		else
++			mctl_ctl->addrmap[0] = rows + cols - 3;
++	} else {
+ 		mctl_ctl->addrmap[0] = 0x1F;
++	}
+ 
+ 	/* Banks, hardcoded to 8 banks now */
+ 	mctl_ctl->addrmap[1] = (cols - 2) | (cols - 2) << 8 | (cols - 2) << 16;
+@@ -204,11 +213,30 @@ static void mctl_set_addrmap(const struct dram_config *config)
+ 		mctl_ctl->addrmap[7] = 0x0F0F;
+ 		break;
+ 	case 15:
+-		mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 3) << 8) | ((cols - 3) << 16) | 0x0F000000;
++		if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK) &&
++		    config->dram_shrink)
++			mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 2) << 8) |
++					       ((cols - 2) << 16) | 0x0F000000;
++		else
++			mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 3) << 8) |
++					       ((cols - 3) << 16) | 0x0F000000;
+ 		mctl_ctl->addrmap[7] = 0x0F0F;
+ 		break;
+ 	case 16:
+-		mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 3) << 8) | ((cols - 3) << 16) | ((cols - 3) << 24);
++		/*
++		 * Same upper-row shift as case 15. Case 15 is hardware
++		 * tested (2x 6 Gbit LPDDR3); case 16 is the analogous
++		 * transform and has not been verified on hardware.
++		 */
++		if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK) &&
++		    config->dram_shrink)
++			mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 2) << 8) |
++					       ((cols - 2) << 16) |
++					       ((cols - 3) << 24);
++		else
++			mctl_ctl->addrmap[6] = (cols - 3) | ((cols - 3) << 8) |
++					       ((cols - 3) << 16) |
++					       ((cols - 3) << 24);
+ 		mctl_ctl->addrmap[7] = 0x0F0F;
+ 		break;
+ 	case 17:
+@@ -1340,12 +1368,60 @@ static const struct dram_para para = {
+ 	.tpr12 = CONFIG_DRAM_SUNXI_TPR12,
+ };
+ 
++/*
++ * Dual-rank parts built from 3/4-size dies (6 Gbit / 12 Gbit, e.g. the
++ * 1.5 GiB LPDDR3 eMCPs in many H313/H616 TV boxes) are detected as the
++ * next power of two. With the default address map the chip select sits
++ * above the row bits, so each rank leaves a hole in its top quarter and
++ * the usable memory is not contiguous; mctl_calc_size() only checks the
++ * 3/4 point of the whole window and cannot fix that.
++ *
++ * Based on iuncuim's "dram_shrink": if the 3/4 point works but the top
++ * of the power-of-two window is missing or aliases (or mctl_calc_size()
++ * already capped the size), re-initialise the controller with the CS bit
++ * moved two HIF lines down (mctl_set_addrmap()), which makes both ranks
++ * one contiguous 3/4-size window, and report that size.
++ */
++static unsigned long mctl_shrink_3_4(struct dram_config *config,
++				     unsigned long size)
++{
++	u8 width = config->bus_full_width ? 4 : 2;
++	unsigned long full;
++	bool quarter_ok, top_writable, top_aliases;
++
++	if (config->ranks != 2)
++		return size;
++
++	full = (1ULL << (config->cols + config->rows + 3)) * width *
++	       config->ranks;
++	if (full < 0x40000000UL || full > 0x80000000UL)
++		return size;
++
++	quarter_ok = mctl_check_memory(CFG_SYS_SDRAM_BASE + full / 4 * 3 - 64);
++	top_writable = mctl_check_memory(CFG_SYS_SDRAM_BASE + full - 0x10);
++	top_aliases = mctl_mem_matches(full - 0x10);
++
++	if (!quarter_ok || (top_writable && !top_aliases && size >= full))
++		return size;
++
++	debug("DRAM: remapping %lu MiB to %lu MiB (rows=%u cols=%u)\n",
++	      full >> 20, (full / 4 * 3) >> 20, config->rows, config->cols);
++
++	config->dram_shrink = true;
++	mctl_core_init(&para, config);
++
++	return full / 4 * 3;
++}
++
+ unsigned long sunxi_dram_init(void)
+ {
+ 	void *const prcm = (void *)SUNXI_PRCM_BASE;
+ 	struct dram_config config;
+ 	unsigned long size;
+ 
++	if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK))
++		config.dram_shrink = false;
++
+ 	setbits_le32(prcm + CCU_PRCM_RES_CAL_CTRL, BIT(8));
+ 	clrbits_le32(prcm + CCU_PRCM_OHMS240, 0x3f);
+ 
+@@ -1356,6 +1432,9 @@ unsigned long sunxi_dram_init(void)
+ 
+ 	size = mctl_calc_size(&config);
+ 
++	if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK))
++		size = mctl_shrink_3_4(&config, size);
++
+ 	mctl_set_master_priority();
+ 
+ 	return size;
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 5dc8d411..39114fb5 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -269,6 +269,72 @@ static const char *get_spl_dt_name(void)
+ 	return NULL;
+ }
+ 
++static bool sunxi_dram_cell_works(phys_addr_t addr)
++{
++	u32 orig, val;
++
++	orig = readl(addr);
++	writel(~orig, addr);
++	val = readl(addr);
++	writel(orig, addr);
++
++	return val == (u32)~orig;
++}
++
++static bool sunxi_dram_addrs_alias(phys_addr_t a, phys_addr_t b)
++{
++	u32 sa, sb;
++	bool alias;
++
++	if (a == b)
++		return true;
++
++	sa = readl(a);
++	sb = readl(b);
++	writel(0xa5a55a5a, a);
++	writel(0x5a5aa5a5, b);
++	alias = (readl(a) == readl(b));
++	writel(sa, a);
++	writel(sb, b);
++
++	return alias;
++}
++
++/*
++ * CONFIG_DRAM_SUN50I_H616_SHRINK: get_ram_size() only detects powers of
++ * two, so after the SPL has remapped a 1.5 GiB part the probe reports
++ * 2 GiB. Return 3/4 of a 1 GiB / 2 GiB probe when the 3/4 point is real
++ * memory but the top of the window is missing or aliases.
++ */
++static phys_size_t sunxi_clamp_non_power_of_two_dram(phys_size_t size)
++{
++	phys_addr_t base = PHYS_SDRAM_0;
++	phys_size_t three_quarter;
++	phys_addr_t top, q1, q3;
++
++	if (size != 0x40000000ULL && size != 0x80000000ULL)
++		return size;
++
++	three_quarter = (size / 4) * 3;
++	top = base + size - sizeof(u32);
++	q1 = base + (size / 4) - sizeof(u32);
++	q3 = base + three_quarter - sizeof(u32);
++
++	if (!sunxi_dram_cell_works(q3))
++		return size;
++
++	if (sunxi_dram_cell_works(top) &&
++	    !sunxi_dram_addrs_alias(top, base) &&
++	    !sunxi_dram_addrs_alias(top, q1))
++		return size;
++
++	debug("DRAM: capping %lu MiB probe to %lu MiB (non-power-of-2)\n",
++	       (unsigned long)(size >> 20),
++	       (unsigned long)(three_quarter >> 20));
++
++	return three_quarter;
++}
++
+ int dram_init(void)
+ {
+ 	struct boot_file_head *spl = get_spl_header(SPL_DRAM_HEADER_VERSION);
+@@ -282,6 +348,20 @@ int dram_init(void)
+ 	if (gd->ram_size > CONFIG_SUNXI_DRAM_MAX_SIZE)
+ 		gd->ram_size = CONFIG_SUNXI_DRAM_MAX_SIZE;
+ 
++	if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_SHRINK)) {
++		/*
++		 * With TOC0 + BL31 the eGON header carrying the SPL's DRAM
++		 * size is usually gone, and get_ram_size() only finds powers
++		 * of two, so a 1.5 GiB part shows up as 2 GiB.
++		 */
++		if (spl == INVALID_SPL_HEADER)
++			gd->ram_size =
++				sunxi_clamp_non_power_of_two_dram(gd->ram_size);
++		/* Only 3/4-size parts get a smaller MMU DRAM region. */
++		if (gd->ram_size & (gd->ram_size - 1))
++			sunxi_dram_update_mem_map(gd->ram_size);
++	}
++
+ 	return 0;
+ }
+ 
