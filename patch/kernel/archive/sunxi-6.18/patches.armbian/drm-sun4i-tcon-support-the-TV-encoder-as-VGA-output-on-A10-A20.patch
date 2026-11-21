@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 18 Oct 2026 16:10:30 +0200
+Subject: drm/sun4i: tcon: support the TV encoder as VGA output on A10/A20
+
+On A10 and A20 the TV encoders double as VGA encoders: the TCON's
+channel 1 provides the timing and drives HSYNC/VSYNC on its LCD sync
+pins, and the TV encoder's DACs output R, G and B. The Cubietruck's VGA
+connector is wired this way.
+
+Treat a DAC encoder like the TV encoder: it uses channel 1, and the
+A10/A20 output mux routes the TCON to the TV encoder (bits 5:4 for TV
+encoder 0, bits 1:0 for TV encoder 1, the same values the vendor driver
+uses). The mux had no TV encoder case at all, so composite output on
+A10/A20 relied on the bootloader's mux setting.
+
+Add sun4i_tcon_set_vga_sync() for the TV encoder to switch the channel
+1 sync outputs together with the VGA output.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/sun4i/sun4i_tcon.c | 27 +++++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun4i_tcon.h |  3 +++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -247,6 +247,7 @@ void sun4i_tcon_set_status(struct sun4i_tcon *tcon,
+ 		break;
+ 	case DRM_MODE_ENCODER_TMDS:
+ 	case DRM_MODE_ENCODER_TVDAC:
++	case DRM_MODE_ENCODER_DAC:
+ 		channel = 1;
+ 		break;
+ 	default:
+@@ -267,6 +268,22 @@ void sun4i_tcon_set_status(struct sun4i_tcon *tcon,
+ 	sun4i_tcon_channel_set_status(tcon, channel, enabled);
+ }
+ 
++/*
++ * VGA: the TV encoder outputs RGB, H/VSYNC come from the TCON channel 1
++ * sync pins. The encoder switches them, so that they follow the VGA output
++ * also when it shares the CRTC with HDMI, and stop with it so that the
++ * monitor can go to sleep.
++ */
++void sun4i_tcon_set_vga_sync(struct sun4i_tcon *tcon, bool enabled)
++{
++	regmap_update_bits(tcon->regs, SUN4I_TCON1_IO_TRI_REG,
++			   SUN4I_TCON1_IO_TRI_HSYNC_DISABLE |
++			   SUN4I_TCON1_IO_TRI_VSYNC_DISABLE,
++			   enabled ? 0 : SUN4I_TCON1_IO_TRI_HSYNC_DISABLE |
++					 SUN4I_TCON1_IO_TRI_VSYNC_DISABLE);
++}
++EXPORT_SYMBOL(sun4i_tcon_set_vga_sync);
++
+ void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable)
+ {
+ 	u32 mask, val = 0;
+@@ -791,6 +808,7 @@ void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+ 		break;
+ 	case DRM_MODE_ENCODER_TVDAC:
+ 	case DRM_MODE_ENCODER_TMDS:
++	case DRM_MODE_ENCODER_DAC:
+ 		sun4i_tcon1_mode_set(tcon, mode);
+ 		sun4i_tcon_set_mux(tcon, 1, encoder);
+ 		break;
+@@ -1437,6 +1455,15 @@ static int sun4i_a10_tcon_set_mux(struct sun4i_tcon *tcon,
+ 		/* HDMI */
+ 		shift = 8;
+ 		break;
++	case DRM_MODE_ENCODER_TVDAC:
++	case DRM_MODE_ENCODER_DAC:
++		/*
++		 * TV encoder 0 takes its source from bits 5:4, TV encoder 1
++		 * from bits 1:0. The device tree connects each TCON to the
++		 * TV encoder with the same index only.
++		 */
++		shift = tcon->id ? 0 : 4;
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.h b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.h
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+@@ -162,6 +162,8 @@
+ #define SUN4I_TCON1_IO_POL_VSYNC_POSITIVE		BIT(24)
+ 
+ #define SUN4I_TCON1_IO_TRI_REG			0xf4
++#define SUN4I_TCON1_IO_TRI_HSYNC_DISABLE		BIT(25)
++#define SUN4I_TCON1_IO_TRI_VSYNC_DISABLE		BIT(24)
+ 
+ #define SUN4I_TCON_ECC_FIFO_REG			0xf8
+ #define SUN4I_TCON_ECC_FIFO_EN				BIT(3)
+@@ -299,6 +301,7 @@ void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+ 			 const struct drm_display_mode *mode);
+ void sun4i_tcon_set_status(struct sun4i_tcon *crtc,
+ 			   const struct drm_encoder *encoder, bool enable);
++void sun4i_tcon_set_vga_sync(struct sun4i_tcon *tcon, bool enabled);
+ 
+ extern const struct of_device_id sun4i_tcon_of_table[];
+ 
+-- 
+Armbian

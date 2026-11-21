@@ -1,0 +1,177 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sun, 18 Oct 2026 16:10:30 +0200
+Subject: drm/sun4i: backend: route the frontend of a second pipeline
+
+A10 and A20 have two display pipelines, each with a frontend (scaler and
+YUV converter) and a backend, and either frontend can feed either
+backend. Mainline never sets up that routing:
+
+- sun4i_backend_find_frontend() returns the first frontend on the
+  backend's input port, which is frontend 0 for both backends;
+- the backend layer's video channel select (ATTCTL_REG0 bit 4) is never
+  set, so a layer always reads frontend 0;
+- the frontend's output port select (FRM_CTRL bits 9:8) is never set,
+  so a frontend always feeds backend 0.
+
+With one display all of these are 0 and correct. With two displays any
+plane on the second CRTC that needs the frontend (YUV, scaled) stalls
+backend 1: it repeats one scanline from the plane's first line down.
+
+Pick the frontend with the backend's own index and program both ends of
+the link when a layer uses the frontend. A backend that lists two
+frontends but not its own one gets none rather than taking the other
+pipeline's; the routing is only written when a backend has two
+frontends to choose from, so single-pipeline SoCs are unchanged. The
+register fields are those of the vendor 3.4 driver
+(DE_BE_Layer_Video_Ch_Sel and DE_SCAL_Output_Select).
+
+Tested on a Cubietruck (A20) with HDMI on TCON1 and VGA on TCON0: tiled
+NV12 video plays on both. Only tested on A20.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/sun4i/sun4i_backend.c  | 58 ++++++++++++++++++++++----
+ drivers/gpu/drm/sun4i/sun4i_backend.h  |  6 +++
+ drivers/gpu/drm/sun4i/sun4i_frontend.h |  2 +
+ 3 files changed, 59 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_backend.c b/drivers/gpu/drm/sun4i/sun4i_backend.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_backend.c
++++ b/drivers/gpu/drm/sun4i/sun4i_backend.c
+@@ -304,6 +304,21 @@ int sun4i_backend_update_layer_frontend(struct sun4i_backend *backend,
+ 			   SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOEN,
+ 			   SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOEN);
+ 
++	/*
++	 * With two pipelines (A10/A20) both ends of the frontend link must be
++	 * set: the layer reads the given frontend, the frontend feeds this
++	 * backend. Single-pipeline SoCs keep the reset values.
++	 */
++	if (backend->frontend_routing) {
++		regmap_update_bits(backend->engine.regs,
++				   SUN4I_BACKEND_ATTCTL_REG0(layer),
++				   SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOSEL_MASK,
++				   SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOSEL(backend->frontend_id));
++		regmap_update_bits(backend->frontend->regs, SUN4I_FRONTEND_FRM_CTRL_REG,
++				   SUN4I_FRONTEND_FRM_CTRL_OUT_PORT_SEL_MASK,
++				   SUN4I_FRONTEND_FRM_CTRL_OUT_PORT_SEL(backend->engine.id));
++	}
++
+ 	regmap_update_bits(backend->engine.regs,
+ 			   SUN4I_BACKEND_ATTCTL_REG1(layer),
+ 			   SUN4I_BACKEND_ATTCTL_REG1_LAY_FBFMT, val);
+@@ -734,12 +749,22 @@ static int sun4i_backend_of_get_id(struct device_node *node)
+ 	return of_ep.id;
+ }
+ 
+-/* TODO: This needs to take multiple pipelines into account */
++/*
++ * On A10/A20 each backend lists both frontends as inputs. Use the one with
++ * the backend's own index, so that two pipelines each get their own
++ * frontend; the input endpoint's reg is the frontend's index. Taking the
++ * other one would leave it feeding two backends, so a backend with two
++ * frontends listed but not its own one gets none. A backend with a single
++ * frontend uses it.
++ */
+ static struct sun4i_frontend *sun4i_backend_find_frontend(struct sun4i_drv *drv,
++							  struct sun4i_backend *backend,
+ 							  struct device_node *node)
+ {
++	struct sun4i_frontend *frontend, *own = NULL, *other = NULL;
+ 	struct device_node *port, *ep, *remote;
+-	struct sun4i_frontend *frontend;
++	struct of_endpoint endpoint;
++	unsigned int count = 0, other_id = 0;
+ 
+ 	port = of_graph_get_port_by_id(node, 0);
+ 	if (!port)
+@@ -751,16 +776,35 @@ static struct sun4i_frontend *sun4i_backend_find_frontend(struct sun4i_drv *drv,
+ 			continue;
+ 		of_node_put(remote);
+ 
++		if (of_graph_parse_endpoint(ep, &endpoint))
++			continue;
++
+ 		/* does this node match any registered engines? */
+ 		list_for_each_entry(frontend, &drv->frontend_list, list) {
+-			if (remote == frontend->node) {
+-				of_node_put(port);
+-				of_node_put(ep);
+-				return frontend;
++			if (remote != frontend->node)
++				continue;
++
++			count++;
++			if (endpoint.id == backend->engine.id) {
++				own = frontend;
++			} else if (!other) {
++				other = frontend;
++				other_id = endpoint.id;
+ 			}
++			break;
+ 		}
+ 	}
+ 	of_node_put(port);
++
++	backend->frontend_routing = count > 1;
++	if (own) {
++		backend->frontend_id = backend->engine.id;
++		return own;
++	}
++	if (count == 1) {
++		backend->frontend_id = other_id;
++		return other;
++	}
+ 	return ERR_PTR(-EINVAL);
+ }
+ 
+@@ -821,7 +865,7 @@ static int sun4i_backend_bind(struct device *dev, struct device *master,
+ 	if (backend->engine.id < 0)
+ 		return backend->engine.id;
+ 
+-	backend->frontend = sun4i_backend_find_frontend(drv, dev->of_node);
++	backend->frontend = sun4i_backend_find_frontend(drv, backend, dev->of_node);
+ 	if (IS_ERR(backend->frontend))
+ 		dev_warn(dev, "Couldn't find matching frontend, frontend features disabled\n");
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun4i_backend.h b/drivers/gpu/drm/sun4i/sun4i_backend.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_backend.h
++++ b/drivers/gpu/drm/sun4i/sun4i_backend.h
+@@ -71,6 +71,8 @@
+ #define SUN4I_BACKEND_ATTCTL_REG0_LAY_PRISEL_MASK	GENMASK(11, 10)
+ #define SUN4I_BACKEND_ATTCTL_REG0_LAY_PRISEL(x)			((x) << 10)
+ #define SUN4I_BACKEND_ATTCTL_REG0_LAY_YUVEN		BIT(2)
++#define SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOSEL(fe)	((fe) << 4)
++#define SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOSEL_MASK	BIT(4)
+ #define SUN4I_BACKEND_ATTCTL_REG0_LAY_VDOEN		BIT(1)
+ #define SUN4I_BACKEND_ATTCTL_REG0_LAY_GLBALPHA_EN	BIT(0)
+ 
+@@ -169,6 +171,10 @@
+ struct sun4i_backend {
+ 	struct sunxi_engine	engine;
+ 	struct sun4i_frontend	*frontend;
++	/* index of that frontend (0 or 1) */
++	unsigned int		frontend_id;
++	/* two frontends to choose from: program the routing on both ends */
++	bool			frontend_routing;
+ 
+ 	struct reset_control	*reset;
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun4i_frontend.h b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_frontend.h
++++ b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+@@ -16,6 +16,8 @@
+ #define SUN4I_FRONTEND_FRM_CTRL_REG		0x004
+ #define SUN4I_FRONTEND_FRM_CTRL_COEF_ACCESS_CTRL	BIT(23)
+ #define SUN4I_FRONTEND_FRM_CTRL_FRM_START		BIT(16)
++#define SUN4I_FRONTEND_FRM_CTRL_OUT_PORT_SEL_MASK	GENMASK(9, 8)
++#define SUN4I_FRONTEND_FRM_CTRL_OUT_PORT_SEL(be)	((be) << 8)
+ #define SUN4I_FRONTEND_FRM_CTRL_COEF_RDY		BIT(1)
+ #define SUN4I_FRONTEND_FRM_CTRL_REG_RDY			BIT(0)
+ 
+-- 
+Armbian
