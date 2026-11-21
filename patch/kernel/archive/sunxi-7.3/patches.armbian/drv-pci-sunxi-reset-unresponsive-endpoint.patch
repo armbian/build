@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Fri, 20 Nov 2026 10:19:44 +0100
+Subject: PCI: sunxi: reset the endpoint when the inherited link does not
+ answer
+
+When U-Boot boots from NVMe it leaves the link up and the driver reuses it
+without resetting the endpoint. About one warm reboot in sixty the endpoint
+does not answer config requests, nothing enumerates and the boot waits for
+root forever. Check the endpoint and hot reset it through the root port when
+it is missing, without touching LTSSM or PERST.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/pci/pcie-sunxi/pcie-sunxi-rc.c | 43 ++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c b/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
++++ b/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
+@@ -686,6 +686,41 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
+ 	return 0;
+ }
+ 
++static bool sunxi_pcie_host_ep_present(struct sunxi_pcie_port *pp)
++{
++	u32 val = ~0U;
++
++	/* A config request without a link stalls the bus */
++	if (!sunxi_pcie_host_is_link_up(pp))
++		return false;
++
++	sunxi_pcie_prog_outbound_atu(pp, PCIE_ATU_INDEX0, PCIE_ATU_TYPE_CFG0,
++				     pp->cfg0_base, PCIE_ATU_BUS(1), pp->cfg0_size);
++	sunxi_pcie_cfg_read(pp->va_cfg0_base + PCI_VENDOR_ID, 4, &val);
++
++	return val != ~0U && val != 0;
++}
++
++/* Hot reset the endpoint through the link, LTSSM stays enabled */
++static void sunxi_pcie_host_reset_secondary_bus(struct sunxi_pcie_port *pp)
++{
++	u32 ctrl;
++	int i;
++
++	sunxi_pcie_host_rd_own_conf(pp, PCI_BRIDGE_CONTROL, 2, &ctrl);
++	sunxi_pcie_host_wr_own_conf(pp, PCI_BRIDGE_CONTROL, 2,
++				    ctrl | PCI_BRIDGE_CTL_BUS_RESET);
++	msleep(2);
++	sunxi_pcie_host_wr_own_conf(pp, PCI_BRIDGE_CONTROL, 2, ctrl);
++
++	/* PCIe r6.0 sec 6.6.1: allow 1 s for the device to return */
++	for (i = 0; i < 10; i++) {
++		msleep(100);
++		if (sunxi_pcie_host_ep_present(pp))
++			return;
++	}
++}
++
+ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
+ {
+ 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
+@@ -707,6 +742,14 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
+ 		dev_info(pci->dev, "pcie is already link up\n");
+ 
+ 		sunxi_pcie_host_read_speed(pci);
++
++		/* The link left up by the bootloader can hold an unresponsive endpoint */
++		if (!sunxi_pcie_host_ep_present(pp)) {
++			dev_warn(pci->dev, "endpoint not responding, resetting secondary bus\n");
++			sunxi_pcie_host_reset_secondary_bus(pp);
++			dev_info(pci->dev, "endpoint %s after reset\n",
++				 sunxi_pcie_host_ep_present(pp) ? "present" : "missing");
++		}
+ 	} else {
+ 		sunxi_pcie_host_establish_link(pci);
+ 
+-- 
+Armbian
+
