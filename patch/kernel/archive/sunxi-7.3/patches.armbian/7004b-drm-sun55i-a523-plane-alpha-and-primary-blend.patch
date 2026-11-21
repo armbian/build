@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Sat, 14 Nov 2026 03:30:00 +0000
+Subject: [PATCH] drm/sun4i: sun55i: honor plane alpha and the primary blend
+ mode on the RCQ path
+
+Follow-up to Igor Pecovnik's "honor the pixel blend mode on the RCQ path"
+(7004) on top of the A523 display support by Juan Sanchez Fuentes (7000).
+
+sun55i_de_layer_update() still wrote a global alpha of 0xff for every
+plane, so the "alpha" property the UI planes expose had no effect, and
+the primary (pipe 0) always ignored pixel alpha, also for "Coverage".
+
+Map the blend modes as the vendor driver does for a one-layer channel
+(de_rtmx_chn_blend_attr, de_ovl_u_apply_lay):
+
+ - the layer's and the scaler's global alpha is the plane alpha;
+ - "None" uses the global alpha only (so do formats without alpha,
+   so that X bits never reach the blender);
+ - "Coverage" uses pixel alpha times plane alpha on a non-premultiplied
+   pipe (the blender multiplies the colour);
+ - "Pre-multiplied" does the same with the layer (lay_premul HAS_PREMUL)
+   and the blender pipe flagged premultiplied.
+
+For the overlay and the cursor this replaces 7004's lay_premul values
+(NON_TO_EXC for "Coverage", none for "Pre-multiplied") with the
+vendor's.
+
+The vendor notes that blender pipe 0 cannot be premultiplied. Pipe 0
+sits on opaque black, where the KMS result for a premultiplied plane is
+its colour times the plane alpha, so it uses the global alpha for
+"Pre-multiplied". For that, and for any translucent primary, make the
+area under the planes black as KMS expects: the pipe 0 fill colour (as
+the vendor sets it) and the background colour, which was green as a
+first-light aid.
+
+Build-tested only, no A523 hardware.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/gpu/drm/sun4i/sun55i_de.c   | 65 ++++++++++++++++++++---------
+ drivers/gpu/drm/sun4i/sun8i_mixer.c |  6 +--
+ 2 files changed, 49 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun55i_de.c b/drivers/gpu/drm/sun4i/sun55i_de.c
+index de495dcfe406..9c0ec2ed2be9 100644
+--- a/drivers/gpu/drm/sun4i/sun55i_de.c
++++ b/drivers/gpu/drm/sun4i/sun55i_de.c
+@@ -187,16 +187,20 @@
+ 
+ /*
+  * attctl (union ovl_u_attctl_reg): en[0] | alpha_mode[2:1] | fmt[12:8] |
+- * glb_alpha[31:24]. Use global-alpha mode (1) with 0xff so the layer is opaque
+- * regardless of any X/undefined alpha bits in the source pixels.
++ * lay_premul[17:16] | glb_alpha[31:24]. alpha_mode 1 uses only the global
++ * (plane) alpha, so X/undefined alpha bits in the source pixels never reach
++ * the blender; alpha_mode 2 uses pixel alpha times the global alpha.
+  */
+ #define SUN55I_OVL_ATTCTL_EN		BIT(0)
+ #define SUN55I_OVL_ATTCTL_ALPHA_MODE(m)	(((m) & 0x3) << 1)
+ #define SUN55I_OVL_ATTCTL_GLOBAL_ALPHA	1
++#define SUN55I_OVL_ATTCTL_PIXEL_ALPHA	2
+ #define SUN55I_OVL_ATTCTL_FMT(f)	(((f) & 0x1f) << 8)
++#define SUN55I_OVL_ATTCTL_HAS_PREMUL	(2 << 16)	/* lay_premul */
+ #define SUN55I_OVL_ATTCTL_ALPHA(a)	(((a) & 0xff) << 24)
+ 
+ /* blender pipe fields (de_bld.c / struct bld_reg) for showing the channel */
++#define SUN55I_BLD_ATTR_PIPE_FCOLOR(p)	(0x04 + (p) * 0x10)	/* ATTR block */
+ #define SUN55I_BLD_ATTR_PIPE_IN_SIZE(p)	(0x08 + (p) * 0x10)	/* ATTR block */
+ #define SUN55I_BLD_ATTR_PIPE_IN_COORD(p) (0x0c + (p) * 0x10)	/* ATTR block */
+ #define SUN55I_BLD_CTL_ROUT		0x00	/* CTL block: rout_ctl @0x80 */
+@@ -205,6 +209,7 @@
+ #define SUN55I_BLD_PIPE_EN(p)		(BIT(0) | BIT(8 + (p)))
+ #define SUN55I_BLD_ROUT(p, chn)		(((chn) & 0xf) << ((p) << 2))
+ #define SUN55I_BLD_BLEND_SRCOVER	0x03010301
++#define SUN55I_BLD_COLOR_BLACK		0xff000000
+ 
+ #define SUN55I_DE_OUT_SIZE(w, h) \
+ 	((((w) - 1) & 0x1fff) | ((((h) - 1) & 0x1fff) << 16))
+@@ -662,6 +667,9 @@ void sun55i_de_mode_set(struct sun8i_mixer *mixer,
+ 	/* blender: all pipes off -> output is the background color */
+ 	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_ATTR),
+ 		     SUN55I_BLD_ATTR_PIPE_EN, 0);
++	/* opaque black under pipe 0, as the vendor (de_bld_output_set_attr) */
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_ATTR),
++		     SUN55I_BLD_ATTR_PIPE_FCOLOR(0), SUN55I_BLD_COLOR_BLACK);
+ 	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_CTL),
+ 		     SUN55I_BLD_CTL_OUT_SIZE, size);
+ 	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_CTL),
+@@ -733,7 +741,8 @@ static u32 sun55i_de_vsu_step(u32 src, u32 dst)
+  * overlay coarse down-sampler / a different channel; not handled here.
+  */
+ static void sun55i_de_vsu_setup(struct sun8i_mixer *mixer, unsigned int uich,
+-				u32 src_w, u32 src_h, u32 dst_w, u32 dst_h)
++				u32 src_w, u32 src_h, u32 dst_w, u32 dst_h,
++				u8 glb_alpha)
+ {
+ 	u32 in_size = SUN55I_DE_OUT_SIZE(src_w, src_h);
+ 	u32 out_size = SUN55I_DE_OUT_SIZE(dst_w, dst_h);
+@@ -759,7 +768,8 @@ static void sun55i_de_vsu_setup(struct sun8i_mixer *mixer, unsigned int uich,
+ 	de_blk_write(ctl, 0, SUN55I_VSU_CTL_EN);
+ 
+ 	de_blk_write(attr, SUN55I_VSU_ATTR_OUT_SIZE, out_size);
+-	de_blk_write(attr, SUN55I_VSU_ATTR_GLB_ALPHA, 0xff);
++	/* the plane alpha, as the vendor (de_rtmx_chn_blend_attr) */
++	de_blk_write(attr, SUN55I_VSU_ATTR_GLB_ALPHA, glb_alpha);
+ 
+ 	/* luma + chroma (RGB: identical): in_size = src, step = ratio, phase 0 */
+ 	de_blk_write(yp, SUN55I_VSU_PARA_IN_SIZE, in_size);
+@@ -803,13 +813,19 @@ static void sun55i_de_layer_disable(struct sun8i_mixer *mixer, unsigned int chn)
+  * the blender pipe enable/route/attr that makes the channel visible
+  * (de_bld_set_pipe_ctl / de_bld_set_pipe_attr / de_bld_set_blend_mode).
+  *
+- * Channel 6 (pipe 0) is the opaque primary. Channels 7/8 (pipes 1/2) carry
+- * alpha-capable planes (overlay, X cursor) and honor the KMS blend mode:
+- * "Pre-multiplied" uses pixel alpha as is, "Coverage" lets the OVL convert
+- * straight alpha (lay_premul NON_TO_EXC), "None" uses the opaque global
+- * alpha. The blender pipe is flagged premultiplied (de_bld_set_premul)
+- * whenever pixel alpha is used.
+- * No scaling: the overlay crop == ovl-out == on-screen size.
++ * Channel 6 (pipe 0) is the primary, channels 7/8 (pipes 1/2) carry the
++ * overlay and the X cursor. All of them honor the plane alpha and the KMS
++ * blend mode as the vendor does for a one-layer channel
++ * (de_rtmx_chn_blend_attr, de_ovl_u_apply_lay): "None" and formats without
++ * alpha use the global (plane) alpha only; "Coverage" uses pixel alpha
++ * times plane alpha on a non-premultiplied pipe; "Pre-multiplied" does the
++ * same with the layer and the blender pipe flagged premultiplied
++ * (lay_premul HAS_PREMUL, de_bld_set_premul).
++ * Pipe 0 cannot be flagged premultiplied (vendor: "blender pipe0 has not
++ * alpha and premul is unavailable"). It sits on opaque black, where a
++ * premultiplied plane comes out as its colour times the plane alpha, so it
++ * uses the global alpha for "Pre-multiplied".
++ * The VSU scales the overlay crop to the on-screen size (sun55i_de_vsu_setup).
+  */
+ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer,
+ 			    struct drm_plane_state *state)
+@@ -820,7 +836,7 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+ 	u32 src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+ 	dma_addr_t addr;
+ 	u32 fmt, attctl;
+-	bool pixel_alpha;
++	bool pixel_alpha, premul;
+ 
+ 	/*
+ 	 * de352 logical->phys map {0, 6, 8, 7}: since 0039 the mixer creates UI
+@@ -868,7 +884,8 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+ 	 * for the real src->dst ratio: the overlay outputs the src-sized crop
+ 	 * and the VSU resamples it to the on-screen dst the blender expects.
+ 	 */
+-	sun55i_de_vsu_setup(mixer, uich, src_w, src_h, dst_w, dst_h);
++	sun55i_de_vsu_setup(mixer, uich, src_w, src_h, dst_w, dst_h,
++			    state->alpha >> 8);
+ 
+ 	lay  = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_OVL_LAY0));
+ 	para = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_OVL_PARA));
+@@ -876,12 +893,22 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+ 	ctl  = de_blk(mixer, SUN55I_DE_BLK_BLD_CTL);
+ 
+ 	/* --- de_ovl layer 0 (de_ovl_u_apply_lay) --- */
+-	pixel_alpha = uich && state->pixel_blend_mode != DRM_MODE_BLEND_PIXEL_NONE;
++	pixel_alpha = fb->format->has_alpha &&
++		      state->pixel_blend_mode != DRM_MODE_BLEND_PIXEL_NONE;
++	premul = pixel_alpha &&
++		 state->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI;
++	if (premul && !pipe) {
++		/* no premultiplied input on pipe 0, see above */
++		pixel_alpha = false;
++		premul = false;
++	}
+ 	attctl = SUN55I_OVL_ATTCTL_EN |
+-		 SUN55I_OVL_ATTCTL_ALPHA_MODE(pixel_alpha ? 2 : SUN55I_OVL_ATTCTL_GLOBAL_ALPHA) |
+-		 SUN55I_OVL_ATTCTL_FMT(fmt) | SUN55I_OVL_ATTCTL_ALPHA(0xff);
+-	if (pixel_alpha && state->pixel_blend_mode == DRM_MODE_BLEND_COVERAGE)
+-		attctl |= (1 << 16);	/* lay_premul NON_TO_EXC: straight->premul */
++		 SUN55I_OVL_ATTCTL_ALPHA_MODE(pixel_alpha ? SUN55I_OVL_ATTCTL_PIXEL_ALPHA :
++						      SUN55I_OVL_ATTCTL_GLOBAL_ALPHA) |
++		 SUN55I_OVL_ATTCTL_FMT(fmt) |
++		 SUN55I_OVL_ATTCTL_ALPHA(state->alpha >> 8);
++	if (premul)
++		attctl |= SUN55I_OVL_ATTCTL_HAS_PREMUL;
+ 	de_blk_write(lay, SUN55I_OVL_LAY_ATTCTL, attctl);
+ 	de_blk_write(lay, SUN55I_OVL_LAY_MBSIZE, SUN55I_DE_OUT_SIZE(src_w, src_h));
+ 	de_blk_write(lay, SUN55I_OVL_LAY_MBCOOR, 0);
+@@ -904,7 +931,7 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+ 	de_blk_write(attr, SUN55I_BLD_ATTR_PIPE_IN_COORD(pipe),
+ 		     (dst_x & 0xffff) | ((dst_y & 0xffff) << 16));
+ 	de_blk_update_bits(ctl, SUN55I_BLD_CTL_PREMUL, BIT(pipe),
+-			   pixel_alpha ? BIT(pipe) : 0);
++			   premul ? BIT(pipe) : 0);
+ 	de_blk_update_bits(ctl, SUN55I_BLD_CTL_ROUT, 0xf << (pipe << 2),
+ 			   SUN55I_BLD_ROUT(pipe, SUN55I_DE_OVL_UI_LOGIC_CHN(chn)));
+ 	de_blk_write(ctl, SUN55I_BLD_CTL_BLEND(pipe), SUN55I_BLD_BLEND_SRCOVER);
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index a2c88284cd81..537479458706 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -593,11 +593,11 @@ static void sun8i_mixer_init(struct sun8i_mixer *mixer)
+ 	/*
+ 	 * v35x DE: the datapath only latches via the RCQ, so MMIO blender init
+ 	 * below is a no-op here. sun55i_de owns top/blender/formatter setup; we
+-	 * just pick the background color (visible until a layer is enabled).
+-	 * Green by default so first-light is unambiguous vs the blank screen.
++	 * just pick the background color: black, as KMS expects under
++	 * the planes and around a primary smaller than the screen.
+ 	 */
+ 	if (mixer->cfg->uses_rcq) {
+-		mixer->de_bg_color = 0xff00ff00;
++		mixer->de_bg_color = SUN8I_MIXER_BLEND_COLOR_BLACK;
+ 		return;
+ 	}
+ 
+-- 
+Armbian
+

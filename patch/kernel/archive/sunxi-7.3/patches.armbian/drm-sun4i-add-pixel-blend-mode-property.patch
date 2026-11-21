@@ -1,0 +1,216 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Sun, 1 Nov 2026 22:40:00 +0000
+Subject: drm/sun4i: Add pixel blend mode property to DE2/DE3 mixer planes
+
+Since the DRM core validates that every plane exposing a pixel format
+with alpha also exposes the "pixel blend mode" property, the sun8i
+mixer planes trigger one warning per plane at boot:
+
+  sun4i-drm display-engine: [drm] [PLANE:35:plane-0] pixel format with
+  alpha exposed but blend mode not setup. Please fix.
+
+The hardware supports all three KMS blend modes. The layer attribute
+register selects which alpha reaches the blender (per-pixel, global or
+the product of both), and the blender has a per-pipe pre-multiply
+control (BLD_PREMUL_CTL) telling it whether the pipe colour is already
+multiplied by that alpha; non-pre-multiplied pipes are multiplied by
+the blender before the "source over" coefficients are applied.
+
+Without the property KMS assumes "Pre-multiplied", but the driver left
+BLD_PREMUL_CTL at 0, i.e. it blended ARGB framebuffers (cursors,
+compositor overlays) as "Coverage". Map the modes as follows:
+
+ - Pre-multiplied: pixel/combined alpha mode, pipe flagged pre-multiplied
+ - Coverage:       pixel/combined alpha mode, pipe not pre-multiplied
+ - None:           global alpha mode (pixel alpha ignored), pipe not
+                   pre-multiplied
+
+The pre-multiply bits depend on the pipe (normalized zpos) a plane is
+routed to, so they are computed together with the routing in the mixer
+commit, as suggested by Jernej in the review of Roman Stratiienko's
+2020 series. DE2 VI layers only expose "X" RGB formats (no pixel alpha)
+and use the FCC global alpha, which relies on the blender multiplying
+colour with alpha; they do not get the property and keep their pipe
+non-pre-multiplied.
+
+Known limitation: with "Pre-multiplied" and a plane alpha below opaque
+the blender scales only the alpha, not the colour, by the plane alpha
+(the hardware has no stage to do that for already pre-multiplied data).
+Opaque plane alpha, the common case, is exact.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c    | 17 ++++++++++++++++-
+ drivers/gpu/drm/sun4i/sun8i_mixer.h    | 16 +++++++++++++++-
+ drivers/gpu/drm/sun4i/sun8i_ui_layer.c | 16 +++++++++++++---
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c | 19 ++++++++++++++++---
+ 4 files changed, 60 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -19,6 +19,7 @@
+ 
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
++#include <drm/drm_blend.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_framebuffer.h>
+ #include <drm/drm_gem_dma_helper.h>
+@@ -264,7 +265,7 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 	u32 bld_base = sun8i_blender_base(mixer);
+ 	struct drm_plane_state *plane_state;
+ 	struct drm_plane *plane;
+-	u32 route = 0, pipe_en = 0;
++	u32 route = 0, pipe_en = 0, premul = 0;
+ 
+ 	if (mixer->hw_preconfigured && engine->id == 0) {
+ 		struct sun4i_tcon* tcon;
+@@ -325,6 +326,18 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 		route |= layer->index << SUN8I_MIXER_BLEND_ROUTE_PIPE_SHIFT(zpos);
+ 		pipe_en |= SUN8I_MIXER_BLEND_PIPE_CTL_EN(zpos);
+ 
++		/*
++		 * Tell the blender whether the pipe already carries
++		 * pre-multiplied colour. For "Coverage" and "None" the blender
++		 * multiplies colour with (pixel and/or plane) alpha itself.
++		 * Planes without a blend mode property (DE2 VI layers, no pixel
++		 * alpha) keep the non-pre-multiplied path, which their global
++		 * alpha relies on.
++		 */
++		if (plane->blend_mode_property &&
++		    plane_state->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
++			premul |= SUN8I_MIXER_BLEND_PREMULTIPLY_EN(zpos);
++
+ 		regmap_write(engine->regs,
+ 			     SUN8I_MIXER_BLEND_ATTR_COORD(bld_base, zpos),
+ 			     SUN8I_MIXER_COORD(x, y));
+@@ -334,6 +347,8 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 	}
+ 
+ 	regmap_write(engine->regs, SUN8I_MIXER_BLEND_ROUTE(bld_base), route);
++	regmap_write(engine->regs, SUN8I_MIXER_BLEND_PREMULTIPLY(bld_base),
++		     premul);
+ 	regmap_write(engine->regs, SUN8I_MIXER_BLEND_PIPE_CTL(bld_base),
+ 		     pipe_en | SUN8I_MIXER_BLEND_PIPE_CTL_FC_EN(0));
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+@@ -9,6 +9,7 @@
+ #include <linux/clk.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <drm/drm_blend.h>
+ #include <drm/drm_plane.h>
+ 
+ #include "sunxi_engine.h"
+@@ -64,9 +65,17 @@
+ #define SUN8I_MIXER_BLEND_PIPE_CTL_EN(pipe)	BIT(8 + pipe)
+ #define SUN8I_MIXER_BLEND_PIPE_CTL_FC_EN(pipe)	BIT(pipe)
+ 
++/* pipe input colour is already pre-multiplied with its alpha */
++#define SUN8I_MIXER_BLEND_PREMULTIPLY_EN(pipe)	BIT(pipe)
++
+ /* colors are always in AARRGGBB format */
+ #define SUN8I_MIXER_BLEND_COLOR_BLACK		0xff000000
+-/* The following numbers are some still unknown magic numbers */
++/*
++ * Blend coefficients: pixel fs = 1, fd = 1 - As; alpha fs = 1, fd = 1 - As,
++ * i.e. the "source over" operator on pre-multiplied data. Pipes flagged as
++ * not pre-multiplied (SUN8I_MIXER_BLEND_PREMULTIPLY) are multiplied with
++ * their alpha by the blender before this is applied.
++ */
+ #define SUN8I_MIXER_BLEND_MODE_DEF		0x03010301
+ 
+ #define SUN8I_MIXER_BLEND_ROUTE_PIPE_MSK(n)	(0xf << ((n) << 2))
+@@ -241,6 +250,11 @@ plane_to_sun8i_layer(struct drm_plane *plane)
+ 	return container_of(plane, struct sun8i_layer, plane);
+ }
+ 
++/* Blend modes offered by planes that support per-pixel alpha. */
++#define SUN8I_LAYER_BLEND_MODES		(BIT(DRM_MODE_BLEND_PREMULTI) | \
++					 BIT(DRM_MODE_BLEND_COVERAGE) | \
++					 BIT(DRM_MODE_BLEND_PIXEL_NONE))
++
+ static inline struct sun8i_mixer *
+ engine_to_sun8i_mixer(struct sunxi_engine *engine)
+ {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+@@ -46,9 +46,12 @@ static void sun8i_ui_layer_update_attributes(struct sun8i_layer *layer,
+ 	sun8i_mixer_drm_format_to_hw(fmt->format, &hw_fmt);
+ 
+ 	val = SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA(state->alpha >> 8);
+-	val |= (state->alpha == DRM_BLEND_ALPHA_OPAQUE) ?
+-		SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA_MODE_PIXEL :
+-		SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA_MODE_COMBINED;
++	if (state->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++		val |= SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA_MODE_LAYER;
++	else if (state->alpha == DRM_BLEND_ALPHA_OPAQUE)
++		val |= SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA_MODE_PIXEL;
++	else
++		val |= SUN8I_MIXER_CHAN_UI_LAYER_ATTR_ALPHA_MODE_COMBINED;
+ 	val |= hw_fmt << SUN8I_MIXER_CHAN_UI_LAYER_ATTR_FBFMT_OFFSET;
+ 	val |= SUN8I_MIXER_CHAN_UI_LAYER_ATTR_EN;
+ 
+@@ -283,6 +286,13 @@ struct sun8i_layer *sun8i_ui_layer_init_one(struct drm_device *drm,
+ 		return ERR_PTR(ret);
+ 	}
+ 
++	ret = drm_plane_create_blend_mode_property(&layer->plane,
++						   SUN8I_LAYER_BLEND_MODES);
++	if (ret) {
++		dev_err(drm->dev, "Couldn't add blend mode property\n");
++		return ERR_PTR(ret);
++	}
++
+ 	ret = drm_plane_create_zpos_property(&layer->plane, index,
+ 					     0, plane_cnt - 1);
+ 	if (ret) {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -45,9 +45,12 @@ static void sun8i_vi_layer_update_attributes(struct sun8i_layer *layer,
+ 	val |= SUN8I_MIXER_CHAN_VI_LAYER_ATTR_EN;
+ 	if (layer->cfg->de_type >= SUN8I_MIXER_DE3) {
+ 		val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA(state->alpha >> 8);
+-		val |= (state->alpha == DRM_BLEND_ALPHA_OPAQUE) ?
+-			SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_PIXEL :
+-			SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_COMBINED;
++		if (state->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_LAYER;
++		else if (state->alpha == DRM_BLEND_ALPHA_OPAQUE)
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_PIXEL;
++		else
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_COMBINED;
+ 	}
+ 
+ 	regmap_write(layer->regs,
+@@ -472,6 +475,16 @@ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 		}
+ 	}
+ 
++	/* Only DE3+ VI layers expose formats with per-pixel alpha. */
++	if (layer->cfg->de_type >= SUN8I_MIXER_DE3) {
++		ret = drm_plane_create_blend_mode_property(&layer->plane,
++							   SUN8I_LAYER_BLEND_MODES);
++		if (ret) {
++			dev_err(drm->dev, "Couldn't add blend mode property\n");
++			return ERR_PTR(ret);
++		}
++	}
++
+ 	ret = drm_plane_create_zpos_property(&layer->plane, index,
+ 					     0, plane_cnt - 1);
+ 	if (ret) {
+-- 
+Armbian
+
