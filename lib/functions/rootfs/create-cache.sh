@@ -128,7 +128,12 @@ function create_new_rootfs_cache() {
 
 	display_alert "Creating new rootfs cache" "'${cache_name}'" "info"
 
+	# Directories in the rootfs must not be group-writable. The build-wide umask 002 is for host directories.
+	declare build_umask
+	build_umask="$(umask)"
+	umask 022
 	create_new_rootfs_cache_via_debootstrap # in rootfs-create.sh; deploys & undeploys the qemu binary
+	umask "${build_umask}"
 	create_new_rootfs_cache_tarball         # in rootfs-create.sh; no qemu binary available here
 
 	return 0 # protect against possible future short-circuiting above this

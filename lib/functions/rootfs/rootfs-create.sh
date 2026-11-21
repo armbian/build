@@ -80,9 +80,14 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	display_alert "Preparing mmdebstrap" "for ${DISTRIBUTION}'s ${RELEASE}" "info"
 	declare debootstrap_name="mmdebstrap-debian-devel"
+	# The checkout is a host directory: use the build umask, not the rootfs umask (build_umask from create-cache.sh).
+	declare rootfs_umask
+	rootfs_umask="$(umask)"
+	umask "${build_umask:-${rootfs_umask}}"
 	#FIXME: branch should be a variable eventually
 	GIT_FIXED_WORKDIR="${debootstrap_name}" \
 		fetch_from_repo "https://gitlab.mister-muffin.de/josch/mmdebstrap" "${debootstrap_name}" "${mmdebstrap_branch}"
+	umask "${rootfs_umask}"
 	debootstrap_wanted_dir="${SRC}/cache/sources/${debootstrap_name}"
 	debootstrap_version="$(sed 's/^## \[\([^]]*\)\].*/\1/; q' "${debootstrap_wanted_dir}/CHANGELOG.md")"
 	debootstrap_bin="${debootstrap_wanted_dir}/mmdebstrap"
