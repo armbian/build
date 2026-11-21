@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Thu, 15 Oct 2026 22:06:16 +0200
+Subject: drm/sun4i: frontend: honour the source offset of tiled semi-planar
+ buffers
+
+For DRM_FORMAT_MOD_ALLWINNER_TILED the start address was the linear
+offset from drm_fb_dma_get_gem_addr() and only the end-tile column (X1)
+was programmed, so any source not starting at (0,0) - e.g. a video plane
+moved partly off-screen - was read from the wrong tiles. Program the
+start address and the TB_OFF X0/Y0/X1 in-tile offsets per plane as the
+Allwinner display driver (sunxi-3.4 de_fe.c, DISP_MOD_MB_UV_COMBINED)
+does. Three-plane tiled formats (16x16 tiles there) keep the old code.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/sun4i/sun4i_frontend.c | 62 ++++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun4i_frontend.h |  3 ++
+ 2 files changed, 65 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_frontend.c b/drivers/gpu/drm/sun4i/sun4i_frontend.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_frontend.c
++++ b/drivers/gpu/drm/sun4i/sun4i_frontend.c
+@@ -153,6 +153,38 @@ static bool sun4i_frontend_format_supports_tiling(uint32_t fmt)
+ 	}
+ }
+ 
++/*
++ * Start address and in-tile offsets of the cropped source in one plane of a
++ * 32x32-tiled semi-planar buffer (DRM_FORMAT_MOD_ALLWINNER_TILED), as the
++ * Allwinner display driver programs them: the address points to the source's
++ * first row inside its first tile, the TB_OFF register gives the column and
++ * row inside that tile and the column of the last pixel in the end tile.
++ */
++static dma_addr_t sun4i_frontend_tiled_plane(struct drm_framebuffer *fb,
++					     struct drm_plane_state *state,
++					     unsigned int plane, u32 *tb_off)
++{
++	unsigned int hsub = plane ? fb->format->hsub : 1;
++	unsigned int vsub = plane ? fb->format->vsub : 1;
++	unsigned int cpp = fb->format->cpp[plane];
++	/* The input size (sun4i_frontend_update_coord) uses src_w/src_h too. */
++	unsigned int x = (state->src_x >> 16) / hsub * cpp;	/* bytes */
++	unsigned int y = (state->src_y >> 16) / vsub;
++	/* Rounded up and at least one sample, like the input size. */
++	unsigned int width = max(DIV_ROUND_UP(state->src_w >> 16, hsub), 1U) * cpp;
++	struct drm_gem_dma_object *gem = drm_fb_dma_get_gem_obj(fb, plane);
++	dma_addr_t addr = gem->dma_addr + fb->offsets[plane];
++
++	addr += fb->pitches[plane] * (y & ~31U) + ((y & 31) << 5) +
++		((x & ~31U) << 5);
++
++	*tb_off = SUN4I_FRONTEND_TB_OFF_X0(x & 31) |
++		  SUN4I_FRONTEND_TB_OFF_Y0(y & 31) |
++		  SUN4I_FRONTEND_TB_OFF_X1(((x & 31) + width - 1) & 31);
++
++	return addr;
++}
++
+ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 				  struct drm_plane *plane)
+ {
+@@ -163,6 +195,31 @@ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 	dma_addr_t dma_addr;
+ 	bool swap;
+ 
++	if (fb->modifier == DRM_FORMAT_MOD_ALLWINNER_TILED &&
++	    fb->format->num_planes <= 2) {
++		u32 tb_off;
++
++		/* Semi-planar (NV12 and friends, e.g. from cedrus). */
++		for (unsigned int i = 0; i < fb->format->num_planes; i++) {
++			dma_addr = sun4i_frontend_tiled_plane(fb, state, i,
++							      &tb_off);
++			regmap_write(frontend->regs,
++				     SUN4I_FRONTEND_TB_OFF_REG(i), tb_off);
++			regmap_write(frontend->regs,
++				     SUN4I_FRONTEND_LINESTRD_REG(i),
++				     SUN4I_FRONTEND_LINESTRD_TILED(fb->pitches[i]));
++			regmap_write(frontend->regs,
++				     SUN4I_FRONTEND_BUF_ADDR_REG(i), dma_addr);
++			DRM_DEBUG_DRIVER("Tiled plane %u: address %pad, tile offsets %#x\n",
++					 i, &dma_addr, tb_off);
++		}
++		/* No third plane: clear what a previous format may have left. */
++		regmap_write(frontend->regs, SUN4I_FRONTEND_BUF_ADDR2_REG, 0);
++		regmap_write(frontend->regs, SUN4I_FRONTEND_LINESTRD2_REG, 0);
++		regmap_write(frontend->regs, SUN4I_FRONTEND_TB_OFF2_REG, 0);
++		return;
++	}
++
+ 	if (fb->modifier == DRM_FORMAT_MOD_ALLWINNER_TILED) {
+ 		unsigned int width = state->src_w >> 16;
+ 		unsigned int offset;
+@@ -195,6 +252,11 @@ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 				     SUN4I_FRONTEND_TB_OFF_X1(offset));
+ 		}
+ 	} else {
++		/* Tile offsets of a previous tiled buffer must not linger. */
++		regmap_write(frontend->regs, SUN4I_FRONTEND_TB_OFF0_REG, 0);
++		regmap_write(frontend->regs, SUN4I_FRONTEND_TB_OFF1_REG, 0);
++		regmap_write(frontend->regs, SUN4I_FRONTEND_TB_OFF2_REG, 0);
++
+ 		strides[0] = fb->pitches[0];
+ 
+ 		if (fb->format->num_planes > 1)
+diff --git a/drivers/gpu/drm/sun4i/sun4i_frontend.h b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_frontend.h
++++ b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+@@ -25,10 +25,12 @@
+ #define SUN4I_FRONTEND_BUF_ADDR0_REG		0x020
+ #define SUN4I_FRONTEND_BUF_ADDR1_REG		0x024
+ #define SUN4I_FRONTEND_BUF_ADDR2_REG		0x028
++#define SUN4I_FRONTEND_BUF_ADDR_REG(i)		(0x020 + 4 * (i))
+ 
+ #define SUN4I_FRONTEND_TB_OFF0_REG		0x030
+ #define SUN4I_FRONTEND_TB_OFF1_REG		0x034
+ #define SUN4I_FRONTEND_TB_OFF2_REG		0x038
++#define SUN4I_FRONTEND_TB_OFF_REG(i)		(0x030 + 4 * (i))
+ #define SUN4I_FRONTEND_TB_OFF_X1(x1)			((x1) << 16)
+ #define SUN4I_FRONTEND_TB_OFF_Y0(y0)			((y0) << 8)
+ #define SUN4I_FRONTEND_TB_OFF_X0(x0)			(x0)
+@@ -36,6 +38,7 @@
+ #define SUN4I_FRONTEND_LINESTRD0_REG		0x040
+ #define SUN4I_FRONTEND_LINESTRD1_REG		0x044
+ #define SUN4I_FRONTEND_LINESTRD2_REG		0x048
++#define SUN4I_FRONTEND_LINESTRD_REG(i)		(0x040 + 4 * (i))
+ 
+ /*
+  * In tiled mode, the stride is defined as the distance between the start of the
+-- 
+Armbian

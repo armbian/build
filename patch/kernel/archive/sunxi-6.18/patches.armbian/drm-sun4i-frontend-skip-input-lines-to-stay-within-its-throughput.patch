@@ -1,0 +1,408 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Tue, 20 Oct 2026 17:48:02 +0200
+Subject: drm/sun4i: frontend: skip input lines to stay within its throughput
+
+The A10/A20 frontend reads its source at a limited rate. When a plane
+needs more than that per output line time, the plane comes out taller
+and the backend slips lines on the whole screen. Measured on an A20
+(DRAM at 432 MHz, a single 1080p60 HDMI head, 1920 pixel wide sources,
+14.8 us line time):
+
+- tiled NV12 (1.5 bytes/pixel) works up to 2x vertical downscaling
+  (259 Mpixels/s) and breaks at 2.4x (311 Mpixels/s), a pixel rate
+  limit near the 297 MHz frontend clock;
+- linear XRGB8888 (4 bytes/pixel) works at 1.67x (0.87 GB/s) and
+  breaks at 1.82x (0.94 GB/s), a DRAM read bandwidth limit.
+
+Skip every other source line when a plane would exceed 260 Mpixels/s or
+0.8 GB/s for the line time of the CRTC's mode, and reject planes that
+exceed them even so in atomic_check instead of corrupting the screen.
+The budgets keep a margin over the measurements, so some measured-good
+planes are now refused (e.g. XRGB8888 downscaled by 3.33, 0.86 GB/s
+after skipping), but they do not account for a slower DRAM clock
+(Armbian's default is 384 MHz) or for the scanout of a second head.
+Only progressive output modes were measured.
+
+The lines are skipped by fetching the top field of an interlaced input
+(INPUT_FMT scan mode, FIELD_CTRL 0), with the frame height as input
+size and the vertical factor and filter computed from the halved line
+count; this is the BSP's path for interlaced input (de_fe.c), which it
+also uses for tiled video. It works for linear and tiled buffers alike,
+which doubling the line stride would not: the tiled (MB32) layout steps
+through the rows inside a tile in hardware. The first source line is
+rounded down to a multiple of 2 * vsub so that luma and chroma start on
+the same field line (this moves the crop up by at most 2 * vsub - 1
+lines). 3D_CTRL is cleared, as the BSP does, so that no 3D input mode
+can interfere.
+
+Skipped lines are dropped without a pre-filter, so a plane that just
+needs skipping aliases somewhat more than one that just does not.
+
+Tested-on: Cubietruck (A20), 1080p60 HDMI, DRAM 432 MHz: XR24 1920x1080 overlay scaled 0.75..0.333 (incl. 0.55/0.5, which pumped with the fixed 2x rule) stable, 0.30..0.25 refused; VDPAU tiled NV12 1280x720..480x270 correct, 384x216 and 320x180 refused.
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpu/drm/sun4i/sun4i_backend.c  |   9 +-
+ drivers/gpu/drm/sun4i/sun4i_frontend.c | 145 +++++++++++++++++++++++--
+ drivers/gpu/drm/sun4i/sun4i_frontend.h |  13 +++
+ 3 files changed, 154 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_backend.c b/drivers/gpu/drm/sun4i/sun4i_backend.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_backend.c
++++ b/drivers/gpu/drm/sun4i/sun4i_backend.c
+@@ -439,11 +439,16 @@ static bool sun4i_backend_plane_uses_frontend(struct drm_plane_state *state)
+ }
+ 
+ static bool sun4i_backend_plane_is_supported(struct drm_plane_state *state,
++					     struct drm_crtc_state *crtc_state,
+ 					     bool *uses_frontend)
+ {
+ 	if (sun4i_backend_plane_uses_frontend(state)) {
++		struct sun4i_layer *layer = plane_to_sun4i_layer(state->plane);
++
+ 		*uses_frontend = true;
+-		return true;
++		return sun4i_frontend_plane_is_supported(layer->backend->frontend,
++							 state,
++							 &crtc_state->adjusted_mode);
+ 	}
+ 
+ 	*uses_frontend = false;
+@@ -497,7 +502,7 @@ static int sun4i_backend_atomic_check(struct sunxi_engine *engine,
+ 			state_to_sun4i_layer_state(plane_state);
+ 		struct drm_framebuffer *fb = plane_state->fb;
+ 
+-		if (!sun4i_backend_plane_is_supported(plane_state,
++		if (!sun4i_backend_plane_is_supported(plane_state, crtc_state,
+ 						      &layer_state->uses_frontend))
+ 			return -EINVAL;
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun4i_frontend.c b/drivers/gpu/drm/sun4i/sun4i_frontend.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_frontend.c
++++ b/drivers/gpu/drm/sun4i/sun4i_frontend.c
+@@ -13,6 +13,7 @@
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ 
++#include <drm/drm_crtc.h>
+ #include <drm/drm_device.h>
+ #include <drm/drm_fb_dma_helper.h>
+ #include <drm/drm_fourcc.h>
+@@ -592,6 +593,84 @@ static bool sun4i_frontend_format_supports_tiling(uint32_t fmt)
+ 	}
+ }
+ 
++/*
++ * Read throughput of the A10/A20 frontend, measured on an A20 (DRAM at
++ * 432 MHz, a single 1080p60 HDMI head): beyond about 300 Mpixels/s or about
++ * 0.9 GB/s from DRAM it cannot keep up with the output, the plane comes out
++ * taller and the backend slips lines on the whole screen. The budgets keep a
++ * margin, but do not account for a slower DRAM or a second head.
++ */
++#define SUN4I_FRONTEND_MAX_PIXEL_RATE	260000000ULL	/* pixels/s */
++#define SUN4I_FRONTEND_MAX_BYTE_RATE	800000000ULL	/* bytes/s */
++
++/*
++ * Whether the frontend can read the source of a plane in time for the output
++ * mode: src_w pixels of lines / crtc_h source lines per output line time
++ * (htotal / clock). A mode without timings yet does not limit anything.
++ */
++static bool sun4i_frontend_fits(struct drm_plane_state *state,
++				const struct drm_display_mode *mode,
++				unsigned int lines)
++{
++	const struct drm_format_info *format = state->fb->format;
++	/* Bytes per pixel of all planes, times 4 to keep it whole */
++	unsigned int bpp4 = 4 * format->cpp[0];
++	u64 rate, time;
++	unsigned int i;
++
++	if (!mode->crtc_clock || !mode->crtc_htotal)
++		return true;
++
++	for (i = 1; i < format->num_planes; i++)
++		bpp4 += 4 * format->cpp[i] / (format->hsub * format->vsub);
++
++	/* Pixels per second, times crtc_h * htotal */
++	rate = (u64)(state->src_w >> 16) * lines * mode->crtc_clock * 1000;
++	time = (u64)state->crtc_h * mode->crtc_htotal;
++
++	return rate <= SUN4I_FRONTEND_MAX_PIXEL_RATE * time &&
++	       rate * bpp4 <= SUN4I_FRONTEND_MAX_BYTE_RATE * 4 * time;
++}
++
++/*
++ * A plane that would exceed the frontend's throughput has it read only every
++ * other source line, as the top field of an interlaced input, which halves
++ * the lines per output line.
++ */
++static bool sun4i_frontend_line_skip(struct sun4i_frontend *frontend,
++				     struct drm_plane_state *state,
++				     const struct drm_display_mode *mode)
++{
++	return frontend->data->has_line_skip &&
++	       !sun4i_frontend_fits(state, mode, state->src_h >> 16);
++}
++
++/* The frontend cannot skip more than every other line. */
++bool sun4i_frontend_plane_is_supported(struct sun4i_frontend *frontend,
++				       struct drm_plane_state *state,
++				       const struct drm_display_mode *mode)
++{
++	return !frontend->data->has_line_skip ||
++	       sun4i_frontend_fits(state, mode,
++				   DIV_ROUND_UP(state->src_h >> 16, 2));
++}
++EXPORT_SYMBOL(sun4i_frontend_plane_is_supported);
++
++/*
++ * First source line. Skipping lines starts at an even one in all planes, as
++ * in the BSP, so that luma and chroma keep the same lines.
++ */
++static unsigned int sun4i_frontend_src_y(struct sun4i_frontend *frontend,
++					 struct drm_plane_state *state)
++{
++	unsigned int y = state->src_y >> 16;
++
++	if (!frontend->line_skip)
++		return y;
++
++	return round_down(y, 2 * state->fb->format->vsub);
++}
++
+ /*
+  * Start address and in-tile offsets of the cropped source in one plane of a
+  * 32x32-tiled semi-planar buffer (DRM_FORMAT_MOD_ALLWINNER_TILED), as the
+@@ -599,7 +678,8 @@ static bool sun4i_frontend_format_supports_tiling(uint32_t fmt)
+  * first row inside its first tile, the TB_OFF register gives the column and
+  * row inside that tile and the column of the last pixel in the end tile.
+  */
+-static dma_addr_t sun4i_frontend_tiled_plane(struct drm_framebuffer *fb,
++static dma_addr_t sun4i_frontend_tiled_plane(struct sun4i_frontend *frontend,
++					     struct drm_framebuffer *fb,
+ 					     struct drm_plane_state *state,
+ 					     unsigned int plane, u32 *tb_off)
+ {
+@@ -608,7 +688,7 @@ static dma_addr_t sun4i_frontend_tiled_plane(struct drm_framebuffer *fb,
+ 	unsigned int cpp = fb->format->cpp[plane];
+ 	/* The input size (sun4i_frontend_update_coord) uses src_w/src_h too. */
+ 	unsigned int x = (state->src_x >> 16) / hsub * cpp;	/* bytes */
+-	unsigned int y = (state->src_y >> 16) / vsub;
++	unsigned int y = sun4i_frontend_src_y(frontend, state) / vsub;
+ 	/* Rounded up and at least one sample, like the input size. */
+ 	unsigned int width = max(DIV_ROUND_UP(state->src_w >> 16, hsub), 1U) * cpp;
+ 	struct drm_gem_dma_object *gem = drm_fb_dma_get_gem_obj(fb, plane);
+@@ -624,6 +704,20 @@ static dma_addr_t sun4i_frontend_tiled_plane(struct drm_framebuffer *fb,
+ 	return addr;
+ }
+ 
++static dma_addr_t sun4i_frontend_plane_addr(struct sun4i_frontend *frontend,
++					    struct drm_framebuffer *fb,
++					    struct drm_plane_state *state,
++					    unsigned int plane)
++{
++	unsigned int vsub = plane ? fb->format->vsub : 1;
++	unsigned int y = state->src_y >> 16;
++
++	return drm_fb_dma_get_gem_addr(fb, state, plane) -
++	       fb->pitches[plane] *
++	       (y / vsub - sun4i_frontend_src_y(frontend, state) / vsub);
++}
++
++/* Must be called after sun4i_frontend_update_coord(). */
+ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 				  struct drm_plane *plane)
+ {
+@@ -640,8 +734,8 @@ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 
+ 		/* Semi-planar (NV12 and friends, e.g. from cedrus). */
+ 		for (unsigned int i = 0; i < fb->format->num_planes; i++) {
+-			dma_addr = sun4i_frontend_tiled_plane(fb, state, i,
+-							      &tb_off);
++			dma_addr = sun4i_frontend_tiled_plane(frontend, fb,
++							      state, i, &tb_off);
+ 			regmap_write(frontend->regs,
+ 				     SUN4I_FRONTEND_TB_OFF_REG(i), tb_off);
+ 			regmap_write(frontend->regs,
+@@ -722,12 +816,13 @@ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 	swap = sun4i_frontend_format_chroma_requires_swap(fb->format->format);
+ 
+ 	/* Set the physical address of the buffer in memory */
+-	dma_addr = drm_fb_dma_get_gem_addr(fb, state, 0);
++	dma_addr = sun4i_frontend_plane_addr(frontend, fb, state, 0);
+ 	DRM_DEBUG_DRIVER("Setting buffer #0 address to %pad\n", &dma_addr);
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_BUF_ADDR0_REG, dma_addr);
+ 
+ 	if (fb->format->num_planes > 1) {
+-		dma_addr = drm_fb_dma_get_gem_addr(fb, state, swap ? 2 : 1);
++		dma_addr = sun4i_frontend_plane_addr(frontend, fb, state,
++						     swap ? 2 : 1);
+ 		DRM_DEBUG_DRIVER("Setting buffer #1 address to %pad\n",
+ 				 &dma_addr);
+ 		regmap_write(frontend->regs, SUN4I_FRONTEND_BUF_ADDR1_REG,
+@@ -735,7 +830,8 @@ void sun4i_frontend_update_buffer(struct sun4i_frontend *frontend,
+ 	}
+ 
+ 	if (fb->format->num_planes > 2) {
+-		dma_addr = drm_fb_dma_get_gem_addr(fb, state, swap ? 1 : 2);
++		dma_addr = sun4i_frontend_plane_addr(frontend, fb, state,
++						     swap ? 1 : 2);
+ 		DRM_DEBUG_DRIVER("Setting buffer #2 address to %pad\n",
+ 				 &dma_addr);
+ 		regmap_write(frontend->regs, SUN4I_FRONTEND_BUF_ADDR2_REG,
+@@ -900,6 +996,7 @@ bool sun4i_frontend_format_is_supported(uint32_t fmt, uint64_t modifier)
+ }
+ EXPORT_SYMBOL(sun4i_frontend_format_is_supported);
+ 
++/* Must be called after sun4i_frontend_update_coord(). */
+ int sun4i_frontend_update_formats(struct sun4i_frontend *frontend,
+ 				  struct drm_plane *plane, uint32_t out_fmt)
+ {
+@@ -978,9 +1075,19 @@ int sun4i_frontend_update_formats(struct sun4i_frontend *frontend,
+ 	regmap_update_bits(frontend->regs, SUN4I_FRONTEND_BYPASS_REG,
+ 			   SUN4I_FRONTEND_BYPASS_CSC_EN, bypass);
+ 
++	if (frontend->line_skip)
++		in_mod_val |= SUN4I_FRONTEND_INPUT_FMT_SCAN_MOD_INTERLACE;
++
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_INPUT_FMT_REG,
+ 		     in_mod_val | in_fmt_val | in_ps_val);
+ 
++	if (frontend->data->has_line_skip) {
++		/* Always the top field, i.e. the even lines */
++		regmap_write(frontend->regs, SUN4I_FRONTEND_FIELD_CTRL_REG, 0);
++		/* No 3D input or output mode (cleared like the BSP does) */
++		regmap_write(frontend->regs, SUN4I_FRONTEND_3D_CTRL_REG, 0);
++	}
++
+ 	/*
+ 	 * TODO: It look like the A31 and A80 at least will need the
+ 	 * bit 7 (ALPHA_EN) enabled when using a format with alpha (so
+@@ -1080,17 +1187,32 @@ void sun4i_frontend_update_coord(struct sun4i_frontend *frontend,
+ 	struct drm_framebuffer *fb = state->fb;
+ 	uint32_t luma_width, luma_height;
+ 	uint32_t chroma_width, chroma_height;
++	/* Lines going into the scaler, without the skipped ones */
++	u32 luma_lines, chroma_lines;
+ 
+ 	/* Set height and width */
+ 	DRM_DEBUG_DRIVER("Frontend size W: %u H: %u\n",
+ 			 state->crtc_w, state->crtc_h);
+ 
++	frontend->line_skip = sun4i_frontend_line_skip(frontend, state,
++						       &state->crtc->state->adjusted_mode);
++
+ 	luma_width = state->src_w >> 16;
+ 	luma_height = state->src_h >> 16;
+ 
+ 	chroma_width = DIV_ROUND_UP(luma_width, fb->format->hsub);
+ 	chroma_height = DIV_ROUND_UP(luma_height, fb->format->vsub);
+ 
++	if (frontend->line_skip) {
++		DRM_DEBUG_DRIVER("Frontend skips every other line\n");
++		luma_lines = DIV_ROUND_UP(luma_height, 2);
++		chroma_lines = DIV_ROUND_UP(chroma_height, 2);
++	} else {
++		luma_lines = luma_height;
++		chroma_lines = chroma_height;
++	}
++
++	/* The input size stays the frame height when fetching a field. */
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_CH0_INSIZE_REG,
+ 		     SUN4I_FRONTEND_INSIZE(luma_height, luma_width));
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_CH1_INSIZE_REG,
+@@ -1107,13 +1229,13 @@ void sun4i_frontend_update_coord(struct sun4i_frontend *frontend,
+ 		     (chroma_width << 16) / state->crtc_w);
+ 
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_CH0_VERTFACT_REG,
+-		     (luma_height << 16) / state->crtc_h);
++		     (luma_lines << 16) / state->crtc_h);
+ 	regmap_write(frontend->regs, SUN4I_FRONTEND_CH1_VERTFACT_REG,
+-		     (chroma_height << 16) / state->crtc_h);
++		     (chroma_lines << 16) / state->crtc_h);
+ 
+ 	if (frontend->data->has_ratio_coefs)
+-		sun4i_frontend_update_coef(frontend, luma_width, luma_height,
+-					   chroma_width, chroma_height,
++		sun4i_frontend_update_coef(frontend, luma_width, luma_lines,
++					   chroma_width, chroma_lines,
+ 					   state->crtc_w, state->crtc_h);
+ 
+ 	regmap_write_bits(frontend->regs, SUN4I_FRONTEND_FRM_CTRL_REG,
+@@ -1272,6 +1394,7 @@ static const struct dev_pm_ops sun4i_frontend_pm_ops = {
+ static const struct sun4i_frontend_data sun4i_a10_frontend = {
+ 	.ch_phase		= { 0x000, 0xfc000 },
+ 	.has_coef_rdy		= true,
++	.has_line_skip		= true,
+ 	.has_ratio_coefs	= true,
+ };
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun4i_frontend.h b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_frontend.h
++++ b/drivers/gpu/drm/sun4i/sun4i_frontend.h
+@@ -27,6 +27,8 @@
+ #define SUN4I_FRONTEND_BUF_ADDR2_REG		0x028
+ #define SUN4I_FRONTEND_BUF_ADDR_REG(i)		(0x020 + 4 * (i))
+ 
++#define SUN4I_FRONTEND_FIELD_CTRL_REG		0x02c
++
+ #define SUN4I_FRONTEND_TB_OFF0_REG		0x030
+ #define SUN4I_FRONTEND_TB_OFF1_REG		0x034
+ #define SUN4I_FRONTEND_TB_OFF2_REG		0x038
+@@ -53,6 +55,7 @@
+ #define SUN4I_FRONTEND_LINESTRD_TILED(stride)		(((stride) - 31) * 32)
+ 
+ #define SUN4I_FRONTEND_INPUT_FMT_REG		0x04c
++#define SUN4I_FRONTEND_INPUT_FMT_SCAN_MOD_INTERLACE	BIT(12)
+ #define SUN4I_FRONTEND_INPUT_FMT_DATA_MOD_PLANAR	(0 << 8)
+ #define SUN4I_FRONTEND_INPUT_FMT_DATA_MOD_PACKED	(1 << 8)
+ #define SUN4I_FRONTEND_INPUT_FMT_DATA_MOD_SEMIPLANAR	(2 << 8)
+@@ -78,6 +81,8 @@
+ 
+ #define SUN4I_FRONTEND_CSC_COEF_REG(c)		(0x070 + (0x4 * (c)))
+ 
++#define SUN4I_FRONTEND_3D_CTRL_REG		0x0e0
++
+ #define SUN4I_FRONTEND_CH0_INSIZE_REG		0x100
+ #define SUN4I_FRONTEND_INSIZE(h, w)			((((h) - 1) << 16) | (((w) - 1)))
+ 
+@@ -112,13 +117,16 @@
+ 
+ struct clk;
+ struct device_node;
++struct drm_display_mode;
+ struct drm_plane;
++struct drm_plane_state;
+ struct regmap;
+ struct reset_control;
+ 
+ struct sun4i_frontend_data {
+ 	bool	has_coef_access_ctrl;
+ 	bool	has_coef_rdy;
++	bool	has_line_skip;
+ 	bool	has_ratio_coefs;
+ 	u32	ch_phase[2];
+ };
+@@ -138,6 +146,8 @@ struct sun4i_frontend {
+ 
+ 	/* Loaded filter sets (has_ratio_coefs), 0 when none is */
+ 	u8			coef_set[4];
++	/* The current plane skips every other input line (update_coord) */
++	bool			line_skip;
+ };
+ 
+ extern const struct of_device_id sun4i_frontend_of_table[];
+@@ -154,5 +164,8 @@ void sun4i_frontend_update_coord(struct sun4i_frontend *frontend,
+ int sun4i_frontend_update_formats(struct sun4i_frontend *frontend,
+ 				  struct drm_plane *plane, uint32_t out_fmt);
+ bool sun4i_frontend_format_is_supported(uint32_t fmt, uint64_t modifier);
++bool sun4i_frontend_plane_is_supported(struct sun4i_frontend *frontend,
++				       struct drm_plane_state *state,
++				       const struct drm_display_mode *mode);
+ 
+ #endif /* _SUN4I_FRONTEND_H_ */
+-- 
+Armbian
