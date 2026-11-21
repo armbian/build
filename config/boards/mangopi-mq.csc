@@ -11,8 +11,6 @@ SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw"
 BOOTCONFIG="mangopi_mq_pro_defconfig"
 
-enable_extension "mangopi-rtc"
-
 enable_extension "grub-riscv64"
 enable_extension "mangopi-grub"
 
