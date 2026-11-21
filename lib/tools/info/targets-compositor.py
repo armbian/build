@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import fnmatch
 # ‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
 #  SPDX-License-Identifier: GPL-2.0
 #  Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
@@ -304,6 +305,64 @@ for invocation in all_invocations:
 	invocation["inventory"] = copy.deepcopy(board_inventory[invocation["vars"]["BOARD"]])  # deep copy, so we can modify it
 	# Add "virtual" BOARD_SLASH_BRANCH var, for easy filtering
 	invocation["inventory"]["BOARD_TOP_LEVEL_VARS"]['BOARD_SLASH_BRANCH'] = f"{invocation['vars']['BOARD']}/{invocation['vars']['BRANCH']}"
+
+
+# Drop invocations that match a rule in the top-level "exclude" list of the targets file.
+# Each rule is a mapping of variable name to a value, a glob, or a list of them.
+# A rule matches when every key matches; keys are looked up in the invocation vars, then in the board inventory.
+# For example:
+# exclude:
+#   - { BOARD: arduino-uno-q, DESKTOP_ENVIRONMENT: hyprland }
+#   - { BOARDFAMILY: "sun*", BRANCH: legacy, RELEASE: [noble, resolute] }
+def _exclude_str(value) -> str:
+	# PyYAML reads unquoted yes/no as booleans; targets use the strings.
+	if isinstance(value, bool):
+		return "yes" if value else "no"
+	return str(value)
+
+
+def _exclude_rule_matches(rule: dict, invocation: dict) -> bool:
+	top_level_vars = invocation["inventory"]["BOARD_TOP_LEVEL_VARS"]
+	for key, wanted in rule.items():
+		if key in invocation["vars"]:
+			actual = invocation["vars"][key]
+		elif key in top_level_vars:
+			actual = top_level_vars[key]
+		else:
+			return False
+		patterns = wanted if isinstance(wanted, list) else [wanted]
+		# A list-valued key (e.g. BOARD_MAINTAINERS) matches when any member matches.
+		values = actual if isinstance(actual, list) else [actual]
+		if not any(fnmatch.fnmatchcase(_exclude_str(value), _exclude_str(pattern)) for value in values for pattern in patterns):
+			return False
+	return True
+
+
+exclude_rules = targets.get("exclude", [])
+if exclude_rules is None:  # "exclude:" with no entries
+	exclude_rules = []
+def _exclude_value_ok(value) -> bool:
+	# A pattern is a scalar or a non-empty list of scalars.
+	scalars = (str, int, float, bool)
+	if isinstance(value, list):
+		return bool(value) and all(isinstance(member, scalars) for member in value)
+	return isinstance(value, scalars)
+
+
+if not isinstance(exclude_rules, list) or not all(
+		isinstance(rule, dict) and rule and all(_exclude_value_ok(value) for value in rule.values()) for rule in exclude_rules):
+	log.error("Invalid 'exclude' in targets file: it must be a list of non-empty mappings of scalars or lists of scalars")
+	sys.exit(1)
+if exclude_rules:
+	invocations_kept = []
+	for invocation in all_invocations:
+		matched = next((rule for rule in exclude_rules if _exclude_rule_matches(rule, invocation)), None)
+		if matched is None:
+			invocations_kept.append(invocation)
+		else:
+			log.info(f"Excluding {invocation['vars']['BOARD']}/{invocation['vars']['BRANCH']} {invocation['vars'].get('RELEASE', '')} by rule {matched}")
+	log.info(f"Exclude rules removed {len(all_invocations) - len(invocations_kept)} of {len(all_invocations)} invocations.")
+	all_invocations = invocations_kept
 
 # Allow filtering of invocations, using environment variable:
 # - TARGETS_FILTER_INCLUDE: only include invocations that match this query-string
