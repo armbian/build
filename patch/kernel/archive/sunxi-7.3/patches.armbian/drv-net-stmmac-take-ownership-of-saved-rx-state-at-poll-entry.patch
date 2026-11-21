@@ -1,0 +1,257 @@
+From 26219e9402c22181f021034f127a8e278d40545f Mon Sep 17 00:00:00 2001
+From: James Hilliard <james.hilliard1@gmail.com>
+Date: Tue, 27 Oct 2026 14:48:36 +0100
+Subject: [PATCH] net: stmmac: take ownership of saved RX state at poll entry
+
+When a saved partial packet completes with a poll budget of one, the
+old loop can leave state_saved and state.skb pointing at an skb that
+has already been delivered or freed. The next poll then reuses that
+pointer, causing a use-after-free or double free.
+
+Take the saved state at poll entry and clear the stored ownership
+immediately. Save it again only if the packet remains incomplete,
+including when the next descriptor is still DMA-owned.
+
+Track the frame-in-progress flag independently of the status read from
+the next descriptor. The old code keyed the save on the status of the
+last descriptor looked at, so a loop stopped at a DMA-owned descriptor
+(rx status not yet valid) could drop the saved error/length bookkeeping
+in stmmac_rx_zc().
+
+Drop the saved state both when the queue parameters are reset and when
+the ring is destroyed. stmmac_reset_rx_queue() is reached from
+__stmmac_open(), stmmac_xdp_open(), stmmac_resume() and
+stmmac_enable_rx_queue(); without draining it there, a partial frame
+saved before suspend (or before a queue is disabled and re-enabled)
+survives while cur_rx and dirty_rx are rewound to zero. On the resume
+path the ring is only re-armed in place: stmmac_clear_descriptors()
+sets the ownership bits and stmmac_init_dma_engine() restores the tail
+pointer, but the RX buffer addresses are not reprogrammed. The first
+poll would then resume the stale skb against a ring position that no
+longer matches the descriptors it was built from.
+__free_dma_rx_desc_resources() releases it on teardown.
+
+Apply the same state handling to stmmac_rx_zc(), which also leaves
+state_saved set when a saved frame finishes at the budget boundary.
+That path saves only error and length bookkeeping, not an skb pointer.
+
+Fixes: ec222003bd94 ("net: stmmac: Prepare to add Split Header support")
+Fixes: bba2556efad6 ("net: stmmac: Enable RX via AF_XDP zero-copy")
+Signed-off-by: James Hilliard <james.hilliard1@gmail.com>
+Reviewed-by: Nicolai Buchwitz <nb@tipi-net.de>
+Co-developed-by: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Signed-off-by: Lorenzo Bianconi <lorenzo.bianconi@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261027-stmmac-xdp-fixes-v2-1-10eae8a093a8@oss.qualcomm.com
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+(cherry picked from commit 26219e9402c22181f021034f127a8e278d40545f)
+[ 7.3: context only: no dma_rmb() before the extended status reads. ]
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 72 +++++++++++++----------
+ 1 file changed, 42 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -2152,6 +2152,9 @@ static void __free_dma_rx_desc_resources(struct stmmac_priv *priv,
+ 	else
+ 		dma_free_rx_skbufs(priv, dma_conf, queue);
+ 
++	dev_kfree_skb_any(rx_q->state.skb);
++	rx_q->state.skb = NULL;
++	rx_q->state_saved = false;
+ 	rx_q->buf_alloc_num = 0;
+ 	rx_q->xsk_pool = NULL;
+ 
+@@ -5554,12 +5557,12 @@ static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
+ 	unsigned int count = 0, error = 0, len = 0;
+ 	int dirty = stmmac_rx_dirty(priv, queue);
+ 	unsigned int next_entry = rx_q->cur_rx;
++	bool in_progress = rx_q->state_saved;
+ 	u32 rx_errors = 0, rx_dropped = 0;
+ 	unsigned int desc_size;
+ 	struct bpf_prog *prog;
+ 	bool failure = false;
+ 	int xdp_status = 0;
+-	int status = 0;
+ 
+ 	if (netif_msg_rx_status(priv)) {
+ 		void *rx_head = stmmac_get_rx_desc(priv, rx_q, 0);
+@@ -5570,23 +5573,25 @@ static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
+ 		stmmac_display_ring(priv, rx_head, priv->dma_conf.dma_rx_size, true,
+ 				    rx_q->dma_rx_phy, desc_size);
+ 	}
++
++	if (rx_q->state_saved) {
++		error = rx_q->state.error;
++		len = rx_q->state.len;
++		rx_q->state_saved = false;
++	}
++
+ 	while (count < limit) {
+ 		struct stmmac_rx_buffer *buf;
+ 		struct stmmac_xdp_buff *ctx;
+ 		unsigned int buf1_len = 0;
+ 		struct dma_desc *np, *p;
+-		int entry;
++		int entry, status;
+ 		int res;
+ 
+-		if (!count && rx_q->state_saved) {
+-			error = rx_q->state.error;
+-			len = rx_q->state.len;
+-		} else {
+-			rx_q->state_saved = false;
++		if (!in_progress) {
+ 			error = 0;
+ 			len = 0;
+ 		}
+-
+ read_again:
+ 		if (count >= limit)
+ 			break;
+@@ -5625,6 +5630,8 @@ read_again:
+ 		if (!buf->xdp)
+ 			break;
+ 
++		in_progress = status & rx_not_ls;
++
+ 		if (priv->extend_desc)
+ 			stmmac_rx_extended_status(priv, &priv->xstats,
+ 						  rx_q->dma_erx + entry);
+@@ -5697,7 +5704,7 @@ read_again:
+ 		count++;
+ 	}
+ 
+-	if (status & rx_not_ls) {
++	if (in_progress) {
+ 		rx_q->state_saved = true;
+ 		rx_q->state.error = error;
+ 		rx_q->state.len = len;
+@@ -5739,9 +5746,10 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
+ 	struct stmmac_rx_queue *rx_q = &priv->dma_conf.rx_queue[queue];
+ 	struct stmmac_channel *ch = &priv->channel[queue];
+ 	unsigned int count = 0, error = 0, len = 0;
+-	int status = 0, coe = priv->hw->rx_csum;
+ 	unsigned int next_entry = rx_q->cur_rx;
++	bool in_progress = rx_q->state_saved;
+ 	enum dma_data_direction dma_dir;
++	int coe = priv->hw->rx_csum;
+ 	unsigned int desc_size;
+ 	struct sk_buff *skb = NULL;
+ 	struct stmmac_xdp_buff ctx;
+@@ -5761,25 +5769,28 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
+ 		stmmac_display_ring(priv, rx_head, priv->dma_conf.dma_rx_size, true,
+ 				    rx_q->dma_rx_phy, desc_size);
+ 	}
++
++	if (rx_q->state_saved) {
++		skb = rx_q->state.skb;
++		error = rx_q->state.error;
++		len = rx_q->state.len;
++		rx_q->state.skb = NULL;
++		rx_q->state_saved = false;
++	}
++
+ 	while (count < limit) {
+ 		unsigned int buf1_len = 0, buf2_len = 0;
+ 		enum pkt_hash_types hash_type;
+ 		struct stmmac_rx_buffer *buf;
+ 		struct dma_desc *np, *p;
+-		int entry;
++		int entry, status;
+ 		u32 hash;
+ 
+-		if (!count && rx_q->state_saved) {
+-			skb = rx_q->state.skb;
+-			error = rx_q->state.error;
+-			len = rx_q->state.len;
+-		} else {
+-			rx_q->state_saved = false;
++		if (!in_progress) {
+ 			skb = NULL;
+ 			error = 0;
+ 			len = 0;
+ 		}
+-
+ read_again:
+ 		if (count >= limit)
+ 			break;
+@@ -5808,6 +5819,8 @@ read_again:
+ 
+ 		prefetch(np);
+ 
++		in_progress = status & rx_not_ls;
++
+ 		if (priv->extend_desc)
+ 			stmmac_rx_extended_status(priv, &priv->xstats, rx_q->dma_erx + entry);
+ 		if (unlikely(status == discard_frame)) {
+@@ -5820,11 +5833,10 @@ read_again:
+ 
+ 		if (unlikely(error && (status & rx_not_ls)))
+ 			goto read_again;
++
+ 		if (unlikely(error)) {
+ 			dev_kfree_skb(skb);
+-			skb = NULL;
+-			count++;
+-			continue;
++			goto next;
+ 		}
+ 
+ 		/* Buffer is good. Go on. */
+@@ -5898,9 +5910,7 @@ read_again:
+ 						      STMMAC_XDP_REDIRECT)) {
+ 					xdp_status |= xdp_res;
+ 					buf->page = NULL;
+-					skb = NULL;
+-					count++;
+-					continue;
++					goto next;
+ 				}
+ 			}
+ 		}
+@@ -5957,10 +5967,8 @@ drain_data:
+ 		/* Remove FCS if needed */
+ 		if (!fcs_stripped && pskb_trim(skb, len)) {
+ 			dev_kfree_skb_any(skb);
+-			skb = NULL;
+ 			rx_dropped++;
+-			count++;
+-			continue;
++			goto next;
+ 		}
+ 
+ 		stmmac_get_rx_hwtstamp(priv, p, np, skb);
+@@ -5985,14 +5993,15 @@ drain_data:
+ 
+ 		skb_record_rx_queue(skb, queue);
+ 		napi_gro_receive(&ch->rx_napi, skb);
+-		skb = NULL;
+-
+ 		rx_packets++;
+ 		rx_bytes += len;
++next:
++		in_progress = false;
++		skb = NULL;
+ 		count++;
+ 	}
+ 
+-	if (status & rx_not_ls || skb) {
++	if (in_progress || skb) {
+ 		rx_q->state_saved = true;
+ 		rx_q->state.skb = skb;
+ 		rx_q->state.error = error;
+@@ -8291,6 +8300,9 @@ static void stmmac_reset_rx_queue(struct stmmac_priv *priv, u32 queue)
+ {
+ 	struct stmmac_rx_queue *rx_q = &priv->dma_conf.rx_queue[queue];
+ 
++	dev_kfree_skb_any(rx_q->state.skb);
++	rx_q->state.skb = NULL;
++	rx_q->state_saved = false;
+ 	rx_q->cur_rx = 0;
+ 	rx_q->dirty_rx = 0;
+ }
+-- 
+Armbian
