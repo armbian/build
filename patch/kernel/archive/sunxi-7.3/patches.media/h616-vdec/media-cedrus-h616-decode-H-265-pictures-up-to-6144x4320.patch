@@ -1,0 +1,207 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 05:50:56 +0000
+Subject: media: cedrus: h616: decode H.265 pictures up to
+ 6144x4320
+
+The H616 user manual (4.4.1, Video Decoding) rates the H.265 decoder
+for Main10@L5.1 with a maximum resolution of 6144x4320 (4K@60 or
+6K@30). Cedrus limits every codec to 4096x2304, which rejects 6K
+streams in the SPS check and clamps the capture format.
+
+Make the largest H.265 picture a variant property and use 6144x4320 on
+H616. The other codecs keep the shared 4096x2304 limit: H.264 is rated
+4096x2048 and the VP9 side buffers are sized for 4K.
+
+The vendor library (libVE VeReset) sets both VE_MODE width class bits,
+"width more than 2048" and "width is 4096", for every picture 4096 or
+more pixels wide, so do the same instead of setting the 4096 bit only
+for exactly 4096 pixels. The H.265 side buffers need no change: the
+vendor H.265 library allocates the same 794 KiB neighbour info buffer
+for every size, the MV-col buffers already scale with the picture, and
+the picture size fields are 14 bits wide.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.c   |  8 ++++-
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |  8 +++++
+ .../staging/media/sunxi/cedrus/cedrus_hw.c    |  8 ++++-
+ .../staging/media/sunxi/cedrus/cedrus_video.c | 31 ++++++++++++++++---
+ .../staging/media/sunxi/cedrus/cedrus_video.h |  5 ++-
+ 5 files changed, 52 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -37,9 +37,12 @@
+  */
+ static int cedrus_check_pic_size(struct cedrus_ctx *ctx, u32 width, u32 height)
+ {
++	unsigned int max_width, max_height;
+ 	struct vb2_queue *vq;
+ 
+-	if (width > CEDRUS_MAX_WIDTH || height > CEDRUS_MAX_HEIGHT)
++	cedrus_max_size(ctx->dev, ctx->src_fmt.pixelformat,
++			&max_width, &max_height);
++	if (width > max_width || height > max_height)
+ 		return -EINVAL;
+ 
+ 	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+@@ -976,6 +979,9 @@ static const struct cedrus_variant sun50i_h616_cedrus_variant = {
+ 	 * chroma (luma is fine); the 256-bit mode decodes all codecs correctly.
+ 	 */
+ 	.ve_mode_ddr	= VE_MODE_DDR_MODE_BW_256,
++	/* H.265 Main10@L5.1, up to 6K (H616 user manual, 4.4.1). */
++	.h265_max_width	= 6144,
++	.h265_max_height = 4320,
+ };
+ 
+ static const struct of_device_id cedrus_dt_match[] = {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -272,6 +272,12 @@ struct cedrus_variant {
+ 	unsigned int	capabilities;
+ 	unsigned int	mod_rate;
+ 	u32		ve_mode_ddr;
++	/*
++	 * Largest H.265 picture, if the engine decodes more than the
++	 * CEDRUS_MAX_WIDTH x CEDRUS_MAX_HEIGHT that all codecs share.
++	 */
++	unsigned int	h265_max_width;
++	unsigned int	h265_max_height;
+ 	/*
+ 	 * Newer SoCs (e.g. A523/sun55iw3) have no dedicated VE SRAM region to
+ 	 * remap via the system-control block; the VE does physical DMA from
+@@ -303,6 +309,8 @@ struct cedrus_dev {
+ 
+ 	unsigned int		capabilities;
+ 	u32			ve_mode_ddr;
++	unsigned int		h265_max_width;
++	unsigned int		h265_max_height;
+ 
+ 	struct delayed_work	watchdog_work;
+ };
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -82,7 +82,11 @@ int cedrus_engine_enable(struct cedrus_ctx *ctx)
+ 		return -EINVAL;
+ 	}
+ 
+-	if (ctx->src_fmt.width == 4096)
++	/*
++	 * The vendor library sets both width class bits for every picture
++	 * 4096 or more pixels wide (6K H.265 on the H616), not only for 4096.
++	 */
++	if (ctx->src_fmt.width >= 4096)
+ 		reg |= VE_MODE_PIC_WIDTH_IS_4096;
+ 	if (ctx->src_fmt.width > 2048)
+ 		reg |= VE_MODE_PIC_WIDTH_MORE_2048;
+@@ -340,6 +344,8 @@ int cedrus_hw_probe(struct cedrus_dev *dev)
+ 
+ 	dev->capabilities = variant->capabilities;
+ 	dev->ve_mode_ddr = variant->ve_mode_ddr;
++	dev->h265_max_width = variant->h265_max_width;
++	dev->h265_max_height = variant->h265_max_height;
+ 
+ 	irq_dec = platform_get_irq(dev->pdev, 0);
+ 	if (irq_dec <= 0)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -179,7 +179,21 @@ static struct cedrus_format *cedrus_find_format(struct cedrus_ctx *ctx,
+ 	return &cedrus_formats[i];
+ }
+ 
+-void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
++void cedrus_max_size(struct cedrus_dev *dev, u32 src_pixelformat,
++		     unsigned int *width, unsigned int *height)
++{
++	*width = CEDRUS_MAX_WIDTH;
++	*height = CEDRUS_MAX_HEIGHT;
++
++	if (src_pixelformat == V4L2_PIX_FMT_HEVC_SLICE &&
++	    dev->h265_max_width && dev->h265_max_height) {
++		*width = dev->h265_max_width;
++		*height = dev->h265_max_height;
++	}
++}
++
++void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt,
++			   unsigned int max_width, unsigned int max_height)
+ {
+ 	unsigned int width = pix_fmt->width;
+ 	unsigned int height = pix_fmt->height;
+@@ -189,8 +203,8 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
+ 	pix_fmt->field = V4L2_FIELD_NONE;
+ 
+ 	/* Limit to hardware min/max. */
+-	width = clamp(width, CEDRUS_MIN_WIDTH, CEDRUS_MAX_WIDTH);
+-	height = clamp(height, CEDRUS_MIN_HEIGHT, CEDRUS_MAX_HEIGHT);
++	width = clamp(width, CEDRUS_MIN_WIDTH, max_width);
++	height = clamp(height, CEDRUS_MIN_HEIGHT, max_height);
+ 
+ 	switch (pix_fmt->pixelformat) {
+ 	case V4L2_PIX_FMT_MPEG2_SLICE:
+@@ -371,14 +385,18 @@ static int cedrus_try_fmt_vid_cap_p(struct cedrus_ctx *ctx,
+ 	struct cedrus_format *fmt =
+ 		cedrus_find_format(ctx, pix_fmt->pixelformat,
+ 				   CEDRUS_DECODE_DST);
++	unsigned int max_width, max_height;
+ 
+ 	if (!fmt)
+ 		return -EINVAL;
+ 
++	cedrus_max_size(ctx->dev, ctx->src_fmt.pixelformat,
++			&max_width, &max_height);
++
+ 	pix_fmt->pixelformat = fmt->pixelformat;
+ 	pix_fmt->width = ctx->src_fmt.width;
+ 	pix_fmt->height = ctx->src_fmt.height;
+-	cedrus_prepare_format(pix_fmt);
++	cedrus_prepare_format(pix_fmt, max_width, max_height);
+ 
+ 	/*
+ 	 * The VP9 decoder reconstructs into the capture buffer unless it
+@@ -413,12 +431,15 @@ static int cedrus_try_fmt_vid_out_p(struct cedrus_ctx *ctx,
+ 	struct cedrus_format *fmt =
+ 		cedrus_find_format(ctx, pix_fmt->pixelformat,
+ 				   CEDRUS_DECODE_SRC);
++	unsigned int max_width, max_height;
+ 
+ 	if (!fmt)
+ 		return -EINVAL;
+ 
++	cedrus_max_size(ctx->dev, fmt->pixelformat, &max_width, &max_height);
++
+ 	pix_fmt->pixelformat = fmt->pixelformat;
+-	cedrus_prepare_format(pix_fmt);
++	cedrus_prepare_format(pix_fmt, max_width, max_height);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.h b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+@@ -33,7 +33,10 @@ extern const struct v4l2_ioctl_ops cedrus_ioctl_ops;
+ 
+ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+ 		      struct vb2_queue *dst_vq);
+-void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt);
++void cedrus_max_size(struct cedrus_dev *dev, u32 src_pixelformat,
++		     unsigned int *width, unsigned int *height);
++void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt,
++			   unsigned int max_width, unsigned int max_height);
+ void cedrus_reset_cap_format(struct cedrus_ctx *ctx);
+ void cedrus_reset_out_format(struct cedrus_ctx *ctx);
+ 
+-- 
+Armbian
+

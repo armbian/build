@@ -1,0 +1,259 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 5 Nov 2026 19:20:00 +0000
+Subject: media: cedrus: decode smaller VP9 inter frames in place
+
+VP9 inter frames may change the frame size and then predict from
+references of another size through the scaled motion compensation,
+which the VP9 backend already programs (per-reference sizes and scale
+factors). The 24 vp90-2-21-resize_inter_* conformance vectors and
+vp90-2-05-resize / vp90-2-18-resize shrink to 1/2 or 3/4 of the size on
+an inter frame, with no key frame following. Such a frame was written
+with the line stride of the CAPTURE format while the hardware derives
+the stride of every reference from the width of that reference
+(VE_DEC_VP9_SCALE1 stride alignment), so once userspace keeps the
+CAPTURE queue across the change, the next frame reads its references
+with the wrong stride. Frames larger than the CAPTURE format were not
+rejected at all and would overrun the buffers.
+
+Decode a frame that fits in the CAPTURE buffers in place: at the top
+left corner, with the plane offsets of the CAPTURE format and the line
+stride of a frame of its own width (ALIGN(width, 64) for the linear
+formats, the P010 stride of its width for the visible P010 picture, the
+low-2-bit plane right after its chroma rows). That is the layout the
+hardware uses when it reads the frame as a reference, and the layout
+TRY_FMT(CAPTURE) now reports for a VP9 frame size smaller than the
+coded size, so userspace can describe such a frame (GStreamer sets the
+GstVideoMeta strides from it). S_FMT keeps deriving the CAPTURE size
+from the OUTPUT format. Frames at the coded size keep exactly the
+previous layout and register values. A frame larger than the CAPTURE
+format is rejected with -EINVAL instead of overrunning the buffers;
+userspace has to reallocate the queue for it (vp90-2-22-svc_1280x720_3
+grows from 320x180 to 1280x720 on inter frames and still needs
+VIDIOC_REMOVE_BUFS plus S_FMT while streaming, not added here).
+
+cedrus_dst_p010_output_set() takes the layout of the visible picture
+as a parameter; the H.265 caller passes the CAPTURE format as
+before.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus_h265.c  |  3 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_hw.c    |  7 ++--
+ drivers/staging/media/sunxi/cedrus/cedrus_hw.h    |  3 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 26 +++++++++++---
+ drivers/staging/media/sunxi/cedrus/cedrus_vp9.c   | 42 +++++++++++++++++++----
+ 5 files changed, 66 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index eb41d27ad..a06a86ca5 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -828,7 +828,8 @@ static int cedrus_h265_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		struct v4l2_pix_format recon = cedrus_dst_frame_fmt(ctx);
+ 
+ 		cedrus_dst_format_set(dev, &recon);
+-		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf);
++		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf,
++					   &ctx->dst_fmt);
+ 	}
+ 
+ 	/* Enable appropriate interruptions. */
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 1fdc223f4..749d07633 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -180,11 +180,12 @@ void cedrus_dst_format_set(struct cedrus_dev *dev,
+  * the same video engine.
+  */
+ void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
+-				struct vb2_buffer *dst_buf)
++				struct vb2_buffer *dst_buf,
++				const struct v4l2_pix_format *pic)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+-	u32 stride = ctx->dst_fmt.bytesperline;
+-	u32 chroma_size = stride * ctx->dst_fmt.height / 2;
++	u32 stride = pic->bytesperline;
++	u32 chroma_size = stride * pic->height / 2;
+ 	dma_addr_t luma = cedrus_dst_buf_addr(ctx, dst_buf, 0);
+ 	dma_addr_t chroma = cedrus_dst_buf_addr(ctx, dst_buf, 1);
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.h b/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
+index 6f3dea749..39f30823d 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
+@@ -23,7 +23,8 @@ void cedrus_dst_format_set(struct cedrus_dev *dev,
+ 			   struct v4l2_pix_format *fmt);
+ 
+ void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
+-				struct vb2_buffer *dst_buf);
++				struct vb2_buffer *dst_buf,
++				const struct v4l2_pix_format *pic);
+ 
+ int cedrus_hw_suspend(struct device *device);
+ int cedrus_hw_resume(struct device *device);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index c062a2aae..5e2ee5ecb 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -395,12 +395,14 @@ static int cedrus_g_fmt_vid_out(struct file *file, void *priv,
+ }
+ 
+ static int cedrus_try_fmt_vid_cap_p(struct cedrus_ctx *ctx,
+-				    struct v4l2_pix_format *pix_fmt)
++				    struct v4l2_pix_format *pix_fmt, bool probe)
+ {
+ 	struct cedrus_format *fmt =
+ 		cedrus_find_format(ctx, pix_fmt->pixelformat,
+ 				   CEDRUS_DECODE_DST);
+ 	unsigned int max_width, max_height;
++	unsigned int width = pix_fmt->width;
++	unsigned int height = pix_fmt->height;
+ 
+ 	if (!fmt)
+ 		return -EINVAL;
+@@ -411,6 +413,21 @@ static int cedrus_try_fmt_vid_cap_p(struct cedrus_ctx *ctx,
+ 	pix_fmt->pixelformat = fmt->pixelformat;
+ 	pix_fmt->width = ctx->src_fmt.width;
+ 	pix_fmt->height = ctx->src_fmt.height;
++
++	/*
++	 * The CAPTURE format has the coded size of the OUTPUT format. A VP9
++	 * inter frame may be smaller and is then decoded in place, see
++	 * cedrus_vp9_setup(): TRY_FMT with the size of such a frame reports
++	 * its layout in the CAPTURE buffers (line stride and payload); the
++	 * plane offsets stay those of the format.
++	 */
++	if (probe && ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME &&
++	    width && height && width <= pix_fmt->width &&
++	    height <= pix_fmt->height) {
++		pix_fmt->width = width;
++		pix_fmt->height = height;
++	}
++
+ 	cedrus_prepare_format(pix_fmt, max_width, max_height);
+ 
+ 	/*
+@@ -437,7 +454,8 @@ static int cedrus_try_fmt_vid_cap_p(struct cedrus_ctx *ctx,
+ static int cedrus_try_fmt_vid_cap(struct file *file, void *priv,
+ 				  struct v4l2_format *f)
+ {
+-	return cedrus_try_fmt_vid_cap_p(cedrus_file2ctx(file), &f->fmt.pix);
++	return cedrus_try_fmt_vid_cap_p(cedrus_file2ctx(file), &f->fmt.pix,
++					true);
+ }
+ 
+ static int cedrus_try_fmt_vid_out_p(struct cedrus_ctx *ctx,
+@@ -476,7 +494,7 @@ static int cedrus_s_fmt_vid_cap(struct file *file, void *priv,
+ 	if (vb2_is_busy(vq))
+ 		return -EBUSY;
+ 
+-	ret = cedrus_try_fmt_vid_cap(file, priv, f);
++	ret = cedrus_try_fmt_vid_cap_p(ctx, &f->fmt.pix, false);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -488,7 +506,7 @@ static int cedrus_s_fmt_vid_cap(struct file *file, void *priv,
+ void cedrus_reset_cap_format(struct cedrus_ctx *ctx)
+ {
+ 	ctx->dst_fmt.pixelformat = 0;
+-	cedrus_try_fmt_vid_cap_p(ctx, &ctx->dst_fmt);
++	cedrus_try_fmt_vid_cap_p(ctx, &ctx->dst_fmt, false);
+ }
+ 
+ static int cedrus_s_fmt_vid_out_p(struct cedrus_ctx *ctx,
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+index 5452c8427..e67d634b5 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+@@ -840,7 +840,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	struct vb2_buffer *src_buf = &run->src->vb2_buf;
+ 	struct v4l2_pix_format recon, out;
+ 	dma_addr_t src_dma, src_end, luma, chroma;
+-	u32 src_len, hdr_off, cur_w, cur_h, mi_cols, mi_rows;
++	u32 src_len, hdr_off, cur_w, cur_h, mi_cols, mi_rows, stride;
+ 	u32 hdr_syn, fc, reg;
+ 	bool intra_only, p010, afbc, resolution_change, use_temporal_mv;
+ 	int ret;
+@@ -859,6 +859,28 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	p010 = cedrus_dst_is_p010(ctx);
+ 	afbc = cedrus_recon_is_afbc(ctx);
+ 
++	/*
++	 * VP9 inter frames may change the frame size and then predict from
++	 * references of another size through the scaled motion compensation
++	 * (the vp90-2-21-resize_inter_* conformance vectors shrink to 1/2 or
++	 * 3/4 of the size on an inter frame). Those references only survive
++	 * if the CAPTURE queue is kept, so a frame that fits in its buffers
++	 * is decoded in place: at the top left corner, with the plane
++	 * offsets of the CAPTURE format and the line stride of a frame of
++	 * its own width, which is what the hardware derives for every
++	 * reference it reads (CEDRUS_VP9_STRIDE_ALIGN). This is the layout
++	 * TRY_FMT reports for the frame size. A larger frame would overrun
++	 * the buffers: userspace has to reallocate the queue for it.
++	 */
++	if (cur_w > ctx->dst_fmt.width || cur_h > ctx->dst_fmt.height) {
++		dev_warn_ratelimited(dev->dev,
++				     "VP9 frame %ux%u larger than the %ux%u CAPTURE format\n",
++				     cur_w, cur_h, ctx->dst_fmt.width,
++				     ctx->dst_fmt.height);
++		return -EINVAL;
++	}
++	stride = ALIGN(cur_w, CEDRUS_RECON_STRIDE_ALIGN);
++
+ 	intra_only = !!(dec->flags & (V4L2_VP9_FRAME_FLAG_KEY_FRAME |
+ 				      V4L2_VP9_FRAME_FLAG_INTRA_ONLY));
+ 
+@@ -916,6 +938,9 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	out = recon;
+ 	out.width = ALIGN(cur_w, 16);
+ 	out.height = ALIGN(cur_h, 16);
++	/* Linear reconstruction: the stride of a frame of this width. */
++	if (out.bytesperline)
++		out.bytesperline = stride;
+ 	cedrus_dst_format_set(dev, &out);
+ 
+ 	/* The whole frame is in a single buffer. */
+@@ -1094,7 +1119,13 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 
+ 	cedrus_write(dev, VE_DEC_VP9_SDRT_CTRL, 0);
+ 	if (p010) {
+-		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf);
++		/* The visible P010 picture has the layout of a frame its size. */
++		struct v4l2_pix_format vis = ctx->dst_fmt;
++
++		vis.width = cur_w;
++		vis.height = ALIGN(cur_h, 16);
++		vis.bytesperline = ALIGN(cur_w, 16) * 2;
++		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf, &vis);
+ 	} else {
+ 		cedrus_write(dev, VE_DEC_VP9_SDRT_LUMA_ADDR, 0);
+ 		cedrus_write(dev, VE_DEC_VP9_SDRT_CHROMA_ADDR, 0);
+@@ -1112,19 +1143,18 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		 * after the chroma plane of the buffer, also when it reads
+ 		 * the references.
+ 		 */
+-		reg = (chroma - luma) +
+-		      recon.bytesperline * (ALIGN(cur_h, 8) / 2);
++		reg = (chroma - luma) + stride * (ALIGN(cur_h, 8) / 2);
+ 		cedrus_write(dev, VE_DEC_VP9_FIRST_OUT_OFFSET,
+ 			     reg & GENMASK(27, 0));
+ 
+-		reg = VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(recon.width));
++		reg = VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(cur_w));
+ 		if (p010)
+ 			reg |= VE_DEC_10BIT_CFG_P010;
+ 		cedrus_write(dev, VE_DEC_VP9_10BIT_CFG, reg);
+ 	} else if (p010) {
+ 		/* AFBC reconstruction, P010 written by the secondary output. */
+ 		cedrus_write(dev, VE_DEC_VP9_10BIT_CFG,
+-			     VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(recon.width)) |
++			     VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(cur_w)) |
+ 			     VE_DEC_10BIT_CFG_P010);
+ 	}
+ 
+-- 
+2.43.0
+

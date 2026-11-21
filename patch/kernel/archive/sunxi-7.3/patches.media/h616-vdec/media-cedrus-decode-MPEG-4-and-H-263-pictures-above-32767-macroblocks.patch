@@ -1,0 +1,238 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 09 Nov 2026 21:40:00 +0000
+Subject: media: cedrus: decode MPEG-4 and H.263 pictures above 32767 macroblocks
+
+The driver accepts MPEG-4 and H.263 pictures up to 4080x2304, which is
+36720 macroblocks, but the macroblock count of a run of the engine is a
+15 bit field of the trigger register. A VOP without video packets is one
+run, so above 32767 macroblocks the count wrapped (36720 became 3952)
+and most of the picture was left undecoded. A video packet or GOB that
+long has the same problem.
+
+Split such segments into runs of at most 32767 macroblocks which end on
+macroblock row boundaries. A following run goes on from the bit
+position at which the engine stopped, read back from the VLD offset
+register, without the resync boundary flag and without rewriting the
+macroblock position and the quantiser, so that the prediction state of
+the segment carries over. The vendor library decodes H.263 GOBs without
+a header the same way.
+
+The slice parameter arrays held 8192 elements, one per macroblock of a
+1080p picture. Size them for one segment per macroblock of the largest
+picture, and allocate the segment array of a context for the
+macroblock count of its coded format.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -48,8 +48,8 @@
+ 
+ /* The engine counts macroblock columns in 8 bits. */
+ #define CEDRUS_MPEG4_MAX_WIDTH		4080
+-/* One segment per macroblock of a 1080p picture, at worst. */
+-#define CEDRUS_MPEG4_MAX_SLICES		8192
++/* One segment per macroblock of the largest picture (4080x2304), at worst. */
++#define CEDRUS_MPEG4_MAX_SLICES		((CEDRUS_MPEG4_MAX_WIDTH / 16) * (2304 / 16))
+ #define CEDRUS_MPEG4_SUPPORTED_QUIRKS \
+ 	(V4L2_MPEG4_QUIRK_EDGE_EXACT_SIZE | V4L2_MPEG4_QUIRK_QPEL_CHROMA | \
+ 	 V4L2_MPEG4_QUIRK_QPEL_CHROMA2 | V4L2_MPEG4_QUIRK_FIELD_HPEL_CHROMA | \
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+@@ -22,6 +22,14 @@
+  * headers: it decodes a given number of macroblocks from a given bit
+  * position and stops. A picture is decoded in one run per segment that
+  * starts with a header.
++ *
++ * The number of macroblocks of a run is a 15 bit field, which a segment of
++ * a large picture can exceed (a 4080x2304 VOP without video packets has
++ * 36720). Such a segment is decoded in several runs which end on macroblock
++ * row boundaries. The following runs go on from the bit position at which
++ * the engine stopped, without a resync boundary, so that the prediction
++ * state and the quantiser carry over, the way the vendor library decodes
++ * H.263 GOBs without a header.
+  */
+ struct cedrus_mpeg4_segment {
+ 	u32	bit_offset;
+@@ -36,8 +44,13 @@
+ 	size_t				dcac_buf_size;
+ 
+ 	struct cedrus_mpeg4_segment	*segments;
++	unsigned int			max_segments;
+ 	unsigned int			num_segments;
+ 	unsigned int			cur_segment;
++	/* Macroblocks of the current segment decoded by the previous runs */
++	unsigned int			seg_mb_done;
++	/* Macroblocks of the current run */
++	unsigned int			run_mb;
+ 	unsigned int			mb_width;
+ 
+ 	dma_addr_t			src_addr;
+@@ -46,8 +59,10 @@
+ 	bool				error;
+ };
+ 
+-/* Same as the dimensions of the slice parameter arrays. */
+-#define CEDRUS_MPEG4_MAX_SEGMENTS	8192
++/* The largest value of the macroblock count field of the trigger register. */
++#define CEDRUS_MPEG4_MAX_RUN_MB		32767
++/* The bit offset field of the VLD offset register. */
++#define VE_DEC_MPEG_VLD_OFFSET_BITS	GENMASK(28, 0)
+ 
+ static struct cedrus_mpeg4_ctx *cedrus_mpeg4_ctx(struct cedrus_ctx *ctx)
+ {
+@@ -494,7 +509,7 @@
+ 		return 0;
+ 	}
+ 
+-	if (n > CEDRUS_MPEG4_MAX_SEGMENTS)
++	if (n > mpeg4->max_segments)
+ 		return -EINVAL;
+ 
+ 	for (i = 0; i < n; i++) {
+@@ -788,33 +803,54 @@
+ 	mpeg4->src_end = mpeg4->src_addr + vb2_plane_size(src_vb, 0);
+ 	mpeg4->src_bits = vb2_get_plane_payload(src_vb, 0) * 8;
+ 	mpeg4->cur_segment = 0;
++	mpeg4->seg_mb_done = 0;
+ 	mpeg4->error = false;
+ 
+ 	return 0;
+ }
+ 
+-static void cedrus_mpeg4_run_segment(struct cedrus_ctx *ctx)
++/*
++ * Start a run of the current segment, from its header (bit_offset is then
++ * the segment's) or, when the previous run stopped within it, from the bit
++ * position the engine stopped at.
++ */
++static void cedrus_mpeg4_run_segment(struct cedrus_ctx *ctx, u32 bit_offset)
+ {
+ 	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
+ 	const struct cedrus_mpeg4_segment *seg =
+ 		&mpeg4->segments[mpeg4->cur_segment];
+ 	struct cedrus_dev *dev = ctx->dev;
++	bool resume = mpeg4->seg_mb_done;
++	unsigned int first = seg->macroblock_number + mpeg4->seg_mb_done;
++	unsigned int count = seg->num_macroblocks - mpeg4->seg_mb_done;
+ 	u32 reg;
+ 
++	/* Stop a longer run at the last macroblock row end it reaches. */
++	if (count > CEDRUS_MPEG4_MAX_RUN_MB)
++		count = rounddown(first + CEDRUS_MPEG4_MAX_RUN_MB,
++				  mpeg4->mb_width) - first;
++	mpeg4->run_mb = count;
++
+ 	cedrus_write(dev, VE_DEC_MPEG_STATUS, VE_DEC_MPEG_STATUS_CHECK_MASK);
+ 	cedrus_write(dev, VE_DEC_MPEG_ERROR, 0);
+ 	cedrus_write(dev, VE_DEC_MPEG_CRTMBADDR, 0);
+ 
+-	cedrus_write(dev, VE_DEC_MPEG_MBADDR,
+-		     VE_DEC_MPEG_MBADDR_X(seg->macroblock_number % mpeg4->mb_width) |
+-		     VE_DEC_MPEG_MBADDR_Y(seg->macroblock_number / mpeg4->mb_width));
+-	cedrus_write(dev, VE_DEC_MPEG_QCINPUT,
+-		     VE_DEC_MPEG_QCINPUT_QUANT_SCALE(seg->quant_scale));
++	/*
++	 * A resumed run keeps the macroblock position and the quantiser the
++	 * engine reached.
++	 */
++	if (!resume) {
++		cedrus_write(dev, VE_DEC_MPEG_MBADDR,
++			     VE_DEC_MPEG_MBADDR_X(first % mpeg4->mb_width) |
++			     VE_DEC_MPEG_MBADDR_Y(first / mpeg4->mb_width));
++		cedrus_write(dev, VE_DEC_MPEG_QCINPUT,
++			     VE_DEC_MPEG_QCINPUT_QUANT_SCALE(seg->quant_scale));
++	}
+ 
+ 	/* The engine reads the bitstream in 32 bit words. */
+-	cedrus_write(dev, VE_DEC_MPEG_VLD_OFFSET, seg->bit_offset);
++	cedrus_write(dev, VE_DEC_MPEG_VLD_OFFSET, bit_offset);
+ 	cedrus_write(dev, VE_DEC_MPEG_VLD_LEN,
+-		     ALIGN(mpeg4->src_bits - seg->bit_offset, 32));
++		     ALIGN(mpeg4->src_bits - bit_offset, 32));
+ 	cedrus_write(dev, VE_DEC_MPEG_VLD_END_ADDR, mpeg4->src_end);
+ 
+ 	reg = VE_DEC_MPEG_VLD_ADDR_BASE(mpeg4->src_addr) |
+@@ -823,28 +859,57 @@
+ 	      VE_DEC_MPEG_VLD_ADDR_FIRST_PIC_DATA;
+ 	cedrus_write(dev, VE_DEC_MPEG_VLD_ADDR, reg);
+ 
+-	reg = VE_DEC_MPEG_TRIGGER_MB_BOUNDARY | VE_DEC_MPEG_TRIGGER_MPEG4 |
+-	      VE_DEC_MPEG_TRIGGER_NUM_MB(seg->num_macroblocks) |
++	reg = VE_DEC_MPEG_TRIGGER_MPEG4 | VE_DEC_MPEG_TRIGGER_NUM_MB(count) |
+ 	      VE_DEC_MPEG_TRIGGER_HW_MB;
++	if (!resume)
++		reg |= VE_DEC_MPEG_TRIGGER_MB_BOUNDARY;
+ 	cedrus_write(dev, VE_DEC_MPEG_TRIGGER, reg);
+ }
+ 
+ static void cedrus_mpeg4_trigger(struct cedrus_ctx *ctx)
+ {
+-	cedrus_mpeg4_run_segment(ctx);
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++
++	cedrus_mpeg4_run_segment(ctx, mpeg4->segments[0].bit_offset);
+ }
+ 
+ static bool cedrus_mpeg4_trigger_next(struct cedrus_ctx *ctx,
+ 				      enum cedrus_irq_status *status)
+ {
+ 	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++	const struct cedrus_mpeg4_segment *seg;
++	u32 bit_offset;
+ 
+-	if (*status == CEDRUS_IRQ_ERROR)
++	if (*status == CEDRUS_IRQ_ERROR) {
+ 		mpeg4->error = true;
++	} else {
++		seg = &mpeg4->segments[mpeg4->cur_segment];
++		mpeg4->seg_mb_done += mpeg4->run_mb;
++
++		if (mpeg4->seg_mb_done < seg->num_macroblocks) {
++			/* The bit position at which the engine stopped */
++			bit_offset = cedrus_read(ctx->dev,
++						 VE_DEC_MPEG_VLD_OFFSET) &
++				     VE_DEC_MPEG_VLD_OFFSET_BITS;
++
++			if (bit_offset > seg->bit_offset &&
++			    bit_offset < mpeg4->src_bits) {
++				cedrus_mpeg4_run_segment(ctx, bit_offset);
++				return true;
++			}
+ 
+-	/* Decode the remaining segments, even after an error in one. */
++			mpeg4->error = true;
++		}
++	}
++
++	/*
++	 * Decode the remaining segments, even after an error in one; the rest
++	 * of a segment with an error is skipped.
++	 */
++	mpeg4->seg_mb_done = 0;
+ 	if (++mpeg4->cur_segment < mpeg4->num_segments) {
+-		cedrus_mpeg4_run_segment(ctx);
++		seg = &mpeg4->segments[mpeg4->cur_segment];
++		cedrus_mpeg4_run_segment(ctx, seg->bit_offset);
+ 		return true;
+ 	}
+ 
+@@ -864,7 +929,12 @@
+ 	if (!mpeg4)
+ 		return -ENOMEM;
+ 
+-	mpeg4->segments = kvcalloc(CEDRUS_MPEG4_MAX_SEGMENTS,
++	/* At most one segment per macroblock. */
++	mpeg4->max_segments = min_t(unsigned int,
++				    DIV_ROUND_UP(ctx->src_fmt.width, 16) *
++				    DIV_ROUND_UP(ctx->src_fmt.height, 16),
++				    CEDRUS_MPEG4_MAX_SLICES);
++	mpeg4->segments = kvcalloc(mpeg4->max_segments,
+ 				   sizeof(*mpeg4->segments), GFP_KERNEL);
+ 	if (!mpeg4->segments)
+ 		goto err_free_ctx;
+-- 
+2.53.0
+

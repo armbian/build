@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 9 Nov 2026 23:00:00 +0000
+Subject: [PATCH] media: cedrus: refuse buffers that would leave too little
+ memory
+
+With __GFP_RETRY_MAYFAIL, a CAPTURE pool that is too large for the
+board no longer invokes the OOM killer, but the allocation fails only
+once the page allocator can reclaim nothing more. Each 111 MB buffer of
+a 6144x3456 10-bit H.265 stream first pushes out the page cache, the
+program text of every process and, to swap, their anonymous memory. On
+a 1 GB board the system then stalls for long enough that the hardware
+watchdog resets it, about 30 seconds into the stream, before the
+allocation fails.
+
+Check in queue_setup that the requested buffers fit in the memory the
+kernel reports as available (si_mem_available(), which already leaves
+out the reclaim watermarks) with a sixteenth of the total memory left
+over, and fail VIDIOC_REQBUFS/VIDIOC_CREATE_BUFS with -ENOMEM
+otherwise. Only MMAP buffers are counted: imported dma-bufs
+are not allocated here. __GFP_RETRY_MAYFAIL stays as the backstop for
+memory taken by others between the check and the allocation.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -13,6 +13,7 @@
+  * Marek Szyprowski, <m.szyprowski@samsung.com>
+  */
+ 
++#include <linux/mm.h>
+ #include <linux/pm_runtime.h>
+ 
+ #include <media/videobuf2-dma-contig.h>
+@@ -970,6 +971,35 @@
+ 	.vidioc_unsubscribe_event	= v4l2_event_unsubscribe,
+ };
+ 
++/*
++ * Buffers are allocated with __GFP_RETRY_MAYFAIL, which fails only once
++ * nothing more can be reclaimed. A pool that takes the memory down to that
++ * point leaves the rest of the system thrashing long before the last
++ * allocation fails (on a 1 GB board, long enough for the watchdog to reset
++ * it), so refuse buffers that would leave less than a sixteenth of the
++ * memory available.
++ */
++static int cedrus_buffers_fit(struct cedrus_ctx *ctx, struct vb2_queue *vq,
++			      unsigned int count, unsigned int size)
++{
++	unsigned long pages = (unsigned long)count * PFN_UP(size);
++	unsigned long reserve = totalram_pages() / 16;
++	long available;
++
++	if (vq->memory != VB2_MEMORY_MMAP)
++		return 0;
++
++	available = si_mem_available();
++	if (available > 0 && pages + reserve <= (unsigned long)available)
++		return 0;
++
++	dev_dbg(ctx->dev->dev,
++		"%u buffers of %u bytes do not fit (%ld kB available)\n",
++		count, size, available << (PAGE_SHIFT - 10));
++
++	return -ENOMEM;
++}
++
+ static int cedrus_queue_setup(struct vb2_queue *vq, unsigned int *nbufs,
+ 			      unsigned int *nplanes, unsigned int sizes[],
+ 			      struct device *alloc_devs[])
+@@ -990,7 +1020,7 @@
+ 		*nplanes = 1;
+ 	}
+ 
+-	return 0;
++	return cedrus_buffers_fit(ctx, vq, *nbufs, sizes[0]);
+ }
+ 
+ static void cedrus_queue_cleanup(struct vb2_queue *vq, u32 state)
+-- 
+2.43.0

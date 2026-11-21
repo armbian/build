@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Wed, 7 Oct 2026 00:04:56 +0200
+Subject: media: cedrus: free MV-col buffers in buf_cleanup
+
+v4l2_m2m_ctx_release() releases the CAPTURE queue before the OUTPUT
+queue. When userspace closes the file handle without STREAMOFF, the
+CAPTURE buffers are already gone by the time the OUTPUT stop_streaming
+calls the codec stop() callback, so the per-buffer H.264/HEVC MV-col
+buffers are never freed.
+
+Add a buf_cleanup codec op, called from the vb2 buf_cleanup of the
+CAPTURE queue, and free the MV-col buffer there. stop() keeps using the
+same helper.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |  1 +
+ .../staging/media/sunxi/cedrus/cedrus_h264.c  | 29 +++++++++++--------
+ .../staging/media/sunxi/cedrus/cedrus_h265.c  | 28 ++++++++++--------
+ .../staging/media/sunxi/cedrus/cedrus_video.c | 10 +++++++
+ 4 files changed, 44 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -167,6 +167,7 @@ struct cedrus_dec_ops {
+ 	int (*setup)(struct cedrus_ctx *ctx, struct cedrus_run *run);
+ 	int (*start)(struct cedrus_ctx *ctx);
+ 	void (*stop)(struct cedrus_ctx *ctx);
++	void (*buf_cleanup)(struct cedrus_ctx *ctx, struct cedrus_buffer *buf);
+ 	void (*trigger)(struct cedrus_ctx *ctx);
+ 	unsigned int (*extra_cap_size)(struct cedrus_ctx *ctx,
+ 				       struct v4l2_pix_format *pix_fmt);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+@@ -6,6 +6,7 @@
+  * Copyright (c) 2018 Bootlin
+  */
+ 
++#include <linux/moduleparam.h>
+ #include <linux/delay.h>
+ #include <linux/types.h>
+ 
+@@ -647,10 +648,23 @@ static int cedrus_h264_start(struct cedrus_ctx *ctx)
+ 	return ret;
+ }
+ 
++static void cedrus_h264_buf_cleanup(struct cedrus_ctx *ctx,
++				    struct cedrus_buffer *buf)
++{
++	if (buf->codec.h264.mv_col_buf_size > 0) {
++		dma_free_attrs(ctx->dev->dev,
++			       buf->codec.h264.mv_col_buf_size,
++			       buf->codec.h264.mv_col_buf,
++			       buf->codec.h264.mv_col_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++
++		buf->codec.h264.mv_col_buf_size = 0;
++	}
++}
++
+ static void cedrus_h264_stop(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+-	struct cedrus_buffer *buf;
+ 	struct vb2_queue *vq;
+ 	unsigned int i;
+ 
+@@ -662,17 +676,7 @@ static void cedrus_h264_stop(struct cedrus_ctx *ctx)
+ 		if (!vb)
+ 			continue;
+ 
+-		buf = vb2_to_cedrus_buffer(vb);
+-
+-		if (buf->codec.h264.mv_col_buf_size > 0) {
+-			dma_free_attrs(dev->dev,
+-				       buf->codec.h264.mv_col_buf_size,
+-				       buf->codec.h264.mv_col_buf,
+-				       buf->codec.h264.mv_col_buf_dma,
+-				       DMA_ATTR_NO_KERNEL_MAPPING);
+-
+-			buf->codec.h264.mv_col_buf_size = 0;
+-		}
++		cedrus_h264_buf_cleanup(ctx, vb2_to_cedrus_buffer(vb));
+ 	}
+ 
+ 	dma_free_attrs(dev->dev, CEDRUS_NEIGHBOR_INFO_BUF_SIZE,
+@@ -710,5 +714,6 @@ struct cedrus_dec_ops cedrus_dec_ops_h264 = {
+ 	.setup		= cedrus_h264_setup,
+ 	.start		= cedrus_h264_start,
+ 	.stop		= cedrus_h264_stop,
++	.buf_cleanup	= cedrus_h264_buf_cleanup,
+ 	.trigger	= cedrus_h264_trigger,
+ };
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -859,10 +859,23 @@ static int cedrus_h265_start(struct cedrus_ctx *ctx)
+ 	return 0;
+ }
+ 
++static void cedrus_h265_buf_cleanup(struct cedrus_ctx *ctx,
++				    struct cedrus_buffer *buf)
++{
++	if (buf->codec.h265.mv_col_buf_size > 0) {
++		dma_free_attrs(ctx->dev->dev,
++			       buf->codec.h265.mv_col_buf_size,
++			       buf->codec.h265.mv_col_buf,
++			       buf->codec.h265.mv_col_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++
++		buf->codec.h265.mv_col_buf_size = 0;
++	}
++}
++
+ static void cedrus_h265_stop(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+-	struct cedrus_buffer *buf;
+ 	struct vb2_queue *vq;
+ 	unsigned int i;
+ 
+@@ -874,17 +887,7 @@ static void cedrus_h265_stop(struct cedrus_ctx *ctx)
+ 		if (!vb)
+ 			continue;
+ 
+-		buf = vb2_to_cedrus_buffer(vb);
+-
+-		if (buf->codec.h265.mv_col_buf_size > 0) {
+-			dma_free_attrs(dev->dev,
+-				       buf->codec.h265.mv_col_buf_size,
+-				       buf->codec.h265.mv_col_buf,
+-				       buf->codec.h265.mv_col_buf_dma,
+-				       DMA_ATTR_NO_KERNEL_MAPPING);
+-
+-			buf->codec.h265.mv_col_buf_size = 0;
+-		}
++		cedrus_h265_buf_cleanup(ctx, vb2_to_cedrus_buffer(vb));
+ 	}
+ 
+ 	dma_free_attrs(dev->dev, CEDRUS_H265_NEIGHBOR_INFO_BUF_SIZE,
+@@ -919,6 +922,7 @@ struct cedrus_dec_ops cedrus_dec_ops_h265 = {
+ 	.setup		= cedrus_h265_setup,
+ 	.start		= cedrus_h265_start,
+ 	.stop		= cedrus_h265_stop,
++	.buf_cleanup	= cedrus_h265_buf_cleanup,
+ 	.trigger	= cedrus_h265_trigger,
+ 	.extra_cap_size	= cedrus_h265_extra_cap_size,
+ };
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -603,6 +603,15 @@ static void cedrus_stop_streaming(struct vb2_queue *vq)
+ 	cedrus_queue_cleanup(vq, VB2_BUF_STATE_ERROR);
+ }
+ 
++static void cedrus_buf_cleanup(struct vb2_buffer *vb)
++{
++	struct cedrus_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
++
++	if (V4L2_TYPE_IS_CAPTURE(vb->vb2_queue->type) &&
++	    ctx->current_codec && ctx->current_codec->buf_cleanup)
++		ctx->current_codec->buf_cleanup(ctx, vb2_to_cedrus_buffer(vb));
++}
++
+ static void cedrus_buf_queue(struct vb2_buffer *vb)
+ {
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+@@ -622,6 +631,7 @@ static const struct vb2_ops cedrus_qops = {
+ 	.queue_setup		= cedrus_queue_setup,
+ 	.buf_prepare		= cedrus_buf_prepare,
+ 	.buf_queue		= cedrus_buf_queue,
++	.buf_cleanup		= cedrus_buf_cleanup,
+ 	.buf_out_validate	= cedrus_buf_out_validate,
+ 	.buf_request_complete	= cedrus_buf_request_complete,
+ 	.start_streaming	= cedrus_start_streaming,
+-- 
+Armbian
+

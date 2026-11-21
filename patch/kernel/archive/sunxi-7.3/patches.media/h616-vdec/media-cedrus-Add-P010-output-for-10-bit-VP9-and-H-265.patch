@@ -1,0 +1,533 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sat, 11 Jul 2026 12:47:30 +0200
+Subject: media: cedrus: Add P010 output for 10-bit VP9 and H.265
+
+For 10-bit pictures the video engine reconstructs into an 8-bit NV12
+surface followed by a plane with the two low bits of every sample. Its
+secondary (scale-down/rotate) output engine converts that reconstruction
+into P010, which is what userspace gets: the P010 surface is placed at
+the start of the capture buffer and the reconstruction behind it.
+
+The reconstruction addressing, the buffer sizing and the secondary
+output programming are the same for VP9 and H.265, which use the same
+engine, so they are shared. P010 is offered for 10-bit streams only,
+through the depth filter of the format list.
+
+The hidden surface starts 1 KiB aligned and has a 64 byte aligned line
+stride, which the VP9 decoder needs for its reconstruction addresses.
+The plane of the two low bits has the same line stride in the
+allocation and in the hardware: the width divided by 4, rounded up and
+aligned to 32 bytes, as the vendor library programs it.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+[aiyengar: rebased onto Armbian's "Implement AFBC YUV420 formats for H265":
+ kept its AFBC chroma address check in cedrus_h265_frame_info_write_single()]
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   | 97 +++++++++++++++++++
+ .../staging/media/sunxi/cedrus/cedrus_h265.c  | 58 ++++++-----
+ .../staging/media/sunxi/cedrus/cedrus_hw.c    | 33 +++++++
+ .../staging/media/sunxi/cedrus/cedrus_hw.h    |  3 +
+ .../staging/media/sunxi/cedrus/cedrus_regs.h  | 10 ++
+ .../staging/media/sunxi/cedrus/cedrus_video.c | 23 ++++-
+ .../staging/media/sunxi/cedrus/cedrus_vp9.c   | 58 +++++------
+ 7 files changed, 215 insertions(+), 67 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -286,6 +286,103 @@ static inline dma_addr_t cedrus_dst_buf_addr(struct cedrus_ctx *ctx,
+ 	return buf ? cedrus_buf_addr(buf, &ctx->dst_fmt, plane) : 0;
+ }
+ 
++/*
++ * Line stride and size of the low-2-bit plane the hardware appends after
++ * the 8-bit NV12 planes for 10-bit reconstruction.  Shared by all codecs.
++ */
++static inline u32 cedrus_dst_2bit_stride(unsigned int width)
++{
++	return ALIGN(DIV_ROUND_UP(width, 4), 32);
++}
++
++static inline u32 cedrus_dst_2bit_size(unsigned int width, unsigned int height)
++{
++	return cedrus_dst_2bit_stride(width) * height * 3 / 2;
++}
++
++static inline bool cedrus_dst_is_p010(struct cedrus_ctx *ctx)
++{
++	return ctx->dst_fmt.pixelformat == V4L2_PIX_FMT_P010;
++}
++
++/*
++ * Offset of the hidden reconstruction surface, which follows the
++ * userspace-visible P010 surface at the start of the buffer.
++ */
++static inline u32 cedrus_p010_recon_offset(const struct v4l2_pix_format *fmt)
++{
++	return ALIGN(fmt->bytesperline * fmt->height * 3 / 2, SZ_1K);
++}
++
++/*
++ * Format describing the 8-bit NV12 reconstruction/reference surface.
++ * For P010 output this is a hidden surface (NV12 planes plus an appended
++ * 2-bit plane) that follows the visible P010 data; otherwise it is the
++ * capture format itself.
++ */
++static inline struct v4l2_pix_format cedrus_dst_frame_fmt(struct cedrus_ctx *ctx)
++{
++	struct v4l2_pix_format fmt = ctx->dst_fmt;
++
++	if (cedrus_dst_is_p010(ctx)) {
++		fmt.pixelformat = V4L2_PIX_FMT_NV12;
++		fmt.bytesperline = ALIGN(fmt.width, CEDRUS_RECON_STRIDE_ALIGN);
++	}
++
++	return fmt;
++}
++
++/*
++ * Address of a plane of the reconstruction/reference surface.  Identical
++ * to cedrus_dst_buf_addr() for non-P010 output; for P010 it points past
++ * the visible P010 data to the hidden NV12 surface.
++ */
++static inline dma_addr_t cedrus_dst_frame_addr(struct cedrus_ctx *ctx,
++					       struct vb2_buffer *buf,
++					       unsigned int plane)
++{
++	struct v4l2_pix_format fmt = cedrus_dst_frame_fmt(ctx);
++	dma_addr_t addr;
++
++	if (!buf)
++		return 0;
++
++	addr = vb2_dma_contig_plane_dma_addr(buf, 0);
++	if (cedrus_dst_is_p010(ctx))
++		addr += cedrus_p010_recon_offset(&ctx->dst_fmt);
++
++	return addr + (dma_addr_t)fmt.bytesperline * fmt.height * plane;
++}
++
++/*
++ * Extra capture-buffer space needed for 10-bit decoding beyond the
++ * visible plane: the appended low-2-bit reconstruction plane, plus (for
++ * P010) the hidden 8-bit NV12 reconstruction surface.  Shared by the
++ * VP9 and H.265 decoders as the extra_cap_size op.
++ */
++static inline unsigned int
++cedrus_dst_10bit_extra_size(struct cedrus_ctx *ctx,
++			    struct v4l2_pix_format *pix_fmt)
++{
++	unsigned int extra;
++
++	if (ctx->bit_depth <= 8)
++		return 0;
++
++	extra = cedrus_dst_2bit_size(pix_fmt->width, pix_fmt->height);
++
++	if (pix_fmt->pixelformat == V4L2_PIX_FMT_P010) {
++		u32 visible = pix_fmt->bytesperline * pix_fmt->height * 3 / 2;
++
++		/* Hidden NV12 reconstruction surface, 1 KiB aligned. */
++		extra += cedrus_p010_recon_offset(pix_fmt) - visible +
++			 ALIGN(pix_fmt->width, CEDRUS_RECON_STRIDE_ALIGN) *
++			 pix_fmt->height * 3 / 2;
++	}
++
++	return extra;
++}
++
+ static inline void cedrus_write_ref_buf_addr(struct cedrus_ctx *ctx,
+ 					     struct vb2_queue *q,
+ 					     u64 timestamp,
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -41,19 +41,6 @@ struct cedrus_h265_sram_pred_weight {
+ 	__s8	offset;
+ } __packed;
+ 
+-static unsigned int cedrus_h265_2bit_size(unsigned int width,
+-					  unsigned int height)
+-{
+-	/*
+-	 * Vendor library additionally aligns width and height to 16,
+-	 * but all capture formats are already aligned to that anyway,
+-	 * so we can skip that here. All formats are also one form of
+-	 * YUV 4:2:0 or another, so we can safely assume multiplication
+-	 * factor of 1.5.
+-	 */
+-	return ALIGN(width / 4, 32) * height * 3 / 2;
+-}
+-
+ static enum cedrus_irq_status cedrus_h265_irq_status(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+@@ -119,9 +106,9 @@ static void cedrus_h265_frame_info_write_single(struct cedrus_ctx *ctx,
+ 						struct vb2_buffer *buf)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+-	dma_addr_t dst_luma_addr = cedrus_dst_buf_addr(ctx, buf, 0);
++	dma_addr_t dst_luma_addr = cedrus_dst_frame_addr(ctx, buf, 0);
+ 	dma_addr_t dst_chroma_addr = is_afbc_format(ctx->dst_fmt.pixelformat) ?
+-				     0 : cedrus_dst_buf_addr(ctx, buf, 1);
++				     0 : cedrus_dst_frame_addr(ctx, buf, 1);
+ 	dma_addr_t mv_col_buf_addr[2] = {
+ 		cedrus_h265_frame_info_mv_col_buf_addr(buf, 0),
+ 		cedrus_h265_frame_info_mv_col_buf_addr(buf, field_pic ? 1 : 0)
+@@ -815,19 +802,39 @@ static int cedrus_h265_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	}
+ 
+ 	if (ctx->bit_depth > 8) {
+-		unsigned int stride = ALIGN(ctx->dst_fmt.width / 4, 32);
++		struct v4l2_pix_format recon = cedrus_dst_frame_fmt(ctx);
++		unsigned int stride = cedrus_dst_2bit_stride(recon.width);
+ 
+-		reg = ctx->dst_fmt.sizeimage -
+-		      cedrus_h265_2bit_size(ctx->dst_fmt.width,
+-					    ctx->dst_fmt.height);
++		/*
++		 * Offset of the appended low-2-bit reconstruction plane from
++		 * the reconstruction luma base.
++		 */
++		reg = recon.bytesperline * recon.height * 3 / 2;
+ 		cedrus_write(dev, VE_DEC_H265_OFFSET_ADDR_FIRST_OUT, reg);
+ 
+ 		reg = VE_DEC_H265_10BIT_CONFIGURE_FIRST_2BIT_STRIDE(stride);
++		if (cedrus_dst_is_p010(ctx))
++			reg |= VE_DEC_10BIT_CFG_P010;
+ 		cedrus_write(dev, VE_DEC_H265_10BIT_CONFIGURE, reg);
+ 	}
+ 
++	/*
++	 * P010 capture: the primary output holds the hidden 8-bit NV12
++	 * reconstruction surface, the secondary output converts it to the
++	 * visible P010 surface.
++	 */
++	if (cedrus_dst_is_p010(ctx)) {
++		struct v4l2_pix_format recon = cedrus_dst_frame_fmt(ctx);
++
++		cedrus_dst_format_set(dev, &recon);
++		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf);
++	}
++
+ 	/* Enable appropriate interruptions. */
+-	cedrus_write(dev, VE_DEC_H265_CTRL, VE_DEC_H265_CTRL_IRQ_MASK);
++	reg = VE_DEC_H265_CTRL_IRQ_MASK;
++	if (cedrus_dst_is_p010(ctx))
++		reg |= VE_DEC_H265_CTRL_ROTATE_SCALE_OUT_EN;
++	cedrus_write(dev, VE_DEC_H265_CTRL, reg);
+ 
+ 	return 0;
+ }
+@@ -906,16 +913,8 @@ static void cedrus_h265_trigger(struct cedrus_ctx *ctx)
+ 	cedrus_write(dev, VE_DEC_H265_TRIGGER, VE_DEC_H265_TRIGGER_DEC_SLICE);
+ }
+ 
+-static unsigned int cedrus_h265_extra_cap_size(struct cedrus_ctx *ctx,
+-					       struct v4l2_pix_format *pix_fmt)
+-{
+-	if (ctx->bit_depth > 8)
+-		return cedrus_h265_2bit_size(pix_fmt->width, pix_fmt->height);
+-
+-	return 0;
+-}
+-
+ struct cedrus_dec_ops cedrus_dec_ops_h265 = {
++	.extra_cap_size	= cedrus_dst_10bit_extra_size,
+ 	.irq_clear	= cedrus_h265_irq_clear,
+ 	.irq_disable	= cedrus_h265_irq_disable,
+ 	.irq_status	= cedrus_h265_irq_status,
+@@ -924,5 +923,4 @@ struct cedrus_dec_ops cedrus_dec_ops_h265 = {
+ 	.stop		= cedrus_h265_stop,
+ 	.buf_cleanup	= cedrus_h265_buf_cleanup,
+ 	.trigger	= cedrus_h265_trigger,
+-	.extra_cap_size	= cedrus_h265_extra_cap_size,
+ };
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -154,6 +154,39 @@ void cedrus_dst_format_set(struct cedrus_dev *dev,
+ 	}
+ }
+ 
++/*
++ * Program the secondary ("scale-down/rotate") output engine to convert
++ * the 8-bit NV12 reconstruction into the userspace-visible P010 surface
++ * at the start of the capture buffer.  The caller must already have
++ * configured the primary output (which writes the hidden NV12
++ * reconstruction/reference surface after the P010 data) and must still
++ * set the per-codec 10-bit configuration and the second-output enable
++ * bit in the function control register.  Shared by the VP9 and H.265
++ * decoders, which drive the same video engine.
++ */
++void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
++				struct vb2_buffer *dst_buf)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	u32 stride = ctx->dst_fmt.bytesperline;
++	u32 chroma_size = stride * ctx->dst_fmt.height / 2;
++	dma_addr_t luma = cedrus_dst_buf_addr(ctx, dst_buf, 0);
++	dma_addr_t chroma = cedrus_dst_buf_addr(ctx, dst_buf, 1);
++
++	/* Secondary output: the visible P010 surface. */
++	cedrus_write(dev, VE_SECONDARY_FB_LINE_STRIDE,
++		     VE_PRIMARY_FB_LINE_STRIDE_LUMA(stride) |
++		     VE_PRIMARY_FB_LINE_STRIDE_CHROMA(stride));
++	cedrus_write(dev, VE_CHROMA_BUF_LEN,
++		     VE_SECONDARY_OUT_FMT_EXT |
++		     VE_CHROMA_BUF_LEN_SDRT(chroma_size));
++	cedrus_write(dev, VE_PRIMARY_OUT_FMT,
++		     VE_PRIMARY_OUT_FMT_NV12 | VE_SECONDARY_OUT_FMT_EXT_NV12);
++	cedrus_write(dev, VE_DEC_SECOND_OUT_CTRL, 0);
++	cedrus_write(dev, VE_DEC_SECOND_OUT_LUMA_ADDR, luma >> 8);
++	cedrus_write(dev, VE_DEC_SECOND_OUT_CHROMA_ADDR, chroma >> 8);
++}
++
+ static irqreturn_t cedrus_irq(int irq, void *data)
+ {
+ 	struct cedrus_dev *dev = data;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.h b/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.h
+@@ -22,6 +22,9 @@ void cedrus_engine_disable(struct cedrus_dev *dev);
+ void cedrus_dst_format_set(struct cedrus_dev *dev,
+ 			   struct v4l2_pix_format *fmt);
+ 
++void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
++				struct vb2_buffer *dst_buf);
++
+ int cedrus_hw_suspend(struct device *device);
+ int cedrus_hw_resume(struct device *device);
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+@@ -76,6 +76,7 @@
+ #define VE_INTRAPRED_DRAM_BUF_ADDR		0x58
+ #define VE_PRIMARY_CHROMA_BUF_LEN		0xc4
+ #define VE_PRIMARY_FB_LINE_STRIDE		0xc8
++#define VE_SECONDARY_FB_LINE_STRIDE		0xcc
+ 
+ #define VE_PRIMARY_FB_LINE_STRIDE_CHROMA(s)	SHIFT_AND_MASK_BITS(s, 31, 16)
+ #define VE_PRIMARY_FB_LINE_STRIDE_LUMA(s)	SHIFT_AND_MASK_BITS(s, 15, 0)
+@@ -529,6 +530,7 @@
+ 	SHIFT_AND_MASK_BITS(v, 21, 11)
+ #define VE_DEC_H265_10BIT_CONFIGURE_FIRST_2BIT_STRIDE(v) \
+ 	SHIFT_AND_MASK_BITS(v, 10, 0)
++/* Convert the secondary output to P010 (same bit as the VP9 decoder). */
+ #define VE_DEC_H265_10BIT_CONFIGURE		(VE_ENGINE_DEC_H265 + 0x8c)
+ 
+ #define VE_DEC_H265_LOW_ADDR_PRIMARY_CHROMA(a) \
+@@ -780,6 +782,7 @@
+ #define VE_DEC_VP9_FUNC_CTRL_FINISH_INT		BIT(0)
+ #define VE_DEC_VP9_FUNC_CTRL_ERR_INT		BIT(1)
+ #define VE_DEC_VP9_FUNC_CTRL_DATA_REQ_INT	BIT(2)
++#define VE_DEC_VP9_FUNC_CTRL_SECOND_OUT		BIT(9)
+ #define VE_DEC_VP9_FUNC_CTRL_MCRI_CACHE		BIT(10)
+ #define VE_DEC_VP9_FUNC_CTRL_DDR_CONS		BIT(31)
+ #define VE_DEC_VP9_FUNC_CTRL_INT_MASK \
+@@ -814,6 +817,13 @@
+ #define VE_DEC_VP9_BITS_END		(VE_ENGINE_DEC_H265 + 0x4c)
+ #define VE_DEC_VP9_BITS_END_BASE(a)		((a) >> 8)
+ 
++#define VE_DEC_SECOND_OUT_CTRL		(VE_ENGINE_DEC_H265 + 0x50)
++#define VE_DEC_SECOND_OUT_LUMA_ADDR	(VE_ENGINE_DEC_H265 + 0x54)
++#define VE_DEC_SECOND_OUT_CHROMA_ADDR	(VE_ENGINE_DEC_H265 + 0x58)
++
++/* Convert the secondary output to P010; same bit for VP9 and H.265. */
++#define VE_DEC_10BIT_CFG_P010		BIT(12)
++
+ #define VE_DEC_VP9_SDRT_CTRL		(VE_ENGINE_DEC_H265 + 0x50)
+ #define VE_DEC_VP9_SDRT_LUMA_ADDR	(VE_ENGINE_DEC_H265 + 0x54)
+ #define VE_DEC_VP9_SDRT_CHROMA_ADDR	(VE_ENGINE_DEC_H265 + 0x58)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -55,6 +55,13 @@ static struct cedrus_format cedrus_formats[] = {
+ 		.directions	= CEDRUS_DECODE_SRC,
+ 		.capabilities	= CEDRUS_CAPABILITY_VP9_DEC,
+ 	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_P010,
++		.directions	= CEDRUS_DECODE_DST,
++		.capabilities	= CEDRUS_CAPABILITY_UNTILED |
++				  CEDRUS_CAPABILITY_H265_10_DEC,
++		.depth		= 10,
++	},
+ 	{
+ 		.pixelformat	= V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
+ 		.directions	= CEDRUS_DECODE_DST,
+@@ -176,6 +183,18 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
+ 
+ 		break;
+ 
++	case V4L2_PIX_FMT_P010:
++		/* 16-aligned stride, two bytes per luma sample. */
++		bytesperline = ALIGN(width, 16) * 2;
++
++		/* 16-aligned height. */
++		height = ALIGN(height, 16);
++
++		/* Luma plane plus interleaved 4:2:0 chroma plane. */
++		sizeimage = bytesperline * height * 3 / 2;
++
++		break;
++
+ 	case V4L2_PIX_FMT_NV12:
+ 	case V4L2_PIX_FMT_NV21:
+ 	case V4L2_PIX_FMT_YUV420:
+@@ -311,8 +330,8 @@ static int cedrus_try_fmt_vid_cap_p(struct cedrus_ctx *ctx,
+ 	cedrus_prepare_format(pix_fmt);
+ 
+ 	/*
+-	 * The VP9 decoder reconstructs into the capture buffer, so its chroma
+-	 * plane must be 1 KiB aligned.
++	 * The VP9 decoder reconstructs into the capture buffer unless it
++	 * outputs P010, so its chroma plane must be 1 KiB aligned.
+ 	 */
+ 	if (ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME &&
+ 	    (pix_fmt->pixelformat == V4L2_PIX_FMT_NV12 ||
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+@@ -311,12 +311,6 @@ static bool cedrus_vp9_parallel(const struct v4l2_ctrl_vp9_frame *dec)
+ 			     V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT);
+ }
+ 
+-/* Line stride of the low-2-bit plane of a 10-bit reconstruction. */
+-static u32 cedrus_vp9_2bit_stride(unsigned int width)
+-{
+-	return ALIGN(DIV_ROUND_UP(width, 4), 32);
+-}
+-
+ /* VP9 spec qindex computation for a given segment. */
+ static int cedrus_vp9_seg_qindex(const struct v4l2_ctrl_vp9_frame *dec,
+ 				 unsigned int seg_id)
+@@ -848,7 +842,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	dma_addr_t src_dma, src_end, luma, chroma;
+ 	u32 src_len, hdr_off, cur_w, cur_h, mi_cols, mi_rows;
+ 	u32 hdr_syn, fc, reg;
+-	bool intra_only, resolution_change, use_temporal_mv;
++	bool intra_only, p010, resolution_change, use_temporal_mv;
+ 	int ret;
+ 
+ 	if (!dec || !prob)
+@@ -862,6 +856,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	cur_h = dec->frame_height_minus_1 + 1;
+ 	mi_cols = DIV_ROUND_UP(cur_w, 8);
+ 	mi_rows = DIV_ROUND_UP(cur_h, 8);
++	p010 = cedrus_dst_is_p010(ctx);
+ 
+ 	intra_only = !!(dec->flags & (V4L2_VP9_FRAME_FLAG_KEY_FRAME |
+ 				      V4L2_VP9_FRAME_FLAG_INTRA_ONLY));
+@@ -916,7 +911,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		reg |= VE_MODE_PIC_WIDTH_MORE_2048;
+ 	cedrus_write(dev, VE_MODE, reg);
+ 
+-	recon = ctx->dst_fmt;
++	recon = cedrus_dst_frame_fmt(ctx);
+ 	out = recon;
+ 	out.width = ALIGN(cur_w, 16);
+ 	out.height = ALIGN(cur_h, 16);
+@@ -1075,30 +1070,34 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		cedrus_write(dev, VE_DEC_VP9_ALTREF_SCALE1, s1);
+ 
+ 		cedrus_write(dev, VE_DEC_VP9_LAST_LUMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, last_buf, 0)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, last_buf, 0)));
+ 		cedrus_write(dev, VE_DEC_VP9_LAST_CHROMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, last_buf, 1)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, last_buf, 1)));
+ 		cedrus_write(dev, VE_DEC_VP9_GOLDEN_LUMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, gold_buf, 0)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, gold_buf, 0)));
+ 		cedrus_write(dev, VE_DEC_VP9_GOLDEN_CHROMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, gold_buf, 1)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, gold_buf, 1)));
+ 
+ 		/* Altref chroma sits at an unusual register slot. */
+ 		cedrus_write(dev, VE_DEC_VP9_ALTREF_LUMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, alt_buf, 0)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, alt_buf, 0)));
+ 		cedrus_write(dev, VE_DEC_VP9_ALTREF_CHROMA_ADDR,
+-			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_buf_addr(ctx, alt_buf, 1)));
++			     VE_DEC_VP9_BUF_ADDR(cedrus_dst_frame_addr(ctx, alt_buf, 1)));
+ 	}
+ 
+ 	/* Current frame reconstruction targets. */
+-	luma = cedrus_dst_buf_addr(ctx, &run->dst->vb2_buf, 0);
+-	chroma = cedrus_dst_buf_addr(ctx, &run->dst->vb2_buf, 1);
++	luma = cedrus_dst_frame_addr(ctx, &run->dst->vb2_buf, 0);
++	chroma = cedrus_dst_frame_addr(ctx, &run->dst->vb2_buf, 1);
+ 	cedrus_write(dev, VE_DEC_VP9_CUR_LUMA_ADDR, VE_DEC_VP9_BUF_ADDR(luma));
+ 	cedrus_write(dev, VE_DEC_VP9_CUR_CHROMA_ADDR, VE_DEC_VP9_BUF_ADDR(chroma));
+ 
+ 	cedrus_write(dev, VE_DEC_VP9_SDRT_CTRL, 0);
+-	cedrus_write(dev, VE_DEC_VP9_SDRT_LUMA_ADDR, 0);
+-	cedrus_write(dev, VE_DEC_VP9_SDRT_CHROMA_ADDR, 0);
++	if (p010) {
++		cedrus_dst_p010_output_set(ctx, &run->dst->vb2_buf);
++	} else {
++		cedrus_write(dev, VE_DEC_VP9_SDRT_LUMA_ADDR, 0);
++		cedrus_write(dev, VE_DEC_VP9_SDRT_CHROMA_ADDR, 0);
++	}
+ 
+ 	/* 10-bit output: lower-2-bit plane offset and stride. */
+ 	if (dec->bit_depth > 8) {
+@@ -1113,7 +1112,9 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		cedrus_write(dev, VE_DEC_VP9_FIRST_OUT_OFFSET,
+ 			     reg & GENMASK(27, 0));
+ 
+-		reg = VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_vp9_2bit_stride(recon.width));
++		reg = VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(recon.width));
++		if (p010)
++			reg |= VE_DEC_10BIT_CFG_P010;
+ 		cedrus_write(dev, VE_DEC_VP9_10BIT_CFG, reg);
+ 	}
+ 
+@@ -1138,6 +1139,8 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	/* DDR consistency: vendor heuristic for widths of 129 to 192. */
+ 	if (out.width > 128 && out.width <= 192 && out.height > 64)
+ 		fc |= VE_DEC_VP9_FUNC_CTRL_DDR_CONS;
++	if (p010)
++		fc |= VE_DEC_VP9_FUNC_CTRL_SECOND_OUT;
+ 	cedrus_write(dev, VE_DEC_VP9_FUNC_CTRL, fc);
+ 
+ 	cedrus_write(dev, VE_DEC_VP9_DEC_CTB_NUM, 0);
+@@ -1365,23 +1368,8 @@ static void cedrus_vp9_irq_clear_and_adapt(struct cedrus_ctx *ctx)
+ 	cedrus_vp9_irq_clear(ctx);
+ }
+ 
+-/*
+- * For 10-bit output the hardware appends a plane holding the low two
+- * bits of each sample after the 8-bit NV12 planes.  Grow the capture
+- * buffer to hold it; layout matches the H.265 decoder.
+- */
+-static unsigned int cedrus_vp9_extra_cap_size(struct cedrus_ctx *ctx,
+-					      struct v4l2_pix_format *pix_fmt)
+-{
+-	if (ctx->bit_depth > 8)
+-		return cedrus_vp9_2bit_stride(pix_fmt->width) *
+-		       pix_fmt->height * 3 / 2;
+-
+-	return 0;
+-}
+-
+ struct cedrus_dec_ops cedrus_dec_ops_vp9 = {
+-	.extra_cap_size	= cedrus_vp9_extra_cap_size,
++	.extra_cap_size	= cedrus_dst_10bit_extra_size,
+ 	.irq_clear	= cedrus_vp9_irq_clear_and_adapt,
+ 	.irq_disable	= cedrus_vp9_irq_disable,
+ 	.irq_status	= cedrus_vp9_irq_status,
+-- 
+Armbian
+

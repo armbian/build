@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Thu, 12 Nov 2026 06:53:33 +0000
+Subject: media: cedrus: vc1: check the picture data offset against the payload
+
+The picture header is skipped with one bit reader access per 24 bits of
+data_bit_offset, each followed by a busy wait of up to 1 ms. The offset
+was not checked: a value near U32_MAX kept the decoding job in this loop
+for millions of iterations. An Advanced profile payload shorter than its
+start code also made the bitstream length underflow.
+
+Reject both before the engine is enabled.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ .../staging/media/sunxi/cedrus/cedrus_vc1.c   | 25 +++++++++++++------
+ 1 file changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+index 85538d9c3..31977543e 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vc1.c
+@@ -451,6 +451,7 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	u32 reg, condover, pq;
+ 	struct vb2_queue *vq;
+ 	size_t buf_size;
++	u64 payload_bits;
+ 	bool advanced;
+ 	int brfd, flag;
+ 
+@@ -534,6 +535,18 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 			vb2_find_buffer(vq, picture->backward_ref_ts) : NULL;
+ 	}
+ 
++	/*
++	 * An Advanced profile buffer begins with the frame or field start code
++	 * (00 00 01 0D/0C), which data_bit_offset does not count. The picture
++	 * data must start inside the payload: the header is skipped one bit
++	 * reader access per 24 bits below.
++	 */
++	sc_offset = advanced ? VC1_START_CODE_BITS : 0;
++	payload_bits = (u64)vb2_get_plane_payload(src_buf, 0) * 8;
++	if (payload_bits < sc_offset ||
++	    picture->data_bit_offset > payload_bits - sc_offset)
++		return -EINVAL;
++
+ 	cedrus_engine_enable(ctx);
+ 
+ 	/*
+@@ -586,15 +599,11 @@ static int cedrus_vc1_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	 */
+ 	buf_size = vb2_plane_size(src_buf, 0);
+ 	/*
+-	 * An Advanced profile buffer begins with the frame or field start code
+-	 * (00 00 01 0D/0C), which data_bit_offset does not count. Start the
+-	 * bit reader after it: with start-code detection enabled, reading over
+-	 * a start code with GET_BITS desyncs the VLD (every picture failed on
+-	 * H616).
++	 * Start the bit reader after the start code of an Advanced profile
++	 * buffer: with start-code detection enabled, reading over a start code
++	 * with GET_BITS desyncs the VLD (every picture failed on H616).
+ 	 */
+-	sc_offset = advanced ? VC1_START_CODE_BITS : 0;
+-	cedrus_write(dev, VE_DEC_VC1_BITS_LEN,
+-		     vb2_get_plane_payload(src_buf, 0) * 8 - sc_offset);
++	cedrus_write(dev, VE_DEC_VC1_BITS_LEN, payload_bits - sc_offset);
+ 	cedrus_write(dev, VE_DEC_VC1_BITS_OFFSET, sc_offset);
+ 
+ 	src_buf_addr = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+-- 
+Armbian
+
