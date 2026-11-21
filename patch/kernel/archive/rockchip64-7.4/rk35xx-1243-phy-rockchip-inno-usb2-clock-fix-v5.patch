@@ -1,0 +1,792 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:14 +0100
+Subject: phy: rockchip: inno-usb2: simplify and unify PHY op debug messages
+
+Add debug message for init/exit in addition to power_on/power_off and
+avoid the useless extra dereference in the existing power_on/power_off
+to make the prints consistent.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-1-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -508,6 +508,8 @@ static int rockchip_usb2phy_init(struct phy *phy)
+ 	struct rockchip_usb2phy *rphy = dev_get_drvdata(phy->dev.parent);
+ 	int ret = 0;
+ 
++	dev_dbg(&phy->dev, "phy port init\n");
++
+ 	mutex_lock(&rport->mutex);
+ 
+ 	if (rport->port_id == USB2PHY_PORT_OTG) {
+@@ -592,7 +594,7 @@ static int rockchip_usb2phy_power_on(struct phy *phy)
+ 	struct rockchip_usb2phy *rphy = dev_get_drvdata(phy->dev.parent);
+ 	int ret;
+ 
+-	dev_dbg(&rport->phy->dev, "port power on\n");
++	dev_dbg(&phy->dev, "port power on\n");
+ 
+ 	if (!rport->suspended)
+ 		return 0;
+@@ -632,7 +634,7 @@ static int rockchip_usb2phy_power_off(struct phy *phy)
+ 	struct rockchip_usb2phy *rphy = dev_get_drvdata(phy->dev.parent);
+ 	int ret;
+ 
+-	dev_dbg(&rport->phy->dev, "port power off\n");
++	dev_dbg(&phy->dev, "port power off\n");
+ 
+ 	if (rport->suspended)
+ 		return 0;
+@@ -651,6 +653,8 @@ static int rockchip_usb2phy_exit(struct phy *phy)
+ {
+ 	struct rockchip_usb2phy_port *rport = phy_get_drvdata(phy);
+ 
++	dev_dbg(&phy->dev, "phy port exit\n");
++
+ 	if (rport->port_id == USB2PHY_PORT_OTG &&
+ 	    rport->mode != USB_DR_MODE_HOST &&
+ 	    rport->mode != USB_DR_MODE_UNKNOWN) {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:15 +0100
+Subject: phy: rockchip: inno-usb2: ignore regmap_write return codes
+
+This driver only uses MMIO regmaps, which means regmap_write and
+regmap_write_bits() cannot fail (writing to unpowered/unclocked
+registers would result in an SError instead of a regmap_write failure).
+Thus drop the useless error handling for better code readability.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-2-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 161 +++-------
+ 1 file changed, 43 insertions(+), 118 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -263,8 +263,8 @@ struct rockchip_usb2phy {
+ 	struct rockchip_usb2phy_port	ports[USB2PHY_NUM_PORTS];
+ };
+ 
+-static inline int property_enable(struct regmap *base,
+-				  const struct usb2phy_reg *reg, bool en)
++static inline void property_enable(struct regmap *base,
++				   const struct usb2phy_reg *reg, bool en)
+ {
+ 	unsigned int val, mask, tmp;
+ 
+@@ -272,7 +272,7 @@ static inline int property_enable(struct regmap *base,
+ 	mask = GENMASK(reg->bitend, reg->bitstart);
+ 	val = (tmp << reg->bitstart) | (mask << BIT_WRITEABLE_SHIFT);
+ 
+-	return regmap_write(base, reg->offset, val);
++	regmap_write(base, reg->offset, val);
+ }
+ 
+ static inline bool property_enabled(struct regmap *base,
+@@ -336,15 +336,12 @@ static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
+ {
+ 	const struct usb2phy_reg *clkout_ctl;
+ 	struct regmap *base;
+-	int ret;
+ 
+ 	rockchip_usb2phy_clk480m_clkout_ctl(hw, &base, &clkout_ctl);
+ 
+ 	/* turn on 480m clk output if it is off */
+ 	if (!property_enabled(base, clkout_ctl)) {
+-		ret = property_enable(base, clkout_ctl, true);
+-		if (ret)
+-			return ret;
++		property_enable(base, clkout_ctl, true);
+ 
+ 		/* waiting for the clk become stable */
+ 		usleep_range(1200, 1300);
+@@ -481,25 +478,14 @@ static int rockchip_usb2phy_extcon_register(struct rockchip_usb2phy *rphy)
+ 	return 0;
+ }
+ 
+-static int rockchip_usb2phy_enable_host_disc_irq(struct rockchip_usb2phy *rphy,
+-						 struct rockchip_usb2phy_port *rport,
+-						 bool en)
++static void rockchip_usb2phy_enable_host_disc_irq(struct rockchip_usb2phy *rphy,
++						  struct rockchip_usb2phy_port *rport,
++						  bool en)
+ {
+-	int ret;
+-
+-	ret = property_enable(rphy->grf, &rport->port_cfg->disfall_clr, true);
+-	if (ret)
+-		return ret;
+-
+-	ret = property_enable(rphy->grf, &rport->port_cfg->disfall_en, en);
+-	if (ret)
+-		return ret;
+-
+-	ret = property_enable(rphy->grf, &rport->port_cfg->disrise_clr, true);
+-	if (ret)
+-		return ret;
+-
+-	return property_enable(rphy->grf, &rport->port_cfg->disrise_en, en);
++	property_enable(rphy->grf, &rport->port_cfg->disfall_clr, true);
++	property_enable(rphy->grf, &rport->port_cfg->disfall_en, en);
++	property_enable(rphy->grf, &rport->port_cfg->disrise_clr, true);
++	property_enable(rphy->grf, &rport->port_cfg->disrise_en, en);
+ }
+ 
+ static int rockchip_usb2phy_init(struct phy *phy)
+@@ -516,42 +502,14 @@ static int rockchip_usb2phy_init(struct phy *phy)
+ 		if (rport->mode != USB_DR_MODE_HOST &&
+ 		    rport->mode != USB_DR_MODE_UNKNOWN) {
+ 			/* clear bvalid status and enable bvalid detect irq */
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->bvalid_det_clr,
+-					      true);
+-			if (ret)
+-				goto out;
+-
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->bvalid_det_en,
+-					      true);
+-			if (ret)
+-				goto out;
++			property_enable(rphy->grf, &rport->port_cfg->bvalid_det_clr, true);
++			property_enable(rphy->grf, &rport->port_cfg->bvalid_det_en, true);
+ 
+ 			/* clear id status and enable id detect irqs */
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->idfall_det_clr,
+-					      true);
+-			if (ret)
+-				goto out;
+-
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->idrise_det_clr,
+-					      true);
+-			if (ret)
+-				goto out;
+-
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->idfall_det_en,
+-					      true);
+-			if (ret)
+-				goto out;
+-
+-			ret = property_enable(rphy->grf,
+-					      &rport->port_cfg->idrise_det_en,
+-					      true);
+-			if (ret)
+-				goto out;
++			property_enable(rphy->grf, &rport->port_cfg->idfall_det_clr, true);
++			property_enable(rphy->grf, &rport->port_cfg->idrise_det_clr, true);
++			property_enable(rphy->grf, &rport->port_cfg->idfall_det_en, true);
++			property_enable(rphy->grf, &rport->port_cfg->idrise_det_en, true);
+ 
+ 			schedule_delayed_work(&rport->otg_sm_work,
+ 					      msecs_to_jiffies(500));
+@@ -562,28 +520,16 @@ static int rockchip_usb2phy_init(struct phy *phy)
+ 	} else if (rport->port_id == USB2PHY_PORT_HOST) {
+ 		if (rport->port_cfg->disfall_en.offset) {
+ 			rport->host_disconnect = true;
+-			ret = rockchip_usb2phy_enable_host_disc_irq(rphy, rport, true);
+-			if (ret) {
+-				dev_err(rphy->dev, "failed to enable disconnect irq\n");
+-				goto out;
+-			}
++			rockchip_usb2phy_enable_host_disc_irq(rphy, rport, true);
+ 		}
+ 
+ 		/* clear linestate and enable linestate detect irq */
+-		ret = property_enable(rphy->grf,
+-				      &rport->port_cfg->ls_det_clr, true);
+-		if (ret)
+-			goto out;
+-
+-		ret = property_enable(rphy->grf,
+-				      &rport->port_cfg->ls_det_en, true);
+-		if (ret)
+-			goto out;
++		property_enable(rphy->grf, &rport->port_cfg->ls_det_clr, true);
++		property_enable(rphy->grf, &rport->port_cfg->ls_det_en, true);
+ 
+ 		schedule_delayed_work(&rport->sm_work, SCHEDULE_DELAY);
+ 	}
+ 
+-out:
+ 	mutex_unlock(&rport->mutex);
+ 	return ret;
+ }
+@@ -603,11 +549,7 @@ static int rockchip_usb2phy_power_on(struct phy *phy)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = property_enable(rphy->grf, &rport->port_cfg->phy_sus, false);
+-	if (ret) {
+-		clk_disable_unprepare(rphy->clk480m);
+-		return ret;
+-	}
++	property_enable(rphy->grf, &rport->port_cfg->phy_sus, false);
+ 
+ 	/*
+ 	 * For rk3588, it needs to reset phy when exit from
+@@ -632,16 +574,13 @@ static int rockchip_usb2phy_power_off(struct phy *phy)
+ {
+ 	struct rockchip_usb2phy_port *rport = phy_get_drvdata(phy);
+ 	struct rockchip_usb2phy *rphy = dev_get_drvdata(phy->dev.parent);
+-	int ret;
+ 
+ 	dev_dbg(&phy->dev, "port power off\n");
+ 
+ 	if (rport->suspended)
+ 		return 0;
+ 
+-	ret = property_enable(rphy->grf, &rport->port_cfg->phy_sus, true);
+-	if (ret)
+-		return ret;
++	property_enable(rphy->grf, &rport->port_cfg->phy_sus, true);
+ 
+ 	rport->suspended = true;
+ 	clk_disable_unprepare(rphy->clk480m);
+@@ -1540,39 +1479,29 @@ static int rockchip_usb2phy_probe(struct platform_device *pdev)
+ static int rk3128_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ {
+ 	/* Turn off differential receiver in suspend mode */
+-	return regmap_write_bits(rphy->grf, 0x298,
+-				BIT(2) << BIT_WRITEABLE_SHIFT | BIT(2),
+-				BIT(2) << BIT_WRITEABLE_SHIFT | 0);
++	regmap_write_bits(rphy->grf, 0x298,
++			  BIT(2) << BIT_WRITEABLE_SHIFT | BIT(2),
++			  BIT(2) << BIT_WRITEABLE_SHIFT | 0);
++
++	return 0;
+ }
+ 
+ static int rk3528_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ {
+-	int ret;
+-
+ 	/* Turn off otg port differential receiver in suspend mode */
+-	ret = regmap_write(rphy->phy_base, 0x30, BIT(18) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->phy_base, 0x30, BIT(18) | 0x0000);
+ 
+ 	/* Turn off host port differential receiver in suspend mode */
+-	ret = regmap_write(rphy->phy_base, 0x430, BIT(18) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->phy_base, 0x430, BIT(18) | 0x0000);
+ 
+ 	/* Set otg port HS eye height to 400mv (default is 450mv) */
+-	ret = regmap_write(rphy->phy_base, 0x30, GENMASK(22, 20) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->phy_base, 0x30, GENMASK(22, 20) | 0x0000);
+ 
+ 	/* Set host port HS eye height to 400mv (default is 450mv) */
+-	ret = regmap_write(rphy->phy_base, 0x430, GENMASK(22, 20) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->phy_base, 0x430, GENMASK(22, 20) | 0x0000);
+ 
+ 	/* Choose the Tx fs/ls data as linestate from TX driver for otg port */
+-	ret = regmap_write(rphy->phy_base, 0x94, GENMASK(22, 19) | 0x0018);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->phy_base, 0x94, GENMASK(22, 19) | 0x0018);
+ 
+ 	return 0;
+ }
+@@ -1583,9 +1512,7 @@ static int rk3576_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 	u32 reg = rphy->phy_cfg->reg;
+ 
+ 	/* Deassert SIDDQ to power on analog block */
+-	ret = regmap_write(rphy->grf, reg + 0x0010, GENMASK(29, 29) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->grf, reg + 0x0010, GENMASK(29, 29) | 0x0000);
+ 
+ 	/* Do reset after exit IDDQ mode */
+ 	ret = rockchip_usb2phy_reset(rphy);
+@@ -1593,12 +1520,12 @@ static int rk3576_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 		return ret;
+ 
+ 	/* HS DC Voltage Level Adjustment 4'b1001 : +5.89% */
+-	ret |= regmap_write(rphy->grf, reg + 0x000c, GENMASK(27, 24) | 0x0900);
++	regmap_write(rphy->grf, reg + 0x000c, GENMASK(27, 24) | 0x0900);
+ 
+ 	/* HS Transmitter Pre-Emphasis Current Control 2'b10 : 2x */
+-	ret |= regmap_write(rphy->grf, reg + 0x0010, GENMASK(20, 19) | 0x0010);
++	regmap_write(rphy->grf, reg + 0x0010, GENMASK(20, 19) | 0x0010);
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static int rk3588_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+@@ -1623,9 +1550,7 @@ static int rk3588_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 	}
+ 
+ 	/* Deassert SIDDQ to power on analog block */
+-	ret = regmap_write(rphy->grf, 0x0008, GENMASK(29, 29) | 0x0000);
+-	if (ret)
+-		return ret;
++	regmap_write(rphy->grf, 0x0008, GENMASK(29, 29) | 0x0000);
+ 
+ 	/* Do reset after exit IDDQ mode */
+ 	ret = rockchip_usb2phy_reset(rphy);
+@@ -1633,21 +1558,21 @@ static int rk3588_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 		return ret;
+ 
+ 	/* suspend configuration */
+-	ret |= regmap_write(rphy->grf, 0x000c, GENMASK(20, 16) | suspend_cfg);
++	regmap_write(rphy->grf, 0x000c, GENMASK(20, 16) | suspend_cfg);
+ 
+ 	/* HS DC Voltage Level Adjustment 4'b1001 : +5.89% */
+-	ret |= regmap_write(rphy->grf, 0x0004, GENMASK(27, 24) | 0x0900);
++	regmap_write(rphy->grf, 0x0004, GENMASK(27, 24) | 0x0900);
+ 
+ 	/* HS Transmitter Pre-Emphasis Current Control 2'b10 : 2x */
+-	ret |= regmap_write(rphy->grf, 0x0008, GENMASK(20, 19) | 0x0010);
++	regmap_write(rphy->grf, 0x0008, GENMASK(20, 19) | 0x0010);
+ 
+ 	if (!usb3otg)
+-		return ret;
++		return 0;
+ 
+ 	/* Pullup iddig pin for USB3_0 OTG mode */
+-	ret |= regmap_write(rphy->grf, 0x0010, GENMASK(17, 16) | 0x0003);
++	regmap_write(rphy->grf, 0x0010, GENMASK(17, 16) | 0x0003);
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static const struct rockchip_usb2phy_cfg rk3036_phy_cfgs[] = {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:16 +0100
+Subject: phy: rockchip: inno-usb2: ignore reset_control return codes
+
+Asserting or deasserting reset lines for the Rockchip MMIO based reset
+controller never fails. Drop error handling for it from the driver to
+simplify the logic.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-3-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 31 ++--------
+ 1 file changed, 6 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -290,23 +290,12 @@ static inline bool property_enabled(struct regmap *base,
+ 	return tmp != reg->disable;
+ }
+ 
+-static int rockchip_usb2phy_reset(struct rockchip_usb2phy *rphy)
++static void rockchip_usb2phy_reset(struct rockchip_usb2phy *rphy)
+ {
+-	int ret;
+-
+-	ret = reset_control_assert(rphy->phy_reset);
+-	if (ret)
+-		return ret;
+-
++	reset_control_assert(rphy->phy_reset);
+ 	udelay(10);
+-
+-	ret = reset_control_deassert(rphy->phy_reset);
+-	if (ret)
+-		return ret;
+-
++	reset_control_deassert(rphy->phy_reset);
+ 	usleep_range(100, 200);
+-
+-	return 0;
+ }
+ 
+ static void rockchip_usb2phy_clk_bulk_disable(void *data)
+@@ -559,9 +548,7 @@ static int rockchip_usb2phy_power_on(struct phy *phy)
+ 	 * please keep the common_on_n 1'b0 to set these blocks
+ 	 * remain powered.
+ 	 */
+-	ret = rockchip_usb2phy_reset(rphy);
+-	if (ret)
+-		return ret;
++	rockchip_usb2phy_reset(rphy);
+ 
+ 	/* waiting for the utmi_clk to become stable */
+ 	usleep_range(1500, 2000);
+@@ -1508,16 +1495,13 @@ static int rk3528_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 
+ static int rk3576_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ {
+-	int ret;
+ 	u32 reg = rphy->phy_cfg->reg;
+ 
+ 	/* Deassert SIDDQ to power on analog block */
+ 	regmap_write(rphy->grf, reg + 0x0010, GENMASK(29, 29) | 0x0000);
+ 
+ 	/* Do reset after exit IDDQ mode */
+-	ret = rockchip_usb2phy_reset(rphy);
+-	if (ret)
+-		return ret;
++	rockchip_usb2phy_reset(rphy);
+ 
+ 	/* HS DC Voltage Level Adjustment 4'b1001 : +5.89% */
+ 	regmap_write(rphy->grf, reg + 0x000c, GENMASK(27, 24) | 0x0900);
+@@ -1530,7 +1514,6 @@ static int rk3576_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 
+ static int rk3588_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ {
+-	int ret;
+ 	bool usb3otg = false;
+ 	/*
+ 	 * utmi_termselect = 1'b1 (en FS terminations)
+@@ -1553,9 +1536,7 @@ static int rk3588_usb2phy_tuning(struct rockchip_usb2phy *rphy)
+ 	regmap_write(rphy->grf, 0x0008, GENMASK(29, 29) | 0x0000);
+ 
+ 	/* Do reset after exit IDDQ mode */
+-	ret = rockchip_usb2phy_reset(rphy);
+-	if (ret)
+-		return ret;
++	rockchip_usb2phy_reset(rphy);
+ 
+ 	/* suspend configuration */
+ 	regmap_write(rphy->grf, 0x000c, GENMASK(20, 16) | suspend_cfg);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:17 +0100
+Subject: phy: rockchip: inno-usb2: use devm for 480m clock registration
+
+Replace the open coded device managed resource handling for the
+480MHz output clock by using the modern helpers provided by the
+common clock framework. This also switches from the deprecated
+APIs to the HW clock API as a side effect.
+
+No functional change intended.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-4-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 32 +++-------
+ 1 file changed, 9 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -374,14 +374,6 @@ static const struct clk_ops rockchip_usb2phy_clkout_ops = {
+ 	.recalc_rate = rockchip_usb2phy_clk480m_recalc_rate,
+ };
+ 
+-static void rockchip_usb2phy_clk480m_unregister(void *data)
+-{
+-	struct rockchip_usb2phy *rphy = data;
+-
+-	of_clk_del_provider(rphy->dev->of_node);
+-	clk_unregister(rphy->clk480m);
+-}
+-
+ static int
+ rockchip_usb2phy_clk480m_register(struct rockchip_usb2phy *rphy)
+ {
+@@ -389,8 +381,8 @@ rockchip_usb2phy_clk480m_register(struct rockchip_usb2phy *rphy)
+ 	struct clk_init_data init = {};
+ 	struct clk *refclk = NULL;
+ 	const char *clk_name;
++	int ret;
+ 	int i;
+-	int ret = 0;
+ 
+ 	init.flags = 0;
+ 	init.name = "clk_usbphy_480m";
+@@ -418,22 +410,16 @@ rockchip_usb2phy_clk480m_register(struct rockchip_usb2phy *rphy)
+ 	rphy->clk480m_hw.init = &init;
+ 
+ 	/* register the clock */
+-	rphy->clk480m = clk_register(rphy->dev, &rphy->clk480m_hw);
+-	if (IS_ERR(rphy->clk480m)) {
+-		ret = PTR_ERR(rphy->clk480m);
+-		goto err_ret;
+-	}
+-
+-	ret = of_clk_add_provider(node, of_clk_src_simple_get, rphy->clk480m);
+-	if (ret < 0)
+-		goto err_clk_provider;
++	ret = devm_clk_hw_register(rphy->dev, &rphy->clk480m_hw);
++	if (ret)
++		return ret;
+ 
+-	return devm_add_action_or_reset(rphy->dev, rockchip_usb2phy_clk480m_unregister, rphy);
++	/* acquire a clk reference for internal power_on()/power_off() use */
++	rphy->clk480m = devm_clk_hw_get_clk(rphy->dev, &rphy->clk480m_hw, NULL);
++	if (IS_ERR(rphy->clk480m))
++		return PTR_ERR(rphy->clk480m);
+ 
+-err_clk_provider:
+-	clk_unregister(rphy->clk480m);
+-err_ret:
+-	return ret;
++	return devm_of_clk_add_hw_provider(rphy->dev, of_clk_hw_simple_get, &rphy->clk480m_hw);
+ }
+ 
+ static int rockchip_usb2phy_extcon_register(struct rockchip_usb2phy *rphy)
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:18 +0100
+Subject: phy: rockchip: inno-usb2: move suspend handling into new function
+
+Move handling of the PHY suspend handling into its own dedicated
+function. No functional changes intended.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-5-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 38 ++++++----
+ 1 file changed, 23 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -321,6 +321,27 @@ rockchip_usb2phy_clk480m_clkout_ctl(struct clk_hw *hw, struct regmap **base,
+ 	}
+ }
+ 
++static void rockchip_usb2phy_set_suspend(struct rockchip_usb2phy *rphy,
++					 struct rockchip_usb2phy_port *rport,
++					 bool do_suspend)
++{
++	property_enable(rphy->grf, &rport->port_cfg->phy_sus, do_suspend);
++
++	if (!do_suspend) {
++		/*
++		 * For rk3588, it needs to reset phy when exit from suspend
++		 * mode with common_on_n 1'b1(aka REFCLK_LOGIC, Bias, and PLL
++		 * blocks are powered down) for lower power consumption. If you
++		 * don't want to reset phy, please keep the common_on_n 1'b0 to
++		 * set these blocks remain powered.
++		 */
++		rockchip_usb2phy_reset(rphy);
++
++		/* waiting for the utmi_clk to become stable */
++		usleep_range(1500, 2000);
++	}
++}
++
+ static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
+ {
+ 	const struct usb2phy_reg *clkout_ctl;
+@@ -524,20 +545,7 @@ static int rockchip_usb2phy_power_on(struct phy *phy)
+ 	if (ret)
+ 		return ret;
+ 
+-	property_enable(rphy->grf, &rport->port_cfg->phy_sus, false);
+-
+-	/*
+-	 * For rk3588, it needs to reset phy when exit from
+-	 * suspend mode with common_on_n 1'b1(aka REFCLK_LOGIC,
+-	 * Bias, and PLL blocks are powered down) for lower
+-	 * power consumption. If you don't want to reset phy,
+-	 * please keep the common_on_n 1'b0 to set these blocks
+-	 * remain powered.
+-	 */
+-	rockchip_usb2phy_reset(rphy);
+-
+-	/* waiting for the utmi_clk to become stable */
+-	usleep_range(1500, 2000);
++	rockchip_usb2phy_set_suspend(rphy, rport, false);
+ 
+ 	rport->suspended = false;
+ 	return 0;
+@@ -553,7 +561,7 @@ static int rockchip_usb2phy_power_off(struct phy *phy)
+ 	if (rport->suspended)
+ 		return 0;
+ 
+-	property_enable(rphy->grf, &rport->port_cfg->phy_sus, true);
++	rockchip_usb2phy_set_suspend(rphy, rport, true);
+ 
+ 	rport->suspended = true;
+ 	clk_disable_unprepare(rphy->clk480m);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 10 Nov 2026 18:19:19 +0100
+Subject: phy: rockchip: inno-usb2: move suspend handling into clock
+ prepare/unprepare for RK3588/RK3576
+
+On RK3588 the 480MHz PHY clock must be running to access registers on
+the OHCI and EHCI controllers. This requires that the clock output bit
+is configured correctly (already happening) and that the PHY PLL itself
+is running. The PHY PLL is only running when the PHY is not suspended.
+This is currently handled independently of the clock and thus the clock
+might be enabled with the PHY being suspended resulting in a
+non-functional clock despite the clock being marked as prepared and
+enabled according to the common clock framework.
+
+This is especially a problem with OHCI system resume on RK3588, which
+does:
+
+ohci_platform_resume
+    -> ohci_platform_resume_common
+        -> deassert resets
+        -> ohci_platform_power_on -> enable clocks
+        -> ohci_resume
+            -> ohci_readl(ohci, &ohci->regs->control); // SError !
+            -> ...
+        -> ...
+    -> root hub resume (this resumes the PHY)
+
+Fix this by fully powering the PHY from the clock prepare function.
+
+This does not work on older platforms, which have multiple ports and
+only one 480MHz clock as we do not know which port should be resumed.
+But as far as I can tell these platforms do not have the clock
+dependency from their USB controllers and thus are not affected.
+
+Note that the 480MHz PHY clock provider registration is moved after the
+port initialization loop as the clock operations may access the port after
+this change. Additionally the old behaviour is used for single port
+devices, that have their port disabled and thus port_cfg == NULL.
+
+Backporting this is not trivial as the change relies on prior cleanups.
+Considering system suspend/resume on RK3588 never worked on upstream and
+there are more issues from preventing it (especially on older kernels),
+this is not marked for stable backporting.
+
+Fixes: 3a7db8e9edef ("phy: phy-rockchip-inno-usb2: add rk3588 support")
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Jakob Unterwurzacher <jakob.unterwurzacher@cherry.de>
+Link: https://patch.msgid.link/20261110-phy-rockchip-inno-usb2-clock-fix-v5-6-d2e24582ab22@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-inno-usb2.c | 30 ++++++++--
+ 1 file changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-usb2.c
+@@ -342,8 +342,15 @@ static void rockchip_usb2phy_set_suspend(struct rockchip_usb2phy *rphy,
+ 	}
+ }
+ 
++static bool rockchip_usb2phy_clk_manages_suspend(struct rockchip_usb2phy *rphy)
++{
++	return rphy->phy_cfg->num_ports == 1 && rphy->ports[0].port_cfg;
++}
++
+ static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
+ {
++	struct rockchip_usb2phy *rphy =
++		container_of(hw, struct rockchip_usb2phy, clk480m_hw);
+ 	const struct usb2phy_reg *clkout_ctl;
+ 	struct regmap *base;
+ 
+@@ -357,16 +364,24 @@ static int rockchip_usb2phy_clk480m_prepare(struct clk_hw *hw)
+ 		usleep_range(1200, 1300);
+ 	}
+ 
++	if (rockchip_usb2phy_clk_manages_suspend(rphy))
++		rockchip_usb2phy_set_suspend(rphy, &rphy->ports[0], false);
++
+ 	return 0;
+ }
+ 
+ static void rockchip_usb2phy_clk480m_unprepare(struct clk_hw *hw)
+ {
++	struct rockchip_usb2phy *rphy =
++		container_of(hw, struct rockchip_usb2phy, clk480m_hw);
+ 	const struct usb2phy_reg *clkout_ctl;
+ 	struct regmap *base;
+ 
+ 	rockchip_usb2phy_clk480m_clkout_ctl(hw, &base, &clkout_ctl);
+ 
++	if (rockchip_usb2phy_clk_manages_suspend(rphy))
++		rockchip_usb2phy_set_suspend(rphy, &rphy->ports[0], true);
++
+ 	/* turn off 480m clk output */
+ 	property_enable(base, clkout_ctl, false);
+ }
+@@ -437,10 +452,7 @@ rockchip_usb2phy_clk480m_register(struct rockchip_usb2phy *rphy)
+ 
+ 	/* acquire a clk reference for internal power_on()/power_off() use */
+ 	rphy->clk480m = devm_clk_hw_get_clk(rphy->dev, &rphy->clk480m_hw, NULL);
+-	if (IS_ERR(rphy->clk480m))
+-		return PTR_ERR(rphy->clk480m);
+-
+-	return devm_of_clk_add_hw_provider(rphy->dev, of_clk_hw_simple_get, &rphy->clk480m_hw);
++	return PTR_ERR_OR_ZERO(rphy->clk480m);
+ }
+ 
+ static int rockchip_usb2phy_extcon_register(struct rockchip_usb2phy *rphy)
+@@ -545,7 +557,8 @@ static int rockchip_usb2phy_power_on(struct phy *phy)
+ 	if (ret)
+ 		return ret;
+ 
+-	rockchip_usb2phy_set_suspend(rphy, rport, false);
++	if (!rockchip_usb2phy_clk_manages_suspend(rphy))
++		rockchip_usb2phy_set_suspend(rphy, rport, false);
+ 
+ 	rport->suspended = false;
+ 	return 0;
+@@ -561,7 +574,8 @@ static int rockchip_usb2phy_power_off(struct phy *phy)
+ 	if (rport->suspended)
+ 		return 0;
+ 
+-	rockchip_usb2phy_set_suspend(rphy, rport, true);
++	if (!rockchip_usb2phy_clk_manages_suspend(rphy))
++		rockchip_usb2phy_set_suspend(rphy, rport, true);
+ 
+ 	rport->suspended = true;
+ 	clk_disable_unprepare(rphy->clk480m);
+@@ -1436,6 +1450,10 @@ static int rockchip_usb2phy_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	ret = devm_of_clk_add_hw_provider(rphy->dev, of_clk_hw_simple_get, &rphy->clk480m_hw);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to add 480m output clock provider\n");
++
+ 	provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
+ 
+ 	if (rphy->irq > 0) {
+-- 
+Armbian
+

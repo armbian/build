@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Fri, 20 Nov 2026 20:58:16 +0100
+Subject: clk: send POST_RATE_CHANGE whenever PRE_RATE_CHANGE was sent
+
+clk_propagate_rate_change() sends PRE_RATE_CHANGE when the predicted
+new_rate differs from the current rate, but clk_change_rate() only
+sends POST_RATE_CHANGE when the rate read back after the change
+differs from the old one. When a clock can't produce the requested
+rate exactly and ends up where it was, notifiers get PRE_RATE_CHANGE
+without a matching POST_RATE_CHANGE.
+
+This breaks notifiers that change hardware state on PRE_RATE_CHANGE
+and restore it on POST_RATE_CHANGE, like the Rockchip fractional
+divider notifier, which moves the frac mux to the fractional divider
+for the duration of the change. On RK3588 the CRU node assigns
+786432000 Hz to AUPLL, which already runs at 786431991 Hz, the closest
+rate it can generate. The S/PDIF fractional dividers below it get
+PRE_RATE_CHANGE (14945847 -> 14945848 Hz), their muxes are switched to
+the fractional divider, and are never switched back. The clock
+framework still believes the muxes select the integer divider, so the
+S/PDIF controllers feeding DisplayPort audio run from a gated clock and
+never request DMA.
+
+Send POST_RATE_CHANGE whenever PRE_RATE_CHANGE was sent.
+---
+ drivers/clk/clk.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/clk.c b/drivers/clk/clk.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/clk.c
++++ b/drivers/clk/clk.c
+@@ -2519,7 +2519,14 @@ static void clk_change_rate(struct clk_core *core)
+ 	if (core->flags & CLK_OPS_PARENT_ENABLE)
+ 		clk_core_disable_unprepare(parent);
+ 
+-	if (core->notifier_count && old_rate != core->rate)
++	/*
++	 * PRE_RATE_CHANGE was sent if the predicted new_rate differed from the
++	 * old rate. Send POST_RATE_CHANGE in that case too, even if the rate
++	 * the hardware ended up at is the old one, so that notifiers can undo
++	 * what they did on PRE_RATE_CHANGE.
++	 */
++	if (core->notifier_count &&
++	    (old_rate != core->rate || old_rate != core->new_rate))
+ 		__clk_notify(core, POST_RATE_CHANGE, old_rate, core->rate);
+ 
+ 	if (core->flags & CLK_RECALC_NEW_RATES)
+-- 
+Armbian
+
