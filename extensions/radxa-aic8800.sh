@@ -60,6 +60,8 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		use_clean_environment="yes" chroot_sdcard "update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100"
 	fi
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/aic8800*/*/build/*.log")
+	# Limit DKMS to one job. Sixteen jobs exhaust build memory.
+	use_clean_environment="yes" chroot_sdcard "mkdir -p /etc/dkms/framework.conf.d && printf '%s\n' 'parallel_jobs=1' > /etc/dkms/framework.conf.d/01-parallel-jobs.conf"
 	use_clean_environment="yes" chroot_sdcard_apt_get_install "/tmp/${aic8800_dkms_file_name} /tmp/${aic8800_firmware_file_name}"
 	use_clean_environment="yes" chroot_sdcard "rm -f /tmp/aic8800*.deb"
 	use_clean_environment="yes" chroot_sdcard "mkdir -p /usr/lib/systemd/network/"

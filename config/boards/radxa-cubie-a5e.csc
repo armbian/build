@@ -16,7 +16,7 @@ HAS_VIDEO_OUTPUT="yes"
 IMAGE_PARTITION_TABLE="msdos"
 BOOTFS_TYPE="fat"
 
-PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
+PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools memtester"
 
 # AIC8800D80 WiFi on SDIO, Bluetooth on UART
 AIC8800_TYPE="sdio"

@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Sat, 21 Nov 2026 19:10:00 -0300
+Subject: sunxi: dram: a523: validate memory before accepting DRAM timings
+
+Run a wide memory test after A523 DRAM training. Retry with the alternative
+parameter set when the one-word probe or the new test fails. This rejects
+wrong nonzero sizes caused by address aliasing.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+---
+--- a/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h
++++ b/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h
+@@ -18,5 +18,6 @@
+ void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 				struct dram_config *config);
+ unsigned long mctl_calc_size(const struct dram_config *config);
++bool mctl_mem_stress_test(ulong base, ulong size);
+ 
+ #endif
+--- a/arch/arm/mach-sunxi/dram_dw_helpers.c
++++ b/arch/arm/mach-sunxi/dram_dw_helpers.c
+@@ -8,6 +8,7 @@
+ 
+ #include <init.h>
+ #include <asm/arch/dram_dw_helpers.h>
++#include <asm/io.h>
+ 
+ void mctl_auto_detect_rank_width(const struct dram_para *para,
+ 				 struct dram_config *config)
+@@ -82,6 +83,71 @@
+ 	}
+ 
+ 	return true;
++}
++
++#define MCTL_TEST_WORDS 262144
++#define MCTL_TEST_SITES 9
++
++static u32 mctl_test_value(ulong addr, u32 site, u32 pattern, u32 index)
++{
++	return pattern ^ (u32)(addr >> 16) ^ (site << 24) ^ index;
++}
++
++/*
++ * Check a wide spread of addresses with multiple patterns.
++ *
++ * The built-in check in mctl_calc_size() only tests one word at 3/4 of
++ * the reported size. Address aliasing can make a wrong size pass that
++ * test. Write every site before reading any site so aliasing changes a
++ * value that is already in memory.
++ *
++ * A failed read near the top of RAM may be a decode hole. Check the
++ * other sites before rejecting DRAM parameters.
++ */
++bool mctl_mem_stress_test(ulong base, ulong size)
++{
++	static const u8 fractions[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
++	static const u32 patterns[4] = {
++		0xa5a5a5a5, 0x5a5a5a5a, 0x01234567, 0xfedcba98
++	};
++	ulong addr[MCTL_TEST_SITES];
++	u32 pattern, site, index;
++
++	if (size < 0x100000)
++		return false;
++
++	for (site = 0; site < 8; site++)
++		addr[site] = base + (size / 8) * fractions[site];
++	addr[8] = base + size - MCTL_TEST_WORDS * 4;
++
++	for (pattern = 0; pattern < ARRAY_SIZE(patterns); pattern++) {
++		for (site = 0; site < MCTL_TEST_SITES; site++) {
++			for (index = 0; index < MCTL_TEST_WORDS; index++) {
++				u32 val = mctl_test_value(addr[site], site,
++							  patterns[pattern],
++							  index);
++				writel(val, (void *)(addr[site] + index * 4));
++			}
++		}
++
++		dsb();
++
++		for (site = 0; site < MCTL_TEST_SITES; site++) {
++			for (index = 0; index < MCTL_TEST_WORDS; index++) {
++				u32 want = mctl_test_value(addr[site], site,
++							   patterns[pattern],
++							   index);
++				u32 got = readl((void *)(addr[site] + index * 4));
++				if (got == want)
++					continue;
++				if (site == 8 && index < 4)
++					continue;
++				return false;
++			}
++		}
++	}
++
++	return true;
+ }
+ 
+ void mctl_auto_detect_dram_size(const struct dram_para *para,
+--- a/arch/arm/mach-sunxi/dram_sun55i_a523.c
++++ b/arch/arm/mach-sunxi/dram_sun55i_a523.c
+@@ -1508,6 +1508,29 @@
+ 	return mctl_calc_size(&config);
+ }
+ 
++static unsigned long dram_init_and_test(const struct dram_para *para,
++					u32 tpr11, u32 tpr12)
++{
++	unsigned long size;
++
++	printf("DRAM train type=%u clk=%u ODT=0x%08x TPR6=0x%08x TPR10=0x%08x TPR11=0x%08x TPR12=0x%08x TPR14=0x%08x\n",
++	       para->type, CONFIG_DRAM_CLK, CONFIG_DRAM_SUNXI_ODT_EN,
++	       para->tpr6, para->tpr10, tpr11, tpr12,
++	       CONFIG_DRAM_SUNXI_TPR14);
++	size = dram_init_with_para(para, tpr11, tpr12);
++	if (!size)
++		return 0;
++
++	printf("DRAM memory test started\n");
++	if (!mctl_mem_stress_test(CFG_SYS_SDRAM_BASE, size)) {
++		printf("DRAM memory test failed\n");
++		return 0;
++	}
++	printf("DRAM memory test passed\n");
++
++	return size;
++}
++
+ unsigned long sunxi_dram_init(void)
+ {
+ 	unsigned long size;
+@@ -1515,18 +1538,17 @@
+ 	struct dram_para para_alt;
+ #endif
+ 
+-	size = dram_init_with_para(&para, CONFIG_DRAM_SUNXI_TPR11,
+-				   CONFIG_DRAM_SUNXI_TPR12);
++	size = dram_init_and_test(&para, CONFIG_DRAM_SUNXI_TPR11,
++				  CONFIG_DRAM_SUNXI_TPR12);
+ 
+ #if IS_ENABLED(CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS)
+ 	if (size == 0) {
+ 		/*
+-		 * The memory probe built into mctl_calc_size() failed with
+-		 * the default parameters. The defconfig can provide an
+-		 * alternative set of PHY timings
++		 * The memory check failed with the default parameters. The
++		 * defconfig can provide an alternative set of PHY timings
+ 		 * (CONFIG_DRAM_SUNXI_TPR*_ALT) for boards whose DRAM
+ 		 * variants need them; retrain the DRAM with that set and
+-		 * re-run the probe.
++		 * re-run the full check.
+ 		 */
+ 		printf("DRAM memory check failed, retrying with alternative parameters\n");
+ 
+@@ -1534,9 +1550,9 @@
+ 		para_alt.tpr6 = CONFIG_DRAM_SUNXI_TPR6_ALT;
+ 		para_alt.tpr10 = CONFIG_DRAM_SUNXI_TPR10_ALT;
+ 
+-		size = dram_init_with_para(&para_alt,
+-					   CONFIG_DRAM_SUNXI_TPR11_ALT,
+-					   CONFIG_DRAM_SUNXI_TPR12_ALT);
++		size = dram_init_and_test(&para_alt,
++					  CONFIG_DRAM_SUNXI_TPR11_ALT,
++					  CONFIG_DRAM_SUNXI_TPR12_ALT);
+ 		if (size == 0)
+ 			panic("DRAM unstable with both parameter sets\n");
+ 	}
