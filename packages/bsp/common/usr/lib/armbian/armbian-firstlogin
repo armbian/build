@@ -311,6 +311,14 @@ set_shell() {
 
 }
 
+# List locales for a country code (all locales when empty). Prefer UTF-8.
+find_locales() {
+	local list
+	list=$(grep territory /usr/share/i18n/locales/* | grep _"$1" | cut -d ":" -f 1 | cut -d "/" -f 6 |
+		xargs -I{} grep {} /usr/share/i18n/SUPPORTED)
+	{ grep "UTF-8$" <<< "${list}" || echo "${list}"; } | cut -d " " -f 1
+}
+
 set_timezone_and_locales() {
 
 	# Grab this machine's public IP address
@@ -470,19 +478,11 @@ set_timezone_and_locales() {
 	sleep 3
 	[[ -z "$PUBLIC_IP" && -n "$WIFI_DEVICE" ]] && PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
 
-	# Call the geolocation API and capture the output
-	RES=$(
-		curl --max-time 5 -s "https://ipwhois.app/json/${PUBLIC_IP}" |
-			jq '.timezone, .country, .country_code' |
-			while read -r TIMEZONE; do
-				read -r COUNTRY
-				read -r COUNTRYCODE
-				echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete '"\n'
-			done
-	)
-
-	TZDATA=$(echo "${RES}" | cut -d"," -f1)
-	CCODE=$(echo "${RES}" | cut -d"," -f3 | xargs)
+	# Call the geolocation API. A failed lookup yields no usable values.
+	IFS='|' read -r TZDATA CCODE < <(curl --max-time 5 -s "https://ipwhois.app/json/${PUBLIC_IP}" |
+		jq -r '"\(.timezone // "")|\(.country_code // "")"' 2> /dev/null)
+	[[ -n "${TZDATA}" && -f "/usr/share/zoneinfo/${TZDATA}" ]] || TZDATA=""
+	[[ "${CCODE}" =~ ^[A-Z]{2}$ ]] || CCODE=""
 
 	unset response
 	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
@@ -502,11 +502,9 @@ set_timezone_and_locales() {
 		unset CCODE TZDATA
 	fi
 
-	LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |
-		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "UTF-8$" | cut -d " " -f 1)
-	# UTF8 is not present everywhere so check again in case it returns empty value
-	[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |
-		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+	LOCALES=$(find_locales "${CCODE}")
+	# no locale for this country: offer all locales
+	[[ -z "${LOCALES}" ]] && LOCALES=$(find_locales "")
 	readarray -t options <<< "${LOCALES}"
 
 	if [ -z $PRESET_LOCALE ];then
