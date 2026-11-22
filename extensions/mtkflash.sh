@@ -25,7 +25,7 @@ function extension_finish_config__900_mtkflash() {
 	display_alert "Preparing mtkflash extension" "${EXTENSION}" "info"
 
 	declare -g -r MTKFLASH_GIT_REPO="${MTKFLASH_GIT_REPO:-"${GITHUB_SOURCE}/grinn-global/mtk-flash.git"}"
-	declare -g -r MTKFLASH_GIT_COMMIT="${MTKFLASH_GIT_COMMIT:-"7a7bc746cce4e8fcdd9ce93e5c9ec9a80fb238ad"}"
+	declare -g -r MTKFLASH_GIT_COMMIT="${MTKFLASH_GIT_COMMIT:-"6be19735912f118987dff9e48aefc84e3b602d2e"}"
 
 	declare -g -r mtkflash_dir="${SRC}/cache/sources/mtk-flash"
 	declare -g -r mtkflash_bin_path="${mtkflash_dir}/target/release/mtk-flash-${MTKFLASH_GIT_COMMIT}"
