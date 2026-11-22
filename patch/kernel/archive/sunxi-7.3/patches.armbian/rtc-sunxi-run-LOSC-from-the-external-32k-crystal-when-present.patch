@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "D.R.racer" <drracer@seznam.cz>
+Date: Sat, 17 Oct 2026 15:57:50 +0200
+Subject: rtc: sunxi: run LOSC from the external 32k crystal when present
+
+The driver leaves the 32 kHz low-speed oscillator (LOSC) on the
+internal RC oscillator. On a Cubietruck, LOSC as seen by the RTC runs
+3.2 % slow (about 31.7 kHz) on it, and -28 ppm on the crystal, both
+measured against an NTP-synced system clock.
+
+LOSC is also the clock behind CLK_OUT_A, which the Cubietruck feeds to
+its AP6210 WiFi/Bluetooth module as the low-power clock. On the RC
+oscillator the Bluetooth controller answers every HCI command, but its
+radio neither transmits nor receives: LE scans and inquiries return no
+reports, and other devices cannot discover it. Switching LOSC to the
+crystal at runtime and re-initialising the controller makes it work;
+switching back to the RC oscillator broke it again in each of three
+tries.
+
+Select the crystal when the device tree provides it, similar to what
+the A31 RTC driver does. The value written leaves LOSC_CTRL at 0x9
+(crystal, drive strength 2, all other control bits clear), which is
+what the vendor 3.4 kernel leaves in the register. The hardware
+falls back to the RC oscillator by itself when the crystal stops or
+fails to start (LOSC_CTRL bit 13 then reads as set), so the RTC keeps
+running, if inaccurately.
+
+Tested on a Cubietruck (A20): from a cold power-on, LOSC_CTRL reads 0x9
+right after boot and Bluetooth scans; on the patched kernel it also
+pairs and answers l2ping. Boards that do not reference the crystal are
+unaffected.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/rtc/rtc-sunxi.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/rtc/rtc-sunxi.c b/drivers/rtc/rtc-sunxi.c
+index 111111111111..222222222222 100644
+--- a/drivers/rtc/rtc-sunxi.c
++++ b/drivers/rtc/rtc-sunxi.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2013, Carlo Caione <carlo.caione@gmail.com>
+  */
+ 
++#include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/fs.h>
+@@ -19,8 +20,11 @@
+ #include <linux/types.h>
+ 
+ #define SUNXI_LOSC_CTRL				0x0000
++#define SUNXI_LOSC_CTRL_KEY			(0x16aa << 16)
+ #define SUNXI_LOSC_CTRL_RTC_HMS_ACC		BIT(8)
+ #define SUNXI_LOSC_CTRL_RTC_YMD_ACC		BIT(7)
++#define SUNXI_LOSC_CTRL_EXT_GSM(x)		((x) << 2)	/* 2 bits */
++#define SUNXI_LOSC_CTRL_EXT_OSC			BIT(0)
+ 
+ #define SUNXI_RTC_YMD				0x0004
+ 
+@@ -420,6 +424,7 @@ MODULE_DEVICE_TABLE(of, sunxi_rtc_dt_ids);
+ static int sunxi_rtc_probe(struct platform_device *pdev)
+ {
+ 	struct sunxi_rtc_dev *chip;
++	struct clk *ext_osc;
+ 	int ret;
+ 
+ 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+@@ -453,6 +458,21 @@ static int sunxi_rtc_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 	}
+ 
++	ext_osc = devm_clk_get_optional_enabled(&pdev->dev, NULL);
++	if (IS_ERR(ext_osc))
++		return dev_err_probe(&pdev->dev, PTR_ERR(ext_osc),
++				     "Could not get the external oscillator\n");
++
++	/*
++	 * Run LOSC from the external crystal, with the drive strength the
++	 * vendor kernel uses. Like the vendor kernel, this clears the other
++	 * control bits. The hardware still falls back to the RC
++	 * oscillator by itself if the crystal stops.
++	 */
++	if (ext_osc)
++		writel(SUNXI_LOSC_CTRL_KEY | SUNXI_LOSC_CTRL_EXT_GSM(2) |
++		       SUNXI_LOSC_CTRL_EXT_OSC, chip->base + SUNXI_LOSC_CTRL);
++
+ 	/* clear the alarm count value */
+ 	writel(0, chip->base + SUNXI_ALRM_DHMS);
+ 
+-- 
+Armbian

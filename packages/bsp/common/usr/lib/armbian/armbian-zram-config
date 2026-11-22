@@ -46,16 +46,37 @@ activate_zram() {
 	module_args="$(modinfo zram | awk -F" " '/num_devices/ {print $2}' | cut -f1 -d:)"
 	[[ -n ${module_args} ]] && modprobe zram ${module_args}=$(( zram_devices + 2 )) || return
 
-	swap_algo=${SWAP_ALGORITHM:=lzo}
-	# Expose 50% of real memory as swap space by default
-	zram_percent=${ZRAM_PERCENTAGE:=50}
 	mem_info=$(LC_ALL=C free -w 2>/dev/null | grep "^Mem" || LC_ALL=C free | grep "^Mem")
 	mem_info=$(echo $mem_info | awk '{print $2}')
 	memory_total=$(( mem_info * 1024 ))
+
+	# Defaults by RAM size. Small boards need more swap: pages compress about 3:1.
+	# Up to 512 MiB: 300%. Up to 1 GiB: 200%. Up to 2 GiB: 100%. All zstd. More: 50%, lzo.
+	# Thresholds have headroom: the kernel reports less than the nominal RAM size.
+	if [[ ${mem_info} -le $(( 640 * 1024 )) ]]; then
+		default_percent=300 default_algo=zstd
+	elif [[ ${mem_info} -le $(( 1280 * 1024 )) ]]; then
+		default_percent=200 default_algo=zstd
+	elif [[ ${mem_info} -le $(( 2560 * 1024 )) ]]; then
+		default_percent=100 default_algo=zstd
+	else
+		default_percent=50 default_algo=lzo
+	fi
+	grep -qw "${default_algo}" /sys/block/zram0/comp_algorithm 2>/dev/null || default_algo=lzo
+	swap_algo=${SWAP_ALGORITHM:=${default_algo}}
+	zram_percent=${ZRAM_PERCENTAGE:=${default_percent}}
 	mem_per_zram_device=$(( memory_total * zram_percent / zram_devices / 100 ))
 
-	# Limit memory available to zram to 50% by default
-	mem_limit_percent=${MEM_LIMIT_PERCENTAGE:=50}
+	# RAM limit by default: enough to hold a full swap device. zstd
+	# compresses about 3:1, lzo about 2.5:1. At least 50%, at most 100%.
+	if [[ "${swap_algo}" == zstd ]]; then
+		default_limit=$(( (zram_percent + 2) / 3 ))
+	else
+		default_limit=$(( (zram_percent * 2 + 4) / 5 ))
+	fi
+	(( default_limit < 50 )) && default_limit=50
+	(( default_limit > 100 )) && default_limit=100
+	mem_limit_percent=${MEM_LIMIT_PERCENTAGE:=${default_limit}}
 	mem_limit_per_zram_device=$(( memory_total * mem_limit_percent / zram_devices / 100 ))
 }
 

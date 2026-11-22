@@ -71,6 +71,9 @@ function do_main_configuration() {
 	# Fix old U-Boot pylibfdt failing against SWIG >= 4.3 (trixie). No-op on newer U-Boot. Can be removed when all U-Boot versions are >= v2026.07.
 	enable_extension "uboot-fix-pylibfdt-swig"
 
+	# fake-hwclock 0.14 sets the clock backwards on load (Debian #1093227). No-op on other versions. Can be removed when all releases ship a fixed fake-hwclock.
+	enable_extension "fake-hwclock-load-fix"
+
 	# Network stack to use, default to network-manager; configuration can override this.
 	# Will be made read-only further down.
 	declare -g NETWORKING_STACK="${NETWORKING_STACK}"

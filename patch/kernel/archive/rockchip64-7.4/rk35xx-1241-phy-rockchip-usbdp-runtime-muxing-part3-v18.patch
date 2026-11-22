@@ -1,0 +1,756 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:29 +0100
+Subject: phy: rockchip: usbdp: Disable USB3 port during normal power-on
+
+In the reset path, the USB3 port is disabled. This re-routes the clock
+going from the PHY to the USB3 controller. This adds the same to the
+normal power-on path, so that it behaves exactly the same (except that
+the clocks routed to the PHY stay enabled in the reset path).
+
+This hasn't been done so far, as it requires the recently introduced
+PHY reset infrastructure to avoid the PHY PLL not locking during
+startup.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-1-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -1050,6 +1050,9 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ 	if (udphy->status == UDPHY_MODE_NONE) {
+ 		rk_udphy_run_reset_handler(udphy, true);
+ 
++		rk_udphy_u3_port_disable(udphy, true);
++		udelay(10);
++
+ 		ret = rk_udphy_setup(udphy);
+ 		if (ret) {
+ 			rk_udphy_run_reset_handler(udphy, false);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:30 +0100
+Subject: phy: rockchip: usbdp: Drop -EPROBE_DEFER hack
+
+The hack to return -EPROBE_DEFER when the lcpll lock timeouts is no
+longer needed. The driver now does a reset during its PHY init, which
+avoids the problem.
+
+Since rk_udphy_status_check() is called after the probe, it should not
+return -EPROBE_DEFER.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-2-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 12 +---------
+ 1 file changed, 1 insertion(+), 11 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -753,17 +753,7 @@ static int rk_udphy_status_check(struct rk_udphy *udphy)
+ 					       (val & CMN_ANA_LCPLL_LOCK_DONE), 200, 100000);
+ 		if (ret) {
+ 			dev_err(udphy->dev, "cmn ana lcpll lock timeout\n");
+-			/*
+-			 * If earlier software (U-Boot) enabled USB once already
+-			 * the PLL may have problems locking on the first try.
+-			 * It will be successful on the second try, so for the
+-			 * time being a -EPROBE_DEFER will solve the issue.
+-			 *
+-			 * This requires further investigation to understand the
+-			 * root cause, especially considering that the driver is
+-			 * asserting all reset lines at probe time.
+-			 */
+-			return -EPROBE_DEFER;
++			return ret;
+ 		}
+ 
+ 		if (!udphy->flip) {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:31 +0100
+Subject: phy: rockchip: usbdp: Rename mode to hw_mode
+
+Rename mode field to hw_mode to make clear that this is the modes
+currently supported by the hardware, but not necessarily requested
+by software. I.e. it is only set by either the USB-C state machine
+or device-tree if the PHY is used in a fixed routing setup.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-3-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 48 +++++-----
+ 1 file changed, 24 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -174,7 +174,7 @@ struct rk_udphy {
+ 	/* PHY status management */
+ 	bool flip;
+ 	bool phy_needs_reinit;
+-	u8 mode;
++	u8 hw_mode; /* modes currently supported by hardware */
+ 	u8 status;
+ 	u8 sw_mode; /* modes currently requested */
+ 
+@@ -582,18 +582,18 @@ static void rk_udphy_dp_lane_enable(struct rk_udphy *udphy, int dp_lanes)
+ 				   CMN_DP_CMN_RSTN, FIELD_PREP(CMN_DP_CMN_RSTN, 0x0));
+ }
+ 
+-static void rk_udphy_mode_set(struct rk_udphy *udphy, u8 mode)
++static void rk_udphy_mode_set(struct rk_udphy *udphy, u8 hw_mode)
+ {
+-	if (udphy->mode == mode)
++	if (udphy->hw_mode == hw_mode)
+ 		return;
+ 
+ 	udphy->phy_needs_reinit = true;
+-	udphy->mode = mode;
++	udphy->hw_mode = hw_mode;
+ }
+ 
+ static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state)
+ {
+-	u8 mode;
++	u8 hw_mode;
+ 
+ 	switch (state) {
+ 	case TYPEC_DP_STATE_C:
+@@ -602,7 +602,7 @@ static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state
+ 		udphy->lane_mux_sel[1] = PHY_LANE_MUX_DP;
+ 		udphy->lane_mux_sel[2] = PHY_LANE_MUX_DP;
+ 		udphy->lane_mux_sel[3] = PHY_LANE_MUX_DP;
+-		mode = UDPHY_MODE_DP;
++		hw_mode = UDPHY_MODE_DP;
+ 		udphy->dp_lanes = 4;
+ 		break;
+ 
+@@ -619,12 +619,12 @@ static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state
+ 			udphy->lane_mux_sel[2] = PHY_LANE_MUX_DP;
+ 			udphy->lane_mux_sel[3] = PHY_LANE_MUX_DP;
+ 		}
+-		mode = UDPHY_MODE_DP_USB;
++		hw_mode = UDPHY_MODE_DP_USB;
+ 		udphy->dp_lanes = 2;
+ 		break;
+ 	}
+ 
+-	rk_udphy_mode_set(udphy, mode);
++	rk_udphy_mode_set(udphy, hw_mode);
+ }
+ 
+ static void rk_udphy_set_typec_default_mapping(struct rk_udphy *udphy)
+@@ -747,7 +747,7 @@ static int rk_udphy_status_check(struct rk_udphy *udphy)
+ 	int ret;
+ 
+ 	/* LCPLL check */
+-	if (udphy->mode & UDPHY_MODE_USB) {
++	if (udphy->hw_mode & UDPHY_MODE_USB) {
+ 		ret = regmap_read_poll_timeout(udphy->pma_regmap, CMN_ANA_LCPLL_DONE_OFFSET,
+ 					       val, (val & CMN_ANA_LCPLL_AFC_DONE) &&
+ 					       (val & CMN_ANA_LCPLL_LOCK_DONE), 200, 100000);
+@@ -782,15 +782,15 @@ static int rk_udphy_init(struct rk_udphy *udphy)
+ 	int ret;
+ 
+ 	dev_dbg(udphy->dev, "reinit PHY with USB3=%s and DP=%s (%u lanes) flipped=%s\n",
+-		str_on_off(udphy->mode & UDPHY_MODE_USB),
+-		str_on_off(udphy->mode & UDPHY_MODE_DP),
++		str_on_off(udphy->hw_mode & UDPHY_MODE_USB),
++		str_on_off(udphy->hw_mode & UDPHY_MODE_DP),
+ 		udphy->dp_lanes, str_yes_no(udphy->flip));
+ 
+ 	rk_udphy_reset_assert_all(udphy);
+ 	usleep_range(10000, 11000);
+ 
+ 	/* enable rx lfps for usb */
+-	if (udphy->mode & UDPHY_MODE_USB)
++	if (udphy->hw_mode & UDPHY_MODE_USB)
+ 		rk_udphy_grfreg_write(udphy->udphygrf, &cfg->grfcfg.rx_lfps, true);
+ 
+ 	/* Step 1: power on pma and deassert apb rstn */
+@@ -827,13 +827,13 @@ static int rk_udphy_init(struct rk_udphy *udphy)
+ 			   FIELD_PREP(CMN_DP_LANE_EN_ALL, 0));
+ 
+ 	/* Step 4: deassert init rstn and wait for 200ns from datasheet */
+-	if (udphy->mode & UDPHY_MODE_USB) {
++	if (udphy->hw_mode & UDPHY_MODE_USB) {
+ 		ret = rk_udphy_reset_deassert(udphy, "init");
+ 		if (ret)
+ 			goto assert_resets;
+ 	}
+ 
+-	if (udphy->mode & UDPHY_MODE_DP) {
++	if (udphy->hw_mode & UDPHY_MODE_DP) {
+ 		regmap_update_bits(udphy->pma_regmap, CMN_DP_RSTN_OFFSET,
+ 				   CMN_DP_INIT_RSTN,
+ 				   FIELD_PREP(CMN_DP_INIT_RSTN, 0x1));
+@@ -842,7 +842,7 @@ static int rk_udphy_init(struct rk_udphy *udphy)
+ 	udelay(1);
+ 
+ 	/*  Step 5: deassert cmn/lane rstn */
+-	if (udphy->mode & UDPHY_MODE_USB) {
++	if (udphy->hw_mode & UDPHY_MODE_USB) {
+ 		ret = rk_udphy_reset_deassert(udphy, "cmn");
+ 		if (ret)
+ 			goto assert_resets;
+@@ -901,7 +901,7 @@ static int rk_udphy_parse_lane_mux_data(struct rk_udphy *udphy)
+ 	num_lanes = device_property_count_u32(udphy->dev, "rockchip,dp-lane-mux");
+ 	if (num_lanes < 0) {
+ 		dev_dbg(udphy->dev, "no dp-lane-mux, following dp alt mode\n");
+-		udphy->mode = UDPHY_MODE_USB;
++		udphy->hw_mode = UDPHY_MODE_USB;
+ 		return 0;
+ 	}
+ 
+@@ -930,10 +930,10 @@ static int rk_udphy_parse_lane_mux_data(struct rk_udphy *udphy)
+ 		}
+ 	}
+ 
+-	udphy->mode = UDPHY_MODE_DP;
++	udphy->hw_mode = UDPHY_MODE_DP;
+ 	udphy->dp_lanes = num_lanes;
+ 	if (num_lanes == 1 || num_lanes == 2) {
+-		udphy->mode |= UDPHY_MODE_USB;
++		udphy->hw_mode |= UDPHY_MODE_USB;
+ 		udphy->flip = (udphy->lane_mux_sel[0] == PHY_LANE_MUX_DP) ||
+ 			      (udphy->lane_mux_sel[1] == PHY_LANE_MUX_DP);
+ 	}
+@@ -1032,7 +1032,7 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ {
+ 	int ret;
+ 
+-	if (!(udphy->mode & mode)) {
++	if (!(udphy->hw_mode & mode)) {
+ 		dev_info(udphy->dev, "mode 0x%02x is not support\n", mode);
+ 		return 0;
+ 	}
+@@ -1049,7 +1049,7 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ 			return ret;
+ 		}
+ 
+-		if (!udphy->hs && udphy->mode & UDPHY_MODE_USB)
++		if (!udphy->hs && udphy->hw_mode & UDPHY_MODE_USB)
+ 			rk_udphy_u3_port_disable(udphy, false);
+ 		udphy->phy_needs_reinit = false;
+ 
+@@ -1066,7 +1066,7 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ 			return ret;
+ 		}
+ 
+-		if (!udphy->hs && udphy->mode & UDPHY_MODE_USB)
++		if (!udphy->hs && udphy->hw_mode & UDPHY_MODE_USB)
+ 			rk_udphy_u3_port_disable(udphy, false);
+ 		udphy->phy_needs_reinit = false;
+ 
+@@ -1080,7 +1080,7 @@ static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
+ 
+ static void rk_udphy_power_off(struct rk_udphy *udphy, u8 mode)
+ {
+-	if (!(udphy->mode & mode)) {
++	if (!(udphy->hw_mode & mode)) {
+ 		dev_info(udphy->dev, "mode 0x%02x is not support\n", mode);
+ 		return;
+ 	}
+@@ -1348,7 +1348,7 @@ static int rk_udphy_usb3_phy_init(struct phy *phy)
+ 	udphy->sw_mode |= UDPHY_MODE_USB;
+ 
+ 	/* DP only or high-speed, disable U3 port */
+-	if (!(udphy->mode & UDPHY_MODE_USB) || udphy->hs) {
++	if (!(udphy->hw_mode & UDPHY_MODE_USB) || udphy->hs) {
+ 		rk_udphy_u3_port_disable(udphy, true);
+ 		return 0;
+ 	}
+@@ -1371,7 +1371,7 @@ static int rk_udphy_usb3_phy_exit(struct phy *phy)
+ 	udphy->sw_mode &= ~UDPHY_MODE_USB;
+ 
+ 	/* DP only or high-speed */
+-	if (!(udphy->mode & UDPHY_MODE_USB) || udphy->hs)
++	if (!(udphy->hw_mode & UDPHY_MODE_USB) || udphy->hs)
+ 		return 0;
+ 
+ 	rk_udphy_power_off(udphy, UDPHY_MODE_USB);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:32 +0100
+Subject: phy: rockchip: usbdp: Fix power state handling
+
+Restructure power state handling, so that the function uses sw_mode and
+hw_mode to figure out the actual required hardware state. This allows
+any path updating either of those modes to simply call
+rk_udphy_update_power_state() to get the right hardware state.
+
+This makes it a lot more obvious what is going on and also fixes a few
+potential resource leaks identified by Sashiko as a side-effect. For
+example if USB3 is requested by software while the USB-C is in DP-only
+mode, things are decently handled after this.
+
+Exiting/power off the PHY will ignore errors from the power state
+update. A full power down will never error out. If re-init fails,
+the error should not be propagated to the PHY framework, because
+it is effectively for the other PHY.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-4-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 128 ++++++----
+ 1 file changed, 75 insertions(+), 53 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -173,10 +173,10 @@ struct rk_udphy {
+ 
+ 	/* PHY status management */
+ 	bool flip;
+-	bool phy_needs_reinit;
++	bool phy_needs_reinit; /* lane mux changed */
+ 	u8 hw_mode; /* modes currently supported by hardware */
+-	u8 status;
+ 	u8 sw_mode; /* modes currently requested */
++	u8 status;
+ 
+ 	/* utilized for USB */
+ 	bool hs; /* flag for high-speed */
+@@ -1028,70 +1028,93 @@ void rk_udphy_register_reset_handler(struct phy *phy,
+ }
+ EXPORT_SYMBOL_GPL(rk_udphy_register_reset_handler);
+ 
+-static int rk_udphy_power_on(struct rk_udphy *udphy, u8 mode)
++static int rk_udphy_update_power_state(struct rk_udphy *udphy)
+ {
++	bool usb3_port_enable;
++	u8 target_mode;
+ 	int ret;
+ 
+-	if (!(udphy->hw_mode & mode)) {
+-		dev_info(udphy->dev, "mode 0x%02x is not support\n", mode);
++	/*
++	 * Initialize PHY mode according to the hardware setup (either described
++	 * in DT or negotiated via the Type-C controller) instead of requesting
++	 * only the needed PHY side, because that would break the USB/DP data
++	 * streams when the other PHY is being requested. This is not an issue
++	 * during the Type-C negotiation as that happens during the hotplug phase
++	 * and not during normal operation. Also disable everything if the
++	 * software has not requested anything, as there shouldn't be any active
++	 * data streams in that case.
++	 */
++	target_mode = udphy->hw_mode;
++	if (udphy->sw_mode == UDPHY_MODE_NONE)
++		target_mode = UDPHY_MODE_NONE;
++
++	usb3_port_enable = !udphy->hs && (target_mode & UDPHY_MODE_USB);
++
++	if (!udphy->phy_needs_reinit && udphy->status == target_mode) {
++		if (udphy->sw_mode & UDPHY_MODE_USB)
++			rk_udphy_u3_port_disable(udphy, !usb3_port_enable);
+ 		return 0;
+ 	}
+ 
+-	if (udphy->status == UDPHY_MODE_NONE) {
+-		rk_udphy_run_reset_handler(udphy, true);
++	/* Avoid to re-init disabled PHY */
++	if (udphy->status == target_mode && target_mode == UDPHY_MODE_NONE)
++		return 0;
++
++	/*
++	 * Inform DWC3 driver, that we are about to reset the PHY, so that it can
++	 * assert its PIPE reset lines and avoid DWC3 getting into a buggy state.
++	 * This is intentionally done for a PHY disable, since that also changes
++	 * the clocks routed to the PHY.
++	 */
++	rk_udphy_run_reset_handler(udphy, true);
+ 
++	/*
++	 * Disable USB3 port, which among other things re-routes a DWC3 clock to
++	 * avoid SErrors when the DWC3 registers are accessed while the PHY is
++	 * disabled. This is only done, when the DWC3 is running as the accessed
++	 * GRF registers and in PD_USB.
++	 */
++	if (udphy->sw_mode & UDPHY_MODE_USB) {
+ 		rk_udphy_u3_port_disable(udphy, true);
+ 		udelay(10);
++	}
+ 
++	if (udphy->status == UDPHY_MODE_NONE) {
++		/* Power up (incl. clocks) */
+ 		ret = rk_udphy_setup(udphy);
+ 		if (ret) {
+ 			rk_udphy_run_reset_handler(udphy, false);
+ 			return ret;
+ 		}
+-
+-		if (!udphy->hs && udphy->hw_mode & UDPHY_MODE_USB)
+-			rk_udphy_u3_port_disable(udphy, false);
+-		udphy->phy_needs_reinit = false;
+-
+-		rk_udphy_run_reset_handler(udphy, false);
+-	} else if (udphy->phy_needs_reinit) {
+-		rk_udphy_run_reset_handler(udphy, true);
+-
+-		rk_udphy_u3_port_disable(udphy, true);
+-		udelay(10);
+-
++	} else if (target_mode == UDPHY_MODE_NONE) {
++		/* Power down (incl. clocks) */
++		rk_udphy_disable(udphy);
++	} else {
++		/* Mode change => re-init */
+ 		ret = rk_udphy_init(udphy);
+ 		if (ret) {
+ 			rk_udphy_run_reset_handler(udphy, false);
+ 			return ret;
+ 		}
+-
+-		if (!udphy->hs && udphy->hw_mode & UDPHY_MODE_USB)
+-			rk_udphy_u3_port_disable(udphy, false);
+-		udphy->phy_needs_reinit = false;
+-
+-		rk_udphy_run_reset_handler(udphy, false);
+ 	}
+ 
+-	udphy->status |= mode;
+-
+-	return 0;
+-}
+-
+-static void rk_udphy_power_off(struct rk_udphy *udphy, u8 mode)
+-{
+-	if (!(udphy->hw_mode & mode)) {
+-		dev_info(udphy->dev, "mode 0x%02x is not support\n", mode);
+-		return;
+-	}
++	/* Ensure USB3 support is enabled when supported */
++	if (udphy->sw_mode & UDPHY_MODE_USB)
++		rk_udphy_u3_port_disable(udphy, !usb3_port_enable);
+ 
+-	if (!udphy->status)
+-		return;
++	/*
++	 * Inform DWC3, that we are done with the reset, so that it can deassert
++	 * its PIPE reset line. This is sent in pair with a PRE_RESET allowing
++	 * consumer driver to do paired resource requests (e.g. clocks) in their
++	 * notification handlers. As we reroute the clocks, its also fine to
++	 * send this after completely disabling the PHY.
++	 */
++	rk_udphy_run_reset_handler(udphy, false);
+ 
+-	udphy->status &= ~mode;
++	udphy->status = target_mode;
++	udphy->phy_needs_reinit = false;
+ 
+-	if (udphy->status == UDPHY_MODE_NONE)
+-		rk_udphy_disable(udphy);
++	return 0;
+ }
+ 
+ static int rk_udphy_dp_phy_power_on(struct phy *phy)
+@@ -1104,7 +1127,7 @@ static int rk_udphy_dp_phy_power_on(struct phy *phy)
+ 
+ 		phy_set_bus_width(phy, udphy->dp_lanes);
+ 
+-		ret = rk_udphy_power_on(udphy, UDPHY_MODE_DP);
++		ret = rk_udphy_update_power_state(udphy);
+ 		if (ret) {
+ 			udphy->sw_mode &= ~UDPHY_MODE_DP;
+ 			return ret;
+@@ -1134,7 +1157,7 @@ static int rk_udphy_dp_phy_power_off(struct phy *phy)
+ 	udphy->sw_mode &= ~UDPHY_MODE_DP;
+ 
+ 	rk_udphy_dp_lane_enable(udphy, 0);
+-	rk_udphy_power_off(udphy, UDPHY_MODE_DP);
++	rk_udphy_update_power_state(udphy);
+ 
+ 	return 0;
+ }
+@@ -1345,15 +1368,15 @@ static int rk_udphy_usb3_phy_init(struct phy *phy)
+ 
+ 	guard(mutex)(&udphy->mutex);
+ 
+-	udphy->sw_mode |= UDPHY_MODE_USB;
+-
+-	/* DP only or high-speed, disable U3 port */
+-	if (!(udphy->hw_mode & UDPHY_MODE_USB) || udphy->hs) {
++	/* high-speed only, disable U3 port */
++	if (udphy->hs) {
+ 		rk_udphy_u3_port_disable(udphy, true);
+ 		return 0;
+ 	}
+ 
+-	ret = rk_udphy_power_on(udphy, UDPHY_MODE_USB);
++	udphy->sw_mode |= UDPHY_MODE_USB;
++
++	ret = rk_udphy_update_power_state(udphy);
+ 	if (ret) {
+ 		udphy->sw_mode &= ~UDPHY_MODE_USB;
+ 		return ret;
+@@ -1368,13 +1391,12 @@ static int rk_udphy_usb3_phy_exit(struct phy *phy)
+ 
+ 	guard(mutex)(&udphy->mutex);
+ 
+-	udphy->sw_mode &= ~UDPHY_MODE_USB;
+-
+-	/* DP only or high-speed */
+-	if (!(udphy->hw_mode & UDPHY_MODE_USB) || udphy->hs)
++	if (udphy->hs)
+ 		return 0;
+ 
+-	rk_udphy_power_off(udphy, UDPHY_MODE_USB);
++	udphy->sw_mode &= ~UDPHY_MODE_USB;
++
++	rk_udphy_update_power_state(udphy);
+ 
+ 	return 0;
+ }
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:33 +0100
+Subject: phy: rockchip: usbdp: Re-init PHY on mux change
+
+Ensure that the right part of the PHY are powered up when the
+mode changes. This ensures the PHY is re-initialized in the
+following two scenarios, which are currently broken:
+
+ - cable orientation changes without DP being involved
+ - switching from DP-only into a mode with USB support
+
+Fixes: 2f70bbddeb45 ("phy: rockchip: add usbdp combo phy driver")
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-5-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -1437,7 +1437,7 @@ static int rk_udphy_typec_mux_set(struct typec_mux_dev *mux,
+ 
+ 	rk_udphy_set_typec_state(udphy, state->mode);
+ 
+-	return 0;
++	return rk_udphy_update_power_state(udphy);
+ }
+ 
+ static void rk_udphy_typec_mux_unregister(void *data)
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:34 +0100
+Subject: phy: rockchip: usbdp: Add USB-C state without DP enabled
+
+The driver currently only differs between 4 lanes DP mode or combined DP
++ USB3 mode. This makes sense from a lane routing point of view, as the
+hardware only has 2 lanes of USB3.
+
+But adding a separate state for USB-only helps with power management,
+since we always power up all PHY parts according to the current hardware
+setup to avoid data stream interruptions. Even if some lanes are muxed
+to the DP controller there is no need to keep the DP side enabled if
+something without DP AltMode is plugged into USB-C.
+
+This potentially triggers some more USB reconnections during the PD
+AltMode negotiation when switching from USB-only to combined USB+DP
+mode. This should be fine, as the cable is freshly plugged at this
+point.
+
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # Orange Pi 5 Plus
+Reviewed-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-6-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 68 ++++++----
+ 1 file changed, 42 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -582,32 +582,14 @@ static void rk_udphy_dp_lane_enable(struct rk_udphy *udphy, int dp_lanes)
+ 				   CMN_DP_CMN_RSTN, FIELD_PREP(CMN_DP_CMN_RSTN, 0x0));
+ }
+ 
+-static void rk_udphy_mode_set(struct rk_udphy *udphy, u8 hw_mode)
++static void rk_udphy_set_lane_mux(struct rk_udphy *udphy)
+ {
+-	if (udphy->hw_mode == hw_mode)
+-		return;
+-
+-	udphy->phy_needs_reinit = true;
+-	udphy->hw_mode = hw_mode;
+-}
+-
+-static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state)
+-{
+-	u8 hw_mode;
+-
+-	switch (state) {
+-	case TYPEC_DP_STATE_C:
+-	case TYPEC_DP_STATE_E:
++	if (udphy->dp_lanes == 4) {
+ 		udphy->lane_mux_sel[0] = PHY_LANE_MUX_DP;
+ 		udphy->lane_mux_sel[1] = PHY_LANE_MUX_DP;
+ 		udphy->lane_mux_sel[2] = PHY_LANE_MUX_DP;
+ 		udphy->lane_mux_sel[3] = PHY_LANE_MUX_DP;
+-		hw_mode = UDPHY_MODE_DP;
+-		udphy->dp_lanes = 4;
+-		break;
+-
+-	case TYPEC_DP_STATE_D:
+-	default:
++	} else {
+ 		if (udphy->flip) {
+ 			udphy->lane_mux_sel[0] = PHY_LANE_MUX_DP;
+ 			udphy->lane_mux_sel[1] = PHY_LANE_MUX_DP;
+@@ -619,12 +601,39 @@ static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state
+ 			udphy->lane_mux_sel[2] = PHY_LANE_MUX_DP;
+ 			udphy->lane_mux_sel[3] = PHY_LANE_MUX_DP;
+ 		}
+-		hw_mode = UDPHY_MODE_DP_USB;
+-		udphy->dp_lanes = 2;
++	}
++}
++
++static void rk_udphy_mode_set(struct rk_udphy *udphy, u8 hw_mode, u8 dp_lanes)
++{
++	if (udphy->hw_mode == hw_mode && udphy->dp_lanes == dp_lanes)
++		return;
++
++	udphy->phy_needs_reinit = true;
++	udphy->hw_mode = hw_mode;
++	udphy->dp_lanes = dp_lanes;
++}
++
++static void rk_udphy_set_typec_state(struct rk_udphy *udphy, unsigned long state)
++{
++	switch (state) {
++	case TYPEC_DP_STATE_C:
++	case TYPEC_DP_STATE_E:
++		rk_udphy_mode_set(udphy, UDPHY_MODE_DP, 4);
++		break;
++
++	case TYPEC_DP_STATE_D:
++		rk_udphy_mode_set(udphy, UDPHY_MODE_DP_USB, 2);
++		break;
++
++	case TYPEC_STATE_SAFE:
++	case TYPEC_STATE_USB:
++	default:
++		rk_udphy_mode_set(udphy, UDPHY_MODE_USB, 0);
+ 		break;
+ 	}
+ 
+-	rk_udphy_mode_set(udphy, hw_mode);
++	rk_udphy_set_lane_mux(udphy);
+ }
+ 
+ static void rk_udphy_set_typec_default_mapping(struct rk_udphy *udphy)
+@@ -649,8 +658,15 @@ static void rk_udphy_set_typec_default_mapping(struct rk_udphy *udphy)
+ 		gpiod_set_value_cansleep(udphy->sbu2_dc_gpio, 1);
+ 	}
+ 
+-	/* default to USB3 + DP as 4 lane USB is not supported */
+-	rk_udphy_set_typec_state(udphy, TYPEC_DP_STATE_D);
++	/*
++	 * default to safe mode (USB only) when mux is available to
++	 * avoid unnecessary mode changes; otherwise default to 2+2
++	 * mode, considering HW can effectively only do 2+2 or DP-only
++	 */
++	if (udphy->mux)
++		rk_udphy_set_typec_state(udphy, TYPEC_STATE_SAFE);
++	else
++		rk_udphy_set_typec_state(udphy, TYPEC_DP_STATE_D);
+ }
+ 
+ static int rk_udphy_orien_sw_set(struct typec_switch_dev *sw,
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 19 Nov 2026 20:40:35 +0100
+Subject: phy: rockchip: usbdp: Add DP lane setup to power state update
+
+DP lane map and AUX orientation are only configured in the DP PHY
+power_on callback right now. This means when the DP controller keeps
+the display enabled after a cable is unplugged, it will not come back
+properly with the cable re-plugged in swapped orientation.
+
+To fix the issue, we update the DP lane mux configuration in the power
+state update. This gets some special handling, because calling
+rk_udphy_dp_lane_select() accesses the VOGRF which needs the DP
+controller's power domain enabled. It is active while the DP controller
+has the PHY powered on.
+
+Apart from that VOGRF may lose its state when the DP controller is
+disabled, so we keep the DP PHY power hook as-is instead of fully
+relying on the power state update function.
+
+Reported-by: Yury Smirnov <yurymonzon@gmail.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261119-b4-rockchip-usbdp-cleanup-part3-v18-7-fb325e336494@collabora.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/phy/rockchip/phy-rockchip-usbdp.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/phy/rockchip/phy-rockchip-usbdp.c b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/rockchip/phy-rockchip-usbdp.c
++++ b/drivers/phy/rockchip/phy-rockchip-usbdp.c
+@@ -1114,6 +1114,13 @@ static int rk_udphy_update_power_state(struct rk_udphy *udphy)
+ 		}
+ 	}
+ 
++	/* Setup DP lanes and the AUX polarity */
++	if ((target_mode & UDPHY_MODE_DP) && (udphy->sw_mode & UDPHY_MODE_DP)) {
++		phy_set_bus_width(udphy->phy_dp, udphy->dp_lanes);
++		rk_udphy_dp_lane_enable(udphy, udphy->dp_lanes);
++		rk_udphy_dp_lane_select(udphy);
++	}
++
+ 	/* Ensure USB3 support is enabled when supported */
+ 	if (udphy->sw_mode & UDPHY_MODE_USB)
+ 		rk_udphy_u3_port_disable(udphy, !usb3_port_enable);
+-- 
+Armbian
+

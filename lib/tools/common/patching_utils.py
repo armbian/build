@@ -247,6 +247,9 @@ class PatchFileInDir:
 	@staticmethod
 	def split_description_and_patch(full_message_text: str) -> tuple["str | None", str]:
 		separator = "\n---\n"
+		# An empty description leaves the "---" separator at the very start, with no "\n" before it.
+		if re.match(r"---\r?\n", full_message_text):
+			return None, full_message_text
 		# check if the separator is in the patch, if so, split
 		if separator in full_message_text:
 			# Split at the last separator that the patch itself follows, so a footer after the
@@ -260,7 +263,12 @@ class PatchFileInDir:
 			desc = full_message_text[:separator_pos]
 			patch = full_message_text[separator_pos + len(separator):]
 			return desc, patch
-		else:  # no separator, so no description, patch is the full message
+		else:
+			# No "---" separator: b4 omits it when nothing (no diffstat, no notes) sits under it.
+			# Split where the diff starts, like git mailinfo does; else there's no description.
+			patch_start = re.search(r"\n(?=diff --git |--- \S[^\n]*\n\+\+\+ )", full_message_text)
+			if patch_start:
+				return full_message_text[:patch_start.start()], full_message_text[patch_start.start() + 1:]
 			desc = None
 			patch = full_message_text
 		return desc, patch
