@@ -170,7 +170,7 @@ function prepare_host_binfmt_qemu_cross() {
 	declare -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64" "loongarch64")
 	declare -A arch_aliases=(["aarch64"]="arm64" ["x86_64"]="amd64")
 	display_alert "Preparing binfmts for arch" "binfmts: host '${host_arch}', wanted arches '${wanted_arches[*]}'" "debug"
-	declare wanted_arch arch_alias
+	declare wanted_arch arch_alias handler rule record
 	for wanted_arch in "${wanted_arches[@]}"; do
 		arch_alias="${arch_aliases["${wanted_arch}"]:-"${wanted_arch}"}"
 		display_alert "Preparing binfmts for arch" "wanted arch '${wanted_arch}' alias '${arch_alias}'" "debug"
@@ -183,11 +183,21 @@ function prepare_host_binfmt_qemu_cross() {
 		# COMPAT vs qemu-arm and is idempotent across every binfmt_misc state, so it must
 		# run even when qemu-arm is already registered (the common packaged-host case) —
 		# otherwise the native-COMPAT path is skipped and a stale qemu-arm is never repaired.
+		handler="/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}"
+		rule="/usr/lib/binfmt.d/qemu-${wanted_arch}.conf"
 		if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
 			prepare_host_binfmt_qemu_cross_arm64_host_armhf_target
-		elif [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" || ! -e "/usr/share/binfmts/qemu-${wanted_arch}" ]]; then
+		elif [[ -e "${handler}" ]]; then
+			if grep -qx disabled "${handler}"; then
+				echo 1 > "${handler}" || display_alert "Failed to enable binfmt" "${handler}" "err"
+			fi
+		elif [[ -f "/usr/share/binfmts/qemu-${wanted_arch}" ]]; then
 			display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
 			run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
+		elif [[ -f "${rule}" ]]; then
+			if record="$(grep -m1 "^:qemu-${wanted_arch}:" "${rule}")"; then
+				printf '%s\n' "${record}" > /proc/sys/fs/binfmt_misc/register || display_alert "Failed to register binfmt" "${rule}" "err"
+			fi
 		fi
 	done
 }
