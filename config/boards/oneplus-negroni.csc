@@ -1,6 +1,6 @@
 # Qualcomm SM8450 Snapdragon 8 Gen 1 octa core 8/12GB RAM 128/256/512GB UFS phone
 # Generate a boot v4 image and an ext4 rootfs image for the stock Qcom ABL
-declare -g BOARD_NAME="OnePlus 10 Pro"
+declare -g BOARD_NAME="Negroni"
 declare -g BOARD_VENDOR="oneplus"
 declare -g BOARDFAMILY="sm8450-negroni"
 declare -g INTRODUCED="2022"
