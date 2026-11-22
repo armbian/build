@@ -1,4 +1,4 @@
-# Allwinner A733 octa core 2-16GB RAM
+# Allwinner A733 octa core 1/2/4/6/8/12/16GB RAM WiFi6 BT5.4 GBE HDMI DP1.4 USB-C
 BOARD_NAME="Orange Pi Zero 4"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun60iw2"
