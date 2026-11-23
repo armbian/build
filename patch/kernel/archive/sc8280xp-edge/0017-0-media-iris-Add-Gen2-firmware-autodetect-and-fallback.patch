@@ -1,0 +1,469 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dikshita Agarwal <dikshita.agarwal@oss.qualcomm.com>
+Date: Fri, 31 Jul 2026 02:48:23 +0300
+Subject: [PATCH] media: iris: Add Gen2 firmware autodetect and fallback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some Iris platforms support both Gen1 and Gen2 HFI firmware images.
+Update the firmware loading logic to handle this generically by
+preferring Gen2 when available, while safely falling back to Gen1
+when required.
+
+The firmware loading logic is updated with the following priority:
+1. Device Tree (`firmware-name`): If specified, load unconditionally.
+2. Gen2 default : If no DT override exists, select the Gen2 firmware
+   descriptor when present and attempt to load the corresponding
+   firmware image.
+3. Gen1 Fallback: If loading the Gen2 firmware fails and a Gen1
+   descriptor is available, retry with the Gen1 firmware image.
+
+Loading and generation detection are split into two steps.
+iris_load_firmware() applies the priority above and returns the loaded
+image together with a candidate descriptor. iris_detect_firmware() then
+runs only after qcom_mdt_load() has succeeded and publishes the chosen
+descriptor, so the driver commits to a HFI generation only for an image
+that has actually been loaded.
+
+When a platform provides both Gen1 and Gen2 firmware descriptors and the
+firmware is loaded via a DT override, the candidate descriptor is only a
+default: iris_detect_firmware() inspects the loaded image to pick the
+generation, before authentication. It scans the memory populated by
+qcom_mdt_load() rather than the request_firmware() blob, so that a split
+.mdt image, whose version string lives in the .bNN data segments and not
+in the ELF headers, is classified correctly. The firmware is classified
+as Gen2 if the QC_IMAGE_VERSION_STRING starts with "vfw" or matches the
+"video-firmware.N.M" format with N >= 2.
+
+If a Gen1 firmware image is detected in this case, the driver switches
+to the Gen1 firmware descriptor and associated platform data so that
+the correct HFI implementation is used.
+
+This change makes firmware generation detection platform‑agnostic,
+preserves DT overrides, prefers newer Gen2 firmware when available,
+and maintains compatibility with platforms that only support Gen1.
+
+Signed-off-by: Dikshita Agarwal <dikshita.agarwal@oss.qualcomm.com>
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Co-developed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Reviewed-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
+[bod: initialised desc = NULL in iris_load_fw_to_memory]
+[bod: Removed dangling iris_session_init_caps() from iris_probe()]
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+Link: https://lore.kernel.org/all/20260731-iris-ar50lt-v9-2-d71a782001c0@oss.qualcomm.com/
+[revert in v7.3.6: https://lore.kernel.org/all/20260731-iris-ar50lt-v9-1-d71a782001c0@oss.qualcomm.com/]
+(cherry picked from commit a9ff6152780577176fa00fcfa3480e73285099e3)
+[backport to v7.3.6, which carries only the revert 6f4eb91fa276]
+---
+
+diff --git a/drivers/media/platform/qcom/iris/iris_core.c b/drivers/media/platform/qcom/iris/iris_core.c
+index 8c335dbfce166..676baa8087a88 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.c
++++ b/drivers/media/platform/qcom/iris/iris_core.c
+@@ -6,6 +6,7 @@
+ #include <linux/pm_runtime.h>
+ 
+ #include "iris_core.h"
++#include "iris_ctrls.h"
+ #include "iris_firmware.h"
+ #include "iris_state.h"
+ #include "iris_vpu_common.h"
+@@ -85,6 +86,7 @@ int iris_core_init(struct iris_core *core)
+ 		goto error_unload_fw;
+ 
+ 	core->iris_firmware_data->init_hfi_ops(core);
++	iris_session_init_caps(core);
+ 
+ 	ret = iris_hfi_core_init(core);
+ 	if (ret)
+diff --git a/drivers/media/platform/qcom/iris/iris_firmware.c b/drivers/media/platform/qcom/iris/iris_firmware.c
+index ea9654dd679e1..21f57d37da187 100644
+--- a/drivers/media/platform/qcom/iris/iris_firmware.c
++++ b/drivers/media/platform/qcom/iris/iris_firmware.c
+@@ -15,22 +15,175 @@
+ 
+ #define IRIS_PAS_ID				9
+ 
+-#define MAX_FIRMWARE_NAME_SIZE	128
++/* Detect Gen2 firmware by scanning the blob for:
++ *   QC_IMAGE_VERSION_STRING=<version>
++ * and then checking:
++ *   - version starts with "vfw", OR
++ *   - version matches "video-firmware.N.M" with N >= 2
++ */
++
++static bool iris_detect_gen2_from_fwdata(const u8 *data, size_t size)
++{
++	static const char *marker = "QC_IMAGE_VERSION_STRING=";
++	const size_t mlen = strlen(marker);
++	static const char *vfw = "vfw";
++	const size_t vfwlen = strlen(vfw);
++	static const char *vf = "video-firmware.";
++	const size_t vflen = strlen(vf);
++
++	for (size_t i = 0; i + mlen < size; i++) {
++		const char *found;
++
++		if (memcmp(data + i, marker, mlen))
++			continue;
++
++		found = data + i + mlen;
++		size -= i + mlen;
++
++		/* vfw => Gen2 */
++		if (size > vfwlen && !memcmp(found, vfw, vfwlen))
++			return true;
++
++		if (size < vflen ||
++		    memcmp(found, vf, vflen))
++			return false;
++
++		found += vflen;
++		size -= vflen;
++
++		/*
++		 * video-firmware.1.x is Gen1.
++		 * video-firmware.2.x and video-firmware.10.x are Gen2.
++		 */
++		return size >= 2 &&
++			(*found >= '2' || (*found == '1' && found[1] != '.'));
++	}
++
++	return false;
++}
+ 
+-static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
++/*
++ * Load the firmware image and return the descriptor that was used to pick the
++ * file. On a platform that provides only one generation, or when no DT
++ * firmware-name override is present, the returned descriptor is final. With a
++ * DT override on a dual-generation platform the returned descriptor is only a
++ * default; iris_detect_firmware() inspects the loaded image to confirm it.
++ */
++static const struct firmware *iris_load_firmware(struct iris_core *core,
++						 const char **fw_name,
++						 const struct iris_firmware_desc **fw_desc)
+ {
++	const struct iris_firmware_desc *desc;
++	const struct firmware *firmware;
++	bool has_both_gens;
++	int ret;
++
++	*fw_name = NULL;
++	ret = of_property_read_string_index(dev_of_node(core->dev), "firmware-name", 0, fw_name);
++
++	/*
++	 * A platform may support both Gen1 and Gen2 firmware; which one is used
++	 * depends on the firmware image installed on the system, not on the
++	 * hardware. That installed image does not change while the device is
++	 * bound, so the generation is detected only once and the chosen
++	 * descriptor is reused on later core bring-ups (e.g. after a system
++	 * error recovery).
++	 */
++	if (core->iris_firmware_desc) {
++		if (ret)
++			*fw_name = core->iris_firmware_desc->fwname;
++		ret = request_firmware(&firmware, *fw_name, core->dev);
++		if (ret)
++			return ERR_PTR(ret);
++		*fw_desc = core->iris_firmware_desc;
++		return firmware;
++	}
++
++	has_both_gens = core->iris_platform_data->firmware_desc_gen2 &&
++		core->iris_platform_data->firmware_desc_gen1;
++
++	if (core->iris_platform_data->firmware_desc_gen2)
++		desc = core->iris_platform_data->firmware_desc_gen2;
++	else if (core->iris_platform_data->firmware_desc_gen1)
++		desc = core->iris_platform_data->firmware_desc_gen1;
++	else
++		return ERR_PTR(-EINVAL);
++
++	if (ret) {
++		/* No firmware-name in DT: select by probing Gen2 then Gen1. */
++		*fw_name = desc->fwname;
++		if (has_both_gens)
++			ret = firmware_request_nowarn(&firmware, *fw_name, core->dev);
++		else
++			ret = request_firmware(&firmware, *fw_name, core->dev);
++		if (ret && has_both_gens) {
++			desc = core->iris_platform_data->firmware_desc_gen1;
++			*fw_name = desc->fwname;
++			ret = request_firmware(&firmware, *fw_name, core->dev);
++		}
++	} else {
++		/* firmware-name given: iris_detect_firmware() picks the gen. */
++		ret = request_firmware(&firmware, *fw_name, core->dev);
++	}
++	if (ret)
++		return ERR_PTR(ret);
++
++	*fw_desc = desc;
++	return firmware;
++}
++
++/*
++ * Detect the firmware generation and publish the descriptor. Run only after
++ * qcom_mdt_load() has succeeded, so the driver commits to a HFI generation
++ * only for a firmware image that has actually been loaded.
++ *
++ * The generation is detected from the loaded image (@data / @size point at the
++ * reserved memory region populated by qcom_mdt_load()) rather than from the
++ * request_firmware() blob: for a split .mdt the latter holds only the ELF
++ * headers, while QC_IMAGE_VERSION_STRING lives in the .bNN data segments.
++ *
++ * The descriptor and firmware data are published exactly once, before any
++ * session exists, so the lockless readers in the ioctl paths never observe a
++ * reassignment. Later bring-ups reuse the already published descriptor.
++ */
++static void iris_detect_firmware(struct iris_core *core, const char *fw_name,
++				 const u8 *data, size_t size,
++				 const struct iris_firmware_desc *desc)
++{
++	if (core->iris_firmware_desc)
++		return;
++
++	/*
++	 * With a DT firmware-name override on a dual-generation platform the
++	 * image on disk decides the generation, so inspect it and switch to the
++	 * Gen1 descriptor when a Gen1 image was loaded.
++	 */
++	if (desc == core->iris_platform_data->firmware_desc_gen2 &&
++	    core->iris_platform_data->firmware_desc_gen1 &&
++	    of_property_present(dev_of_node(core->dev), "firmware-name") &&
++	    !iris_detect_gen2_from_fwdata(data, size)) {
++		dev_info(core->dev, "Gen1 FW detected in %s\n", fw_name);
++		desc = core->iris_platform_data->firmware_desc_gen1;
++	}
++
++	/* Publish iris_firmware_data first, then iris_firmware_desc (the guard). */
++	core->iris_firmware_data = desc->firmware_data;
++	core->iris_firmware_desc = desc;
++}
++
++static int iris_load_fw_to_memory(struct iris_core *core)
++{
++	const struct iris_firmware_desc *desc = NULL;
+ 	const struct firmware *firmware = NULL;
+ 	struct device *dev = core->dev;
+ 	struct resource res;
+ 	phys_addr_t mem_phys;
++	const char *fw_name;
+ 	size_t res_size;
+ 	ssize_t fw_size;
+ 	void *mem_virt;
+ 	int ret;
+ 
+-	if (strlen(fw_name) >= MAX_FIRMWARE_NAME_SIZE - 4)
+-		return -EINVAL;
+-
+ 	ret = of_reserved_mem_region_to_resource(dev->of_node, 0, &res);
+ 	if (ret)
+ 		return ret;
+@@ -38,9 +191,9 @@ static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
+ 	mem_phys = res.start;
+ 	res_size = resource_size(&res);
+ 
+-	ret = request_firmware(&firmware, fw_name, dev);
+-	if (ret)
+-		return ret;
++	firmware = iris_load_firmware(core, &fw_name, &desc);
++	if (IS_ERR(firmware))
++		return PTR_ERR(firmware);
+ 
+ 	fw_size = qcom_mdt_get_size(firmware);
+ 	if (fw_size < 0 || res_size < (size_t)fw_size) {
+@@ -54,9 +207,14 @@ static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
+ 		goto err_release_fw;
+ 	}
+ 
++	memset(mem_virt, 0, res_size);
++
+ 	ret = qcom_mdt_load(dev, firmware, fw_name,
+ 			    IRIS_PAS_ID, mem_virt, mem_phys, res_size, NULL);
+ 
++	if (!ret)
++		iris_detect_firmware(core, fw_name, mem_virt, res_size, desc);
++
+ 	memunmap(mem_virt);
+ err_release_fw:
+ 	release_firmware(firmware);
+@@ -67,18 +225,12 @@ static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
+ int iris_fw_load(struct iris_core *core)
+ {
+ 	const struct tz_cp_config *cp_config;
+-	const char *fwpath = NULL;
+ 	int i, ret;
+ 
+-	ret = of_property_read_string_index(core->dev->of_node, "firmware-name", 0,
+-					    &fwpath);
+-	if (ret)
+-		fwpath = core->iris_firmware_desc->fwname;
+-
+-	ret = iris_load_fw_to_memory(core, fwpath);
++	ret = iris_load_fw_to_memory(core);
+ 	if (ret) {
+-		dev_err(core->dev, "firmware download failed\n");
+-		return -ENOMEM;
++		dev_err(core->dev, "firmware download failed %d\n", ret);
++		return ret;
+ 	}
+ 
+ 	ret = qcom_pas_auth_and_reset(IRIS_PAS_ID);
+@@ -100,7 +252,7 @@ int iris_fw_load(struct iris_core *core)
+ 		}
+ 	}
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ int iris_fw_unload(struct iris_core *core)
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index a9453d539fc23..9748095091461 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -292,11 +292,7 @@ struct iris_firmware_desc {
+ };
+ 
+ struct iris_platform_data {
+-	/*
+-	 * XXX: replace with gen1 / gen2 pointers once we have platforms
+-	 * supporting both firmware kinds.
+-	 */
+-	const struct iris_firmware_desc *firmware_desc;
++	const struct iris_firmware_desc *firmware_desc_gen1, *firmware_desc_gen2;
+ 
+ 	const struct vpu_ops *vpu_ops;
+ 	const struct icc_info *icc_tbl;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+index cfff647cf4403..bbdbf21961d7d 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+@@ -29,6 +29,12 @@ static const struct iris_firmware_desc iris_vpu20_p1_gen1_desc = {
+ 	.fwname = "qcom/vpu/vpu20_p1.mbn",
+ };
+ 
++static const struct iris_firmware_desc iris_vpu20_p1_gen2_s6_desc = {
++	.firmware_data = &iris_hfi_gen2_data,
++	.get_vpu_buffer_size = iris_vpu33_buf_size,
++	.fwname = "qcom/vpu/vpu20_p1_gen2_s6.mbn",
++};
++
+ static const struct iris_firmware_desc iris_vpu20_p4_gen1_desc = {
+ 	.firmware_data = &iris_hfi_gen1_data,
+ 	.get_vpu_buffer_size = iris_vpu_buf_size,
+@@ -72,7 +78,7 @@ static const struct tz_cp_config tz_cp_config_vpu2[] = {
+ };
+ 
+ const struct iris_platform_data milos_data = {
+-	.firmware_desc = &iris_milos_desc,
++	.firmware_desc_gen1 = &iris_milos_desc,
+ 	.vpu_ops = &iris_vpu2_ops,
+ 	.icc_tbl = iris_icc_info_milos,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_milos),
+@@ -100,7 +106,8 @@ const struct iris_platform_data milos_data = {
+ };
+ 
+ const struct iris_platform_data sc7280_data = {
+-	.firmware_desc = &iris_vpu20_p1_gen1_desc,
++	.firmware_desc_gen1 = &iris_vpu20_p1_gen1_desc,
++	.firmware_desc_gen2 = &iris_vpu20_p1_gen2_s6_desc,
+ 	.vpu_ops = &iris_vpu2_ops,
+ 	.icc_tbl = iris_icc_info_vpu2,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu2),
+@@ -129,7 +136,7 @@ const struct iris_platform_data sc7280_data = {
+ };
+ 
+ const struct iris_platform_data sm8250_data = {
+-	.firmware_desc = &iris_vpu20_p4_gen1_desc,
++	.firmware_desc_gen1 = &iris_vpu20_p4_gen1_desc,
+ 	.vpu_ops = &iris_vpu2_ops,
+ 	.icc_tbl = iris_icc_info_vpu2,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu2),
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+index 2c63adbc55791..74626b35d9cb3 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+@@ -90,7 +90,7 @@ static const struct tz_cp_config tz_cp_config_vpu3[] = {
+  * - inst_caps to platform_inst_cap_qcs8300
+  */
+ const struct iris_platform_data qcs8300_data = {
+-	.firmware_desc = &iris_vpu30_p4_s6_gen2_desc,
++	.firmware_desc_gen2 = &iris_vpu30_p4_s6_gen2_desc,
+ 	.vpu_ops = &iris_vpu3_ops,
+ 	.icc_tbl = iris_icc_info_vpu3x,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu3x),
+@@ -119,7 +119,7 @@ const struct iris_platform_data qcs8300_data = {
+ };
+ 
+ const struct iris_platform_data sm8550_data = {
+-	.firmware_desc = &iris_vpu30_p4_gen2_desc,
++	.firmware_desc_gen2 = &iris_vpu30_p4_gen2_desc,
+ 	.vpu_ops = &iris_vpu3_ops,
+ 	.icc_tbl = iris_icc_info_vpu3x,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu3x),
+@@ -154,7 +154,7 @@ const struct iris_platform_data sm8550_data = {
+  * - controller_rst_tbl to sm8650_controller_reset_table
+  */
+ const struct iris_platform_data sm8650_data = {
+-	.firmware_desc = &iris_vpu33_p4_gen2_desc,
++	.firmware_desc_gen2 = &iris_vpu33_p4_gen2_desc,
+ 	.vpu_ops = &iris_vpu33_ops,
+ 	.icc_tbl = iris_icc_info_vpu3x,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu3x),
+@@ -185,7 +185,7 @@ const struct iris_platform_data sm8650_data = {
+ };
+ 
+ const struct iris_platform_data sm8750_data = {
+-	.firmware_desc = &iris_vpu35_p4_gen2_desc,
++	.firmware_desc_gen2 = &iris_vpu35_p4_gen2_desc,
+ 	.vpu_ops = &iris_vpu35_ops,
+ 	.icc_tbl = iris_icc_info_vpu3x,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu3x),
+@@ -220,7 +220,7 @@ const struct iris_platform_data sm8750_data = {
+  * - different num_vpp_pipe
+  */
+ const struct iris_platform_data x1p42100_data = {
+-	.firmware_desc = &iris_vpu30_p1_gen2_desc,
++	.firmware_desc_gen2 = &iris_vpu30_p1_gen2_desc,
+ 	.vpu_ops = &iris_vpu3_ops,
+ 	.icc_tbl = iris_icc_info_vpu3x,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu3x),
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index 5e5d77736d5fa..c4b8b4be339d9 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -306,8 +306,6 @@ static int iris_probe(struct platform_device *pdev)
+ 		return core->irq;
+ 
+ 	core->iris_platform_data = of_device_get_match_data(core->dev);
+-	core->iris_firmware_desc = core->iris_platform_data->firmware_desc;
+-	core->iris_firmware_data = core->iris_firmware_desc->firmware_data;
+ 
+ 	core->ubwc_cfg = qcom_ubwc_config_get_data();
+ 	if (IS_ERR(core->ubwc_cfg))
+@@ -331,8 +329,6 @@ static int iris_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	iris_session_init_caps(core);
+-
+ 	ret = v4l2_device_register(dev, &core->v4l2_dev);
+ 	if (ret)
+ 		goto err_unresv_iova_region;
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index 2dff38053532f..278028df18304 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -9,6 +9,7 @@
+ #include <media/v4l2-mem2mem.h>
+ #include <media/videobuf2-dma-contig.h>
+ 
++#include "iris_ctrls.h"
+ #include "iris_vidc.h"
+ #include "iris_instance.h"
+ #include "iris_vdec.h"
