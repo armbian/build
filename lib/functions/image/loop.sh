@@ -32,7 +32,7 @@ function check_loop_device_internal() {
 			return 1
 		elif [[ "$(stat -c '%t:%T' "${device}")" != "$(stat -c '%t:%T' "/tmp/${device}")" ]]; then
 			display_alert "Removing stale device node" "${device}: $(stat -c '%t:%T' "${device}") != host $(stat -c '%t:%T' "/tmp/${device}")" "warn"
-			run_host_command_logged rm -f "${device}"
+			run_host_command_logged rm -f "${device}" || return 1
 		fi
 	fi
 
