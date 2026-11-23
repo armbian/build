@@ -4,22 +4,30 @@ Date: Sat, 21 Nov 2026 19:10:00 -0300
 Subject: sunxi: dram: a523: validate memory before accepting DRAM timings
 
 Run a wide memory test after A523 DRAM training. Retry with the configured
-alternative parameter sets when the memory check fails. This rejects wrong
-nonzero sizes caused by address aliasing.
+alternative parameter sets when the memory check fails. Return rank-width
+training failure instead of panicking so the retry chain can continue.
 
 Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
 ---
- arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h |  1 +
- arch/arm/mach-sunxi/Kconfig                       | 39 +++++++++++++++
- arch/arm/mach-sunxi/dram_dw_helpers.c             | 61 +++++++++++++++++++++++
- arch/arm/mach-sunxi/dram_sun55i_a523.c            | 60 ++++++++++++++++++----
- 4 files changed, 150 insertions(+), 11 deletions(-)
+ arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h |  3 +-
+ arch/arm/mach-sunxi/Kconfig                       | 39 ++++++++++++
+ arch/arm/mach-sunxi/dram_dw_helpers.c             | 73 +++++++++++++++++++++--
+ arch/arm/mach-sunxi/dram_sun50i_h6.c              |  3 +-
+ arch/arm/mach-sunxi/dram_sun50i_h616.c            |  3 +-
+ arch/arm/mach-sunxi/dram_sun55i_a523.c            | 65 ++++++++++++++++----
+ 6 files changed, 165 insertions(+), 21 deletions(-)
 
 diff --git a/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h b/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h
-index bc9e0d868c5..f41872abf14 100644
+index bc9e0d868c5..39fb7c3bdbd 100644
 --- a/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h
 +++ b/arch/arm/include/asm/arch-sunxi/dram_dw_helpers.h
-@@ -18,5 +18,6 @@ void mctl_auto_detect_rank_width(const struct dram_para *para,
+@@ -13,10 +13,11 @@
+ 
+ bool mctl_core_init(const struct dram_para *para,
+ 		    const struct dram_config *config);
+-void mctl_auto_detect_rank_width(const struct dram_para *para,
++bool mctl_auto_detect_rank_width(const struct dram_para *para,
+ 				 struct dram_config *config);
  void mctl_auto_detect_dram_size(const struct dram_para *para,
  				struct dram_config *config);
  unsigned long mctl_calc_size(const struct dram_config *config);
@@ -77,17 +85,53 @@ index f945d1c54f5..08cd86a3e10 100644
  	prompt "DRAM PHY pin mapping selection"
  	default DRAM_SUNXI_PHY_ADDR_MAP_0
 diff --git a/arch/arm/mach-sunxi/dram_dw_helpers.c b/arch/arm/mach-sunxi/dram_dw_helpers.c
-index d2af2d57fde..59bc20f3f18 100644
+index d2af2d57fde..e6856c0106b 100644
 --- a/arch/arm/mach-sunxi/dram_dw_helpers.c
 +++ b/arch/arm/mach-sunxi/dram_dw_helpers.c
-@@ -8,6 +8,7 @@
+@@ -8,8 +8,9 @@
  
  #include <init.h>
  #include <asm/arch/dram_dw_helpers.h>
 +#include <asm/io.h>
  
- void mctl_auto_detect_rank_width(const struct dram_para *para,
+-void mctl_auto_detect_rank_width(const struct dram_para *para,
++bool mctl_auto_detect_rank_width(const struct dram_para *para,
  				 struct dram_config *config)
+ {
+ 	/* this is minimum size that it's supported */
+@@ -28,27 +29,27 @@ void mctl_auto_detect_rank_width(const struct dram_para *para,
+ 	config->bus_full_width = 1;
+ 	config->ranks = 2;
+ 	if (mctl_core_init(para, config))
+-		return;
++		return true;
+ 
+ 	debug("testing 32-bit width, rank = 1\n");
+ 	config->bus_full_width = 1;
+ 	config->ranks = 1;
+ 	if (mctl_core_init(para, config))
+-		return;
++		return true;
+ 
+ 	debug("testing 16-bit width, rank = 2\n");
+ 	config->bus_full_width = 0;
+ 	config->ranks = 2;
+ 	if (mctl_core_init(para, config))
+-		return;
++		return true;
+ 
+ 	debug("testing 16-bit width, rank = 1\n");
+ 	config->bus_full_width = 0;
+ 	config->ranks = 1;
+ 	if (mctl_core_init(para, config))
+-		return;
++		return true;
+ 
+-	panic("This DRAM setup is currently not supported.\n");
++	return false;
+ }
+ 
+ static void mctl_write_pattern(void)
 @@ -84,6 +85,66 @@ static bool mctl_check_pattern(ulong offset)
  	return true;
  }
@@ -155,11 +199,49 @@ index d2af2d57fde..59bc20f3f18 100644
  void mctl_auto_detect_dram_size(const struct dram_para *para,
  				struct dram_config *config)
  {
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h6.c b/arch/arm/mach-sunxi/dram_sun50i_h6.c
+index ea26e6dd327..bcd56a8b48e 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h6.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h6.c
+@@ -607,7 +607,8 @@ unsigned long sunxi_dram_init(void)
+ 	setbits_le32(prcm + CCU_PRCM_RES_CAL_CTRL, BIT(8));
+ 	clrbits_le32(prcm + CCU_PRCM_OHMS240, 0x3f);
+ 
+-	mctl_auto_detect_rank_width(&para, &config);
++	if (!mctl_auto_detect_rank_width(&para, &config))
++		panic("This DRAM setup is currently not supported.\n");
+ 	mctl_auto_detect_dram_size(&para, &config);
+ 
+ 	mctl_core_init(&para, &config);
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 42a0550e015..7a99cd8a500 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1349,7 +1349,8 @@ unsigned long sunxi_dram_init(void)
+ 	setbits_le32(prcm + CCU_PRCM_RES_CAL_CTRL, BIT(8));
+ 	clrbits_le32(prcm + CCU_PRCM_OHMS240, 0x3f);
+ 
+-	mctl_auto_detect_rank_width(&para, &config);
++	if (!mctl_auto_detect_rank_width(&para, &config))
++		panic("This DRAM setup is currently not supported.\n");
+ 	mctl_auto_detect_dram_size(&para, &config);
+ 
+ 	mctl_core_init(&para, &config);
 diff --git a/arch/arm/mach-sunxi/dram_sun55i_a523.c b/arch/arm/mach-sunxi/dram_sun55i_a523.c
-index 0c6b4b73f2f..1f87e7d147a 100644
+index 0c6b4b73f2f..85131fd4155 100644
 --- a/arch/arm/mach-sunxi/dram_sun55i_a523.c
 +++ b/arch/arm/mach-sunxi/dram_sun55i_a523.c
-@@ -1508,25 +1508,50 @@ static unsigned long dram_init_with_para(const struct dram_para *para,
+@@ -1494,7 +1494,8 @@ static unsigned long dram_init_with_para(const struct dram_para *para,
+ 	setbits_le32(0x03000160, BIT(8));
+ 	clrbits_le32(0x03000168, 0x3f);
+ 
+-	mctl_auto_detect_rank_width(para, &config);
++	if (!mctl_auto_detect_rank_width(para, &config))
++		return 0;
+ 	mctl_auto_detect_dram_size(para, &config);
+ 
+ 	config.clk = CONFIG_DRAM_CLK;
+@@ -1508,25 +1509,50 @@ static unsigned long dram_init_with_para(const struct dram_para *para,
  	return mctl_calc_size(&config);
  }
  
@@ -216,7 +298,7 @@ index 0c6b4b73f2f..1f87e7d147a 100644
  		 */
  		printf("DRAM memory check failed, retrying with alternative parameters\n");
  
-@@ -1534,11 +1559,24 @@ unsigned long sunxi_dram_init(void)
+@@ -1534,14 +1560,29 @@ unsigned long sunxi_dram_init(void)
  		para_alt.tpr6 = CONFIG_DRAM_SUNXI_TPR6_ALT;
  		para_alt.tpr10 = CONFIG_DRAM_SUNXI_TPR10_ALT;
  
@@ -228,21 +310,26 @@ index 0c6b4b73f2f..1f87e7d147a 100644
 +		size = dram_init_and_test(&para_alt,
 +					  CONFIG_DRAM_SUNXI_TPR11_ALT,
 +					  CONFIG_DRAM_SUNXI_TPR12_ALT);
-+		if (size == 0) {
-+#if IS_ENABLED(CONFIG_DRAM_SUNXI_TPR_ORIG_PARAMETERS)
-+			printf("DRAM memory check failed, retrying with original parameters\n");
-+
-+			para_orig = para;
-+			para_orig.tpr6 = CONFIG_DRAM_SUNXI_TPR6_ORIG;
-+			para_orig.tpr10 = CONFIG_DRAM_SUNXI_TPR10_ORIG;
-+
-+			size = dram_init_and_test(&para_orig,
-+							  CONFIG_DRAM_SUNXI_TPR11_ORIG,
-+							  CONFIG_DRAM_SUNXI_TPR12_ORIG);
++	}
 +#endif
-+			if (size == 0)
-+				panic("DRAM unstable with all parameter sets\n");
-+		}
++
++#if IS_ENABLED(CONFIG_DRAM_SUNXI_TPR_ORIG_PARAMETERS)
++	if (size == 0) {
++		printf("DRAM memory check failed, retrying with original parameters\n");
++
++		para_orig = para;
++		para_orig.tpr6 = CONFIG_DRAM_SUNXI_TPR6_ORIG;
++		para_orig.tpr10 = CONFIG_DRAM_SUNXI_TPR10_ORIG;
++
++		size = dram_init_and_test(&para_orig,
++					  CONFIG_DRAM_SUNXI_TPR11_ORIG,
++					  CONFIG_DRAM_SUNXI_TPR12_ORIG);
  	}
  #endif
+ 
++	if (size == 0)
++		panic("DRAM unstable with all parameter sets\n");
++
+ 	sunxi_nsi_init();
+ 	init_something();
  
