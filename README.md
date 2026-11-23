@@ -51,8 +51,8 @@ The entrypoint `compile.sh` sources `lib/single.sh` and dispatches into the fram
 | Path | Contents |
 |:--|:--|
 | `compile.sh` | Build entrypoint; sources `lib/single.sh` and invokes the CLI |
-| `lib/` | Core build framework (Bash functions and Python helpers) |
-| `config/` | Board, family, distribution, kernel and CLI configuration |
+| `lib/` | Core build framework |
+| `config/` | Board, CLI and distribution configuration |
 | `config/boards/` | One file per board; the extension marks its support status (see below) |
 | `config/cli/` | CLI package selections per release |
 | `config/distributions/` | Debian/Ubuntu distribution status and base definitions |
@@ -78,9 +78,9 @@ See [`config/boards/README.md`](config/boards/README.md) for the full list of pe
 
 ## Built With
 
-- **Bash** — build framework in `lib/`, entrypoint `compile.sh`, most of `extensions/`, and the shell portions of board/family configs
-- **Python** — developer and build helpers invoked by the framework
-- **Make / Kbuild** — kernel and U-Boot build systems invoked by the framework; overlay `Makefile`s under `patch/kernel/archive/*/overlay/`
+- **Bash** — build framework in `lib/`, entrypoint `compile.sh`, board/family config files and most of `extensions/`
+- **Python** — developer and build helpers invoked by the framework (e.g. `mkbootarea.py` under `packages/blobs/`)
+- **Make / Kbuild** — kernel and U-Boot build systems invoked by the framework; overlay `Makefile`s under `patch/kernel/archive/*/overlay/`; in-tree C helpers such as `packages/bsp/boardcon-em3588/rtk_hciattach/`
 - **Device Tree Source** (`.dts` / `.dtsi` / `.dtso`) — board and overlay sources carried under `patch/`
 - **GitHub Actions** (YAML) — repository automation under `.github/workflows/`
 - **Patch series** — thousands of `*.patch` files under `patch/` applied to kernel, U-Boot and ATF trees
