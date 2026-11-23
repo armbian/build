@@ -1,0 +1,490 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/5] usb: typec: tcpm: Stop a source from repeating a cable
+ Soft_Reset
+From: Alexey Charkov <alchark@flipper.net>
+Date: Tue, 03 Nov 2026 15:21:22 +0400
+Message-Id: <20261103-husb311-cable-comm-v1-1-6217dabc1a85@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+A soft reset AMS starts with upcoming_state set to SOFT_RESET_SEND and a
+call to tcpm_ams_start(). A sink then enters SOFT_RESET_SEND through
+upcoming_state, which consumes it. A source enters SOFT_RESET_SEND right
+away and leaves upcoming_state set, for the next SRC_READY to replay.
+
+After an SOP Soft_Reset that is harmless, as the Accept handler or a
+hard reset replaces upcoming_state. The SOP' Soft_Reset sent after a
+VCONN swap returns to SRC_READY instead, so a source resets the cable
+plug a second time, outside of any AMS.
+
+Clear upcoming_state when a source enters SOFT_RESET_SEND right away.
+
+Cc: stable@vger.kernel.org
+Fixes: 6bd181ba60e1 ("usb: typec: tcpm: add control message support to sop'")
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261103-husb311-cable-comm-v1-1-6217dabc1a85@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index d721baef5210..c0c54caf99d6 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -1914,6 +1914,8 @@ static int tcpm_ams_start(struct tcpm_port *port, enum tcpm_ams ams)
+ 		} else if (ams == SOFT_RESET_AMS) {
+ 			if (!port->explicit_contract)
+ 				tcpm_set_cc(port, tcpm_rp_cc(port));
++			/* entered right away, so don't leave it to be replayed */
++			port->upcoming_state = INVALID_STATE;
+ 			tcpm_set_state(port, SOFT_RESET_SEND, 0);
+ 			return ret;
+ 		} else if (tcpm_vdm_ams(port)) {
+
+-- 
+2.56.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/5] usb: typec: tcpci: Receive SOP' only while sourcing
+ VCONN
+From: Alexey Charkov <alchark@flipper.net>
+Date: Tue, 03 Nov 2026 15:21:23 +0400
+Message-Id: <20261103-husb311-cable-comm-v1-2-6217dabc1a85@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+A TCPC acks every message type enabled in RECEIVE_DETECT and passes it
+on to TCPM. With SOP' enabled while the partner sources VCONN, the port
+acks the partner's requests to the cable plug and the plug's replies to
+the partner, colliding with the GoodCRC that the plug or the partner
+sends. TCPM also tries to answer these messages as if they were destined
+to it, which for the case of a partner's SOP' Discover Identity on a
+HUSB311 made the partner soft reset the contract every time.
+
+TCPM talks to the cable plug only while it is the VCONN Source, as USB
+PD 3.0 section 6.3.11 requires, so listen for SOP' only then.
+
+Switch SOP' reception off before VCONN goes off and on only once it is
+on. If that fails, warn instead of failing the VCONN switch: SOP'
+reception left off only costs cable discovery, and left on is no worse
+than before this change.
+
+Cc: stable@vger.kernel.org
+Fixes: 3bbb9ba4f660 ("usb: typec: tcpci: add tcpm_transmit_type to tcpm_pd_receive")
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261103-husb311-cable-comm-v1-2-6217dabc1a85@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/tcpci.c | 72 ++++++++++++++++++++++++++++--------------
+ 1 file changed, 49 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/tcpci.c b/drivers/usb/typec/tcpm/tcpci.c
+index 6717ac914c6a..af8db6b4497a 100644
+--- a/drivers/usb/typec/tcpm/tcpci.c
++++ b/drivers/usb/typec/tcpm/tcpci.c
+@@ -41,6 +41,7 @@ struct tcpci {
+ 	unsigned int rx_type_mask;
+ 
+ 	bool controls_vbus;
++	bool vconn_enabled;
+ 
+ 	struct tcpc_dev tcpc;
+ 	struct tcpci_data *data;
+@@ -344,11 +345,45 @@ static void tcpci_set_partner_usb_comm_capable(struct tcpc_dev *tcpc, bool capab
+ 		tcpci->data->set_partner_usb_comm_capable(tcpci, tcpci->data, capable);
+ }
+ 
++static int tcpci_set_pd_rx(struct tcpc_dev *tcpc, bool enable)
++{
++	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
++	unsigned int reg = 0;
++	int ret;
++
++	if (enable) {
++		reg = TCPC_RX_DETECT_SOP | TCPC_RX_DETECT_HARD_RESET;
++		/* Only the VCONN Source talks to the cable plug */
++		if (tcpci->data->cable_comm_capable && tcpci->vconn_enabled)
++			reg |= TCPC_RX_DETECT_SOP1;
++	}
++
++	tcpci->rx_type_mask = reg;
++	ret = regmap_write(tcpci->regmap, TCPC_RX_DETECT, reg);
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
+ static int tcpci_set_vconn(struct tcpc_dev *tcpc, bool enable)
+ {
+ 	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
+ 	int ret;
+ 
++	/*
++	 * Without VCONN from us, SOP' traffic is between the partner and the
++	 * cable plug, and our GoodCRC would collide with theirs. So stop
++	 * receiving SOP' before VCONN goes off, and start only once it is on.
++	 * Neither is worth failing the VCONN switch over.
++	 */
++	if (!enable) {
++		tcpci->vconn_enabled = false;
++		if ((tcpci->rx_type_mask & TCPC_RX_DETECT_SOP1) &&
++		    tcpci_set_pd_rx(tcpc, true) < 0)
++			dev_warn(tcpci->dev, "Failed to disable SOP' reception\n");
++	}
++
+ 	/* Handle vendor set vconn */
+ 	if (tcpci->data->set_vconn) {
+ 		ret = tcpci->data->set_vconn(tcpci, tcpci->data, enable);
+@@ -356,9 +391,20 @@ static int tcpci_set_vconn(struct tcpc_dev *tcpc, bool enable)
+ 			return ret;
+ 	}
+ 
+-	return regmap_update_bits(tcpci->regmap, TCPC_POWER_CTRL,
+-				TCPC_POWER_CTRL_VCONN_ENABLE,
+-				enable ? TCPC_POWER_CTRL_VCONN_ENABLE : 0);
++	ret = regmap_update_bits(tcpci->regmap, TCPC_POWER_CTRL,
++				 TCPC_POWER_CTRL_VCONN_ENABLE,
++				 enable ? TCPC_POWER_CTRL_VCONN_ENABLE : 0);
++	if (ret < 0)
++		return ret;
++
++	if (enable) {
++		tcpci->vconn_enabled = true;
++		if (tcpci->data->cable_comm_capable && tcpci->rx_type_mask &&
++		    tcpci_set_pd_rx(tcpc, true) < 0)
++			dev_warn(tcpci->dev, "Failed to enable SOP' reception\n");
++	}
++
++	return 0;
+ }
+ 
+ static int tcpci_enable_auto_vbus_discharge(struct tcpc_dev *dev, bool enable)
+@@ -478,26 +524,6 @@ static int tcpci_set_roles(struct tcpc_dev *tcpc, bool attached,
+ 	return 0;
+ }
+ 
+-static int tcpci_set_pd_rx(struct tcpc_dev *tcpc, bool enable)
+-{
+-	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
+-	unsigned int reg = 0;
+-	int ret;
+-
+-	if (enable) {
+-		reg = TCPC_RX_DETECT_SOP | TCPC_RX_DETECT_HARD_RESET;
+-		if (tcpci->data->cable_comm_capable)
+-			reg |= TCPC_RX_DETECT_SOP1;
+-	}
+-
+-	tcpci->rx_type_mask = reg;
+-	ret = regmap_write(tcpci->regmap, TCPC_RX_DETECT, reg);
+-	if (ret < 0)
+-		return ret;
+-
+-	return 0;
+-}
+-
+ static int tcpci_get_vbus(struct tcpc_dev *tcpc)
+ {
+ 	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
+
+-- 
+2.56.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 3/5] usb: typec: tcpci_rt1711h: Enable SOP' communication
+From: Alexey Charkov <alchark@flipper.net>
+Date: Tue, 03 Nov 2026 15:21:24 +0400
+Message-Id: <20261103-husb311-cable-comm-v1-3-6217dabc1a85@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+These TCPCs transmit and receive SOP' as the TCPCI specification
+defines, so let TCPM discover e-marked cables through them and learn
+their current and speed ratings.
+
+Tested on a HUSB311 with an e-marked 5A EPR cable.
+
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261103-husb311-cable-comm-v1-3-6217dabc1a85@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/tcpci_rt1711h.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpci_rt1711h.c b/drivers/usb/typec/tcpm/tcpci_rt1711h.c
+index af8356df6b98..232eb721fb3d 100644
+--- a/drivers/usb/typec/tcpm/tcpci_rt1711h.c
++++ b/drivers/usb/typec/tcpm/tcpci_rt1711h.c
+@@ -337,6 +337,7 @@ static int rt1711h_probe(struct i2c_client *client)
+ 	chip->data.set_vbus = rt1711h_set_vbus;
+ 	chip->data.set_vconn = rt1711h_set_vconn;
+ 	chip->data.start_drp_toggling = rt1711h_start_drp_toggling;
++	chip->data.cable_comm_capable = true;
+ 	chip->tcpci = tcpci_register_port(chip->dev, &chip->data);
+ 	if (IS_ERR_OR_NULL(chip->tcpci))
+ 		return PTR_ERR(chip->tcpci);
+
+-- 
+2.56.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 4/5] usb: typec: fusb302: Tell SOP' messages apart from SOP
+From: Alexey Charkov <alchark@flipper.net>
+Date: Tue, 03 Nov 2026 15:21:25 +0400
+Message-Id: <20261103-husb311-cable-comm-v1-4-6217dabc1a85@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The driver sends every message with the SOP ordered set and reports
+every received one as SOP, which leaves TCPM no way to reach the cable
+plug. Start a message with the SOP' ordered set when TCPM asks for it,
+and report a received message as SOP' when its RX FIFO token says so.
+
+SOP' is Sync-1, Sync-1, Sync-3, Sync-3 in USB PD. The Sync-3 TX token
+and the RX FIFO token codes are from the token tables of the FUSB302B
+datasheet.
+
+Nothing changes yet: TCPM asks for SOP' only from a port that claims
+cable communication, and the chip drops SOP' packets until ENSOP1 is
+set.
+
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261103-husb311-cable-comm-v1-4-6217dabc1a85@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c     | 26 ++++++++++++++++++++------
+ drivers/usb/typec/tcpm/fusb302_reg.h | 10 ++++++++++
+ 2 files changed, 30 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 3319f6a2b0c9..8b3a2e095ef8 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -961,7 +961,20 @@ static int tcpm_start_toggling(struct tcpc_dev *dev,
+ 	return ret;
+ }
+ 
++/* K-codes of the ordered set that starts each kind of packet */
++static const u8 fusb302_sop_tokens[][4] = {
++	[TCPC_TX_SOP] = {
++		FUSB302_TKN_SYNC1, FUSB302_TKN_SYNC1,
++		FUSB302_TKN_SYNC1, FUSB302_TKN_SYNC2,
++	},
++	[TCPC_TX_SOP_PRIME] = {
++		FUSB302_TKN_SYNC1, FUSB302_TKN_SYNC1,
++		FUSB302_TKN_SYNC3, FUSB302_TKN_SYNC3,
++	},
++};
++
+ static int fusb302_pd_send_message(struct fusb302_chip *chip,
++				   enum tcpm_transmit_type type,
+ 				   const struct pd_message *msg)
+ {
+ 	int ret = 0;
+@@ -969,11 +982,9 @@ static int fusb302_pd_send_message(struct fusb302_chip *chip,
+ 	u8 pos = 0;
+ 	int len;
+ 
+-	/* SOP tokens */
+-	buf[pos++] = FUSB302_TKN_SYNC1;
+-	buf[pos++] = FUSB302_TKN_SYNC1;
+-	buf[pos++] = FUSB302_TKN_SYNC1;
+-	buf[pos++] = FUSB302_TKN_SYNC2;
++	memcpy(&buf[pos], fusb302_sop_tokens[type],
++	       sizeof(fusb302_sop_tokens[type]));
++	pos += sizeof(fusb302_sop_tokens[type]);
+ 
+ 	len = pd_header_cnt_le(msg->header) * 4;
+ 	/* plug 2 for header */
+@@ -1037,6 +1048,7 @@ static int tcpm_pd_transmit(struct tcpc_dev *dev, enum tcpm_transmit_type type,
+ 	mutex_lock(&chip->lock);
+ 	switch (type) {
+ 	case TCPC_TX_SOP:
++	case TCPC_TX_SOP_PRIME:
+ 		/* nRetryCount 3 in P2.0 spec, whereas 2 in PD3.0 spec */
+ 		ret = fusb302_enable_tx_auto_retries(chip, negotiated_rev > PD_REV20 ?
+ 						     FUSB_REG_CONTROL3_N_RETRIES_2 :
+@@ -1044,7 +1056,7 @@ static int tcpm_pd_transmit(struct tcpc_dev *dev, enum tcpm_transmit_type type,
+ 		if (ret < 0)
+ 			fusb302_log(chip, "Cannot update retry count ret=%d", ret);
+ 
+-		ret = fusb302_pd_send_message(chip, msg);
++		ret = fusb302_pd_send_message(chip, type, msg);
+ 		if (ret < 0)
+ 			fusb302_log(chip,
+ 				    "cannot send PD message, ret=%d", ret);
+@@ -1475,6 +1487,8 @@ static int fusb302_pd_read_message(struct fusb302_chip *chip,
+ 	 */
+ 	if ((!len) && (pd_header_type_le(msg->header) == PD_CTRL_GOOD_CRC))
+ 		tcpm_pd_transmit_complete(chip->tcpm_port, TCPC_TX_SUCCESS);
++	else if ((token & FUSB302_RX_TKN_MASK) == FUSB302_RX_TKN_SOP1)
++		tcpm_pd_receive(chip->tcpm_port, msg, TCPC_TX_SOP_PRIME);
+ 	else
+ 		tcpm_pd_receive(chip->tcpm_port, msg, TCPC_TX_SOP);
+ 
+diff --git a/drivers/usb/typec/tcpm/fusb302_reg.h b/drivers/usb/typec/tcpm/fusb302_reg.h
+index edc0e4b0f1e6..c98a502bfbfc 100644
+--- a/drivers/usb/typec/tcpm/fusb302_reg.h
++++ b/drivers/usb/typec/tcpm/fusb302_reg.h
+@@ -174,4 +174,14 @@ enum fusb302_txfifo_tokens {
+ 	FUSB302_TKN_TXOFF = 0xFE,
+ };
+ 
++/* Tokens starting each packet in the FUSB302 RX FIFO, valid under the mask */
++#define FUSB302_RX_TKN_MASK			GENMASK(7, 5)
++enum fusb302_rxfifo_tokens {
++	FUSB302_RX_TKN_SOP2DB = 0x60,
++	FUSB302_RX_TKN_SOP1DB = 0x80,
++	FUSB302_RX_TKN_SOP2 = 0xA0,
++	FUSB302_RX_TKN_SOP1 = 0xC0,
++	FUSB302_RX_TKN_SOP = 0xE0,
++};
++
+ #endif
+
+-- 
+2.56.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 5/5] usb: typec: fusb302: Enable SOP' communication
+From: Alexey Charkov <alchark@flipper.net>
+Date: Tue, 03 Nov 2026 15:21:26 +0400
+Message-Id: <20261103-husb311-cable-comm-v1-5-6217dabc1a85@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Let TCPM discover e-marked cables through the FUSB302 and learn their
+current and speed ratings.
+
+Receive SOP' only while sourcing VCONN with PD reception on. Only the
+VCONN Source talks to the cable plug, and acking the traffic between the
+partner and the plug would collide with their own GoodCRC.
+
+Switch SOP' reception off before VCONN or PD reception goes off and on
+only once both are on. If that fails, log it instead of failing the
+switch TCPM asked for: SOP' reception left off only costs cable
+discovery, and left on with VCONN off makes the port ack the partner's
+traffic with the cable plug until PD reception goes off, which beats
+keeping VCONN or PD reception in a state TCPM did not request.
+
+Tested on a FUSB302B as source with an e-marked 5A EPR cable. The
+datasheet documents the auto-GoodCRC header bits for SOP only, but the
+cable plug took the chip's acks to its SOP' replies without retrying.
+
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20261103-husb311-cable-comm-v1-5-6217dabc1a85@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 8b3a2e095ef8..10f2dabf3318 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -725,6 +725,27 @@ static int tcpm_set_polarity(struct tcpc_dev *dev,
+ 	return 0;
+ }
+ 
++/*
++ * Without VCONN from us, SOP' traffic is between the partner and the cable
++ * plug, and our GoodCRC would collide with theirs. So stop receiving SOP'
++ * before VCONN or PD reception goes off, and start only once both are on.
++ * Neither is worth failing the VCONN or PD reception switch over.
++ */
++static void fusb302_pd_set_sop_prime(struct fusb302_chip *chip, bool on)
++{
++	int ret;
++
++	if (on)
++		ret = fusb302_i2c_set_bits(chip, FUSB_REG_CONTROL1,
++					   FUSB_REG_CONTROL1_ENSOP1);
++	else
++		ret = fusb302_i2c_clear_bits(chip, FUSB_REG_CONTROL1,
++					     FUSB_REG_CONTROL1_ENSOP1);
++	if (ret < 0)
++		fusb302_log(chip, "cannot turn SOP' rx %s, ret=%d",
++			    str_on_off(on), ret);
++}
++
+ static int tcpm_set_vconn(struct tcpc_dev *dev, bool on)
+ {
+ 	struct fusb302_chip *chip = container_of(dev, struct fusb302_chip,
+@@ -743,6 +764,8 @@ static int tcpm_set_vconn(struct tcpc_dev *dev, bool on)
+ 		switches0_data = (chip->cc_polarity == TYPEC_POLARITY_CC1) ?
+ 				 FUSB_REG_SWITCHES0_VCONN_CC2 :
+ 				 FUSB_REG_SWITCHES0_VCONN_CC1;
++	} else {
++		fusb302_pd_set_sop_prime(chip, false);
+ 	}
+ 	ret = fusb302_i2c_mask_write(chip, FUSB_REG_SWITCHES0,
+ 				     switches0_mask, switches0_data);
+@@ -750,6 +773,9 @@ static int tcpm_set_vconn(struct tcpc_dev *dev, bool on)
+ 		goto done;
+ 	chip->vconn_on = on;
+ 	fusb302_log(chip, "vconn := %s", str_on_off(on));
++
++	if (on && chip->pd_rx_on)
++		fusb302_pd_set_sop_prime(chip, true);
+ done:
+ 	mutex_unlock(&chip->lock);
+ 
+@@ -848,6 +874,8 @@ static int tcpm_set_pd_rx(struct tcpc_dev *dev, bool on)
+ 		goto done;
+ 	}
+ 
++	if (!on)
++		fusb302_pd_set_sop_prime(chip, false);
+ 	ret = fusb302_pd_rx_flush(chip);
+ 	if (ret < 0) {
+ 		fusb302_log(chip, "cannot flush pd rx buffer, ret=%d", ret);
+@@ -873,6 +901,9 @@ static int tcpm_set_pd_rx(struct tcpc_dev *dev, bool on)
+ 
+ 	chip->pd_rx_on = on;
+ 	fusb302_log(chip, "pd := %s", str_on_off(on));
++
++	if (on && chip->vconn_on)
++		fusb302_pd_set_sop_prime(chip, true);
+ done:
+ 	mutex_unlock(&chip->lock);
+ 
+@@ -1136,6 +1167,11 @@ static void fusb302_bc_lvl_handler_work(struct work_struct *work)
+ 	mutex_unlock(&chip->lock);
+ }
+ 
++static bool tcpm_cable_comm_capable(struct tcpc_dev *dev)
++{
++	return true;
++}
++
+ static void init_tcpc_dev(struct tcpc_dev *fusb302_tcpc_dev)
+ {
+ 	fusb302_tcpc_dev->init = tcpm_init;
+@@ -1150,6 +1186,7 @@ static void init_tcpc_dev(struct tcpc_dev *fusb302_tcpc_dev)
+ 	fusb302_tcpc_dev->set_roles = tcpm_set_roles;
+ 	fusb302_tcpc_dev->start_toggling = tcpm_start_toggling;
+ 	fusb302_tcpc_dev->pd_transmit = tcpm_pd_transmit;
++	fusb302_tcpc_dev->cable_comm_capable = tcpm_cable_comm_capable;
+ }
+ 
+ static const char * const cc_polarity_name[] = {
+
+-- 
+2.56.0
+

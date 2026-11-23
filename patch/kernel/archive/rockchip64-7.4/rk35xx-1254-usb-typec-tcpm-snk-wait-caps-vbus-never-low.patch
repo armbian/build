@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Mon, 2 Mar 2026 22:37:40 +0100
+Subject: [PATCH] usb: typec: tcpm: Also use SNK_WAIT_CAPABILITIES_TIMEOUT for
+ vbus_never_low
+
+Most USB-C ports on Linux devices are self-powered (i.e. because the
+device offering a port has a battery or is powered from Mains using
+a dedicated power-supply). If a port instead is the only power source
+for a device things become fragile. SNK_WAIT_CAPABILITIES_TIMEOUT
+has been introduced to better handle these devices as it tries to
+avoid sending a hard reset. This further improves things by also
+trying to avoid the soft reset as that is simply escalated into a
+hard reset with some USB PD sources.
+
+This (hopefully, testing is still ongoing) fixes the following issue,
+which sometimes happens with the ROCK 5B from the Collabora LAVA
+lab (used for the KernelCI project):
+
+[   16.330582] typec_fusb302 4-0022: pending state change SNK_WAIT_CAPABILITIES -> SNK_SOFT_RESET @ 310 ms [rev2 NONE_AMS]
+[   16.641651] typec_fusb302 4-0022: state change SNK_WAIT_CAPABILITIES -> SNK_SOFT_RESET [delayed 310 ms]
+[   16.642488] typec_fusb302 4-0022: AMS SOFT_RESET_AMS start
+[   16.642968] typec_fusb302 4-0022: state change SNK_SOFT_RESET -> AMS_START [rev2 SOFT_RESET_AMS]
+[   16.643741] typec_fusb302 4-0022: state change AMS_START -> SOFT_RESET_SEND [rev2 SOFT_RESET_AMS]
+[   16.644525] typec_fusb302 4-0022: PD TX, header: 0x4d
+[   16.647659] typec_fusb302 4-0022: sending PD message header: 4d
+[   16.648190] typec_fusb302 4-0022: sending PD message len: 0
+[   16.650521] typec_fusb302 4-0022: IRQ: 0x41, a: 0x00, b: 0x00, status0: 0x83
+[   16.651154] typec_fusb302 4-0022: IRQ: BC_LVL, handler pending
+[   16.653494] typec_fusb302 4-0022: IRQ: 0x41, a: 0x00, b: 0x00, status0: 0x83
+[   16.654120] typec_fusb302 4-0022: IRQ: BC_LVL, handler pending
+[   16.656454] typec_fusb302 4-0022: IRQ: 0x41, a: 0x10, b: 0x00, status0: 0x83
+[   16.657078] typec_fusb302 4-0022: IRQ: BC_LVL, handler pending
+[   16.657612] typec_fusb302 4-0022: IRQ: PD retry failed
+[   16.658073] typec_fusb302 4-0022: PD TX complete, status: 2
+[   16.658583] typec_fusb302 4-0022: state change SOFT_RESET_SEND -> HARD_RESET_SEND [rev2 SOFT_RESET_AMS]
+[   16.659411] typec_fusb302 4-0022: AMS SOFT_RESET_AMS finished
+[   16.659920] typec_fusb302 4-0022: Initiating hard-reset, which might result in machine power-loss.
+[   16.660705] typec_fusb302 4-0022: AMS HARD_RESET start
+[   16.661162] typec_fusb302 4-0022: PD TX, type: 0x5
+[   16.664334] typec_fusb302 4-0022: IRQ: 0x41, a: 0x08, b: 0x00, status0: 0x83
+[   16.664965] typec_fusb302 4-0022: IRQ: BC_LVL, handler pending
+[   16.665514] typec_fusb302 4-0022: IRQ: PD hardreset sent
+[   16.666783] typec_fusb302 4-0022: PD TX complete, status: 0
+[   16.667305] typec_fusb302 4-0022: state change HARD_RESET_SEND -> HARD_RESET_START [rev2 HARD_RESET]
+[   16.672730] typec_fusb302 4-0022: pd := off
+[   16.673103] typec_fusb302 4-0022: state change HARD_RESET_START -> SNK_HARD_RESET_SINK_OFF [rev2 HARD_RESET]
+[   16.673972] typec_fusb302 4-0022: vconn:=0
+[   16.674331] typec_fusb302 4-0022: vconn is already off
+[   16.674787] typec_fusb302 4-0022: Requesting mux state 1, usb-role 2, orientation 1
+--- board reset ---
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 26 +++++++++++++++++++-------
+ 1 file changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index c7687ffae70b3..2d6a9e33487b2 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -5858,20 +5858,25 @@ static void run_state_machine(struct tcpm_port *port)
+ 			tcpm_set_state(port, SNK_READY, 0);
+ 			break;
+ 		}
++
+ 		/*
++		 * For non self-powered devices, first of all try explicitly
++		 * requesting the source capabilities for better support of
++		 * of non-compliant PD sources (a comment with more details is
++		 * in the SNK_WAIT_CAPABILITIES_TIMEOUT state).
++		 *
+ 		 * If VBUS has never been low, and we time out waiting
+ 		 * for source cap, try a soft reset first, in case we
+ 		 * were already in a stable contract before this boot.
+ 		 * Do this only once.
+ 		 */
+-		if (port->vbus_never_low) {
++		if (!port->self_powered) {
++			upcoming_state = SNK_WAIT_CAPABILITIES_TIMEOUT;
++		} else if (port->vbus_never_low) {
+ 			port->vbus_never_low = false;
+ 			upcoming_state = SNK_SOFT_RESET;
+ 		} else {
+-			if (!port->self_powered)
+-				upcoming_state = SNK_WAIT_CAPABILITIES_TIMEOUT;
+-			else
+-				upcoming_state = hard_reset_state(port);
++			upcoming_state = hard_reset_state(port);
+ 		}
+ 
+ 		tcpm_set_state(port, upcoming_state,
+@@ -5893,10 +5898,17 @@ static void run_state_machine(struct tcpm_port *port)
+ 		 * and handled by all USB PD source and dual role devices
+ 		 * according to the specification.
+ 		 */
++		if (port->vbus_never_low) {
++			port->vbus_never_low = false;
++			upcoming_state = SNK_SOFT_RESET;
++		} else {
++			upcoming_state = hard_reset_state(port);
++		}
++
+ 		if (tcpm_pd_send_control(port, PD_CTRL_GET_SOURCE_CAP, TCPC_TX_SOP))
+-			tcpm_set_state_cond(port, hard_reset_state(port), 0);
++			tcpm_set_state_cond(port, upcoming_state, 0);
+ 		else
+-			tcpm_set_state(port, hard_reset_state(port),
++			tcpm_set_state(port, upcoming_state,
+ 				       port->timings.sink_wait_cap_time);
+ 		break;
+ 	case SNK_NEGOTIATE_CAPABILITIES:
