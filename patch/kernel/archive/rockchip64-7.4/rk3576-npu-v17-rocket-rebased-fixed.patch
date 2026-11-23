@@ -1,284 +1,4 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Igor Paunovic <royalnet026@gmail.com>
-Date: Sat, 14 Nov 2026 16:05:18 +1300
-Subject: accel/rocket: request the core clocks by name
-
-rocket_core_init() never sets the .id of the clocks, so all four are
-requested with a NULL name and each one resolves to the first clock in the
-DT, aclk.
-
-As a result aclk is taken and enabled four times, while hclk, pclk and the
-NPU compute clock are never enabled by the driver. It only works today
-because the power-domain driver enables those clocks for it.
-
-Give the four clocks their names, in the order the binding defines: aclk,
-hclk, npu and pclk.
-
-With that, a DT that lacks any of these clock-names fails probe with
--ENOENT instead of running on the wrong clock.
-
-Fixes: ed98261b4168 ("accel/rocket: Add a new driver for Rockchip's NPU")
-Signed-off-by: Igor Paunovic <royalnet026@gmail.com>
-Tested-by: Sidong Yang <sidong.yang@furiosa.ai>
-Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # NanoPC-T6 LTS, NanoPC-T6 Plus
-Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
-Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
-[Jiaxing: shortened the commit message, named the clock indices]
-Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
-Reviewed-by: Heiko Stuebner <heiko@sntech.de>
-Link: https://patch.msgid.link/13f16cecfc7082c865b4d9308f0ccb50bee57500.1794615323.git.gahing@gahingwoo.com
-Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
----
- drivers/accel/rocket/rocket_core.c |  4 ++++
- drivers/accel/rocket/rocket_core.h | 10 +++++++++-
- 2 files changed, 13 insertions(+), 1 deletion(-)
-
-diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
-index 111111111111..222222222222 100644
---- a/drivers/accel/rocket/rocket_core.c
-+++ b/drivers/accel/rocket/rocket_core.c
-@@ -28,6 +28,10 @@ int rocket_core_init(struct rocket_core *core)
- 	if (err)
- 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
- 
-+	core->clks[ROCKET_CLK_ACLK].id = "aclk";
-+	core->clks[ROCKET_CLK_HCLK].id = "hclk";
-+	core->clks[ROCKET_CLK_NPU].id = "npu";
-+	core->clks[ROCKET_CLK_PCLK].id = "pclk";
- 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
- 	if (err)
- 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
-diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 111111111111..222222222222 100644
---- a/drivers/accel/rocket/rocket_core.h
-+++ b/drivers/accel/rocket/rocket_core.h
-@@ -27,6 +27,14 @@
- #define rocket_core_writel(core, reg, value) \
- 	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
- 
-+enum rocket_clk {
-+	ROCKET_CLK_ACLK,
-+	ROCKET_CLK_HCLK,
-+	ROCKET_CLK_NPU,
-+	ROCKET_CLK_PCLK,
-+	ROCKET_CLK_MAX,
-+};
-+
- struct rocket_core {
- 	struct device *dev;
- 	struct rocket_device *rdev;
-@@ -36,7 +44,7 @@ struct rocket_core {
- 	void __iomem *pc_iomem;
- 	void __iomem *cna_iomem;
- 	void __iomem *core_iomem;
--	struct clk_bulk_data clks[4];
-+	struct clk_bulk_data clks[ROCKET_CLK_MAX];
- 	struct reset_control_bulk_data resets[2];
- 
- 	struct iommu_group *iommu_group;
--- 
-Armbian
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Sat, 14 Nov 2026 16:05:19 +1300
-Subject: accel/rocket: take the completion register writes under job_lock
-
-The IRQ handler writes OPERATION_ENABLE and INTERRUPT_CLEAR before it
-takes job_lock, while rocket_job_hw_submit() sets OPERATION_ENABLE to 1
-under that lock.
-
-If the two run at the same time, the 0 written by the IRQ handler can
-overwrite the 1 written for a new task and stop a task that has just
-started.
-
-Move both writes into the existing scoped_guard(), so they are under the
-same lock as the submit.
-
-Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
-Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
-Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
-Reviewed-by: Heiko Stuebner <heiko@sntech.de>
-Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
-Link: https://patch.msgid.link/1adbff3238fd312e23daab83ed936ad13d7f223f.1794615323.git.gahing@gahingwoo.com
-Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
----
- drivers/accel/rocket/rocket_job.c | 12 +++++++---
- 1 file changed, 9 insertions(+), 3 deletions(-)
-
-diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 111111111111..222222222222 100644
---- a/drivers/accel/rocket/rocket_job.c
-+++ b/drivers/accel/rocket/rocket_job.c
-@@ -369,10 +369,15 @@ static void rocket_job_handle_irq(struct rocket_core *core)
- {
- 	pm_runtime_mark_last_busy(core->dev);
- 
--	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
--	rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
-+	scoped_guard(mutex, &core->job_lock) {
-+		/*
-+		 * Stopping the block belongs under the lock. hw_submit() writes
-+		 * OPERATION_ENABLE too, and outside the lock this zero can land
-+		 * after that one and stop a task that has only just started.
-+		 */
-+		rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
-+		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
- 
--	scoped_guard(mutex, &core->job_lock)
- 		if (core->in_flight_job) {
- 			if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
- 				rocket_job_hw_submit(core, core->in_flight_job);
-@@ -384,6 +389,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
- 			pm_runtime_put_autosuspend(core->dev);
- 			core->in_flight_job = NULL;
- 		}
-+	}
- }
- 
- static void
--- 
-Armbian
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Sat, 14 Nov 2026 16:05:20 +1300
-Subject: accel/rocket: wait for a running IRQ handler before resetting a core
-
-drm_sched_stop() does not wait for a threaded IRQ handler that is already
-running, so call synchronize_irq() after it to make sure the handler has
-finished before the reset.
-
-Before synchronize_irq(), mask the interrupt and clear the raw status, so
-that the NPU core cannot report a completion afterwards.
-
-Do this under job_lock, because the submit path sets the interrupt mask
-under the same lock.
-
-Only touch these registers when the device is powered: check with
-pm_runtime_get_if_active(), so that a register access with the power
-domain off cannot raise an SError.
-
-Suggested-by: Igor Paunovic <royalnet026@gmail.com>
-Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
-Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
-Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
-Reviewed-by: Heiko Stuebner <heiko@sntech.de>
-Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
-Link: https://patch.msgid.link/18667b2afdcaae217fa1038f5348ab23ed756bdc.1794615323.git.gahing@gahingwoo.com
-Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
----
- drivers/accel/rocket/rocket_job.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
-
-diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 111111111111..222222222222 100644
---- a/drivers/accel/rocket/rocket_job.c
-+++ b/drivers/accel/rocket/rocket_job.c
-@@ -400,6 +400,16 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
- 
- 	drm_sched_stop(&core->sched, bad);
- 
-+	scoped_guard(mutex, &core->job_lock) {
-+		if (pm_runtime_get_if_active(core->dev) > 0) {
-+			rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
-+			rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
-+			pm_runtime_put_autosuspend(core->dev);
-+		}
-+	}
-+
-+	synchronize_irq(core->irq);
-+
- 	/*
- 	 * Remaining interrupts have been handled, but we might still have
- 	 * stuck jobs. Let's make sure the PM counters stay balanced by
--- 
-Armbian
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jiaxing Hu <gahing@gahingwoo.com>
-Date: Sat, 14 Nov 2026 16:05:21 +1300
-Subject: accel/rocket: let the core suspend after a reset
-
-The reset path drops the runtime PM reference with
-pm_runtime_put_noidle(), which does not let the device suspend, so the
-power domain is never switched off and on again.
-
-On the RK3576, powering the domain on resets the NPU bus interface. If
-that does not happen after a reset, the IOMMU may not respond and the
-next job after a timeout fails.
-
-Use pm_runtime_put_autosuspend() instead, so the reset path handles
-runtime PM the same way as a normal job completion.
-
-Also drop the runtime PM reference after rocket_core_reset(), so the NPU
-core stays powered during the reset.
-
-The earlier test on the ROCK 4D was done on the v15 code: the job after a
-timeout went from all 128 channels wrong to all 128 correct.
-
-Repeated resets were triggered with a 2 ms job timeout.
-
-v15 (put, then reset): tested twice; both times the board hung within the
-same second as the first batch of job timeouts, with nothing printed.
-
-v16 (reset, then put): tested four times; the board never hung.
-
-So moving pm_runtime_put_autosuspend() after rocket_core_reset() avoids
-the board hanging during a reset.
-
-Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
-Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
-Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
-Reviewed-by: Heiko Stuebner <heiko@sntech.de>
-Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
-Link: https://patch.msgid.link/2afd051e37b8dd4f10e347a3537b0086973d554c.1794615323.git.gahing@gahingwoo.com
-Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
----
- drivers/accel/rocket/rocket_job.c | 10 +++++++---
- 1 file changed, 7 insertions(+), 3 deletions(-)
-
-diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 111111111111..222222222222 100644
---- a/drivers/accel/rocket/rocket_job.c
-+++ b/drivers/accel/rocket/rocket_job.c
-@@ -395,6 +395,8 @@ static void rocket_job_handle_irq(struct rocket_core *core)
- static void
- rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
- {
-+	bool put_job_ref;
-+
- 	if (!atomic_read(&core->reset.pending))
- 		return;
- 
-@@ -413,11 +415,10 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
- 	/*
- 	 * Remaining interrupts have been handled, but we might still have
- 	 * stuck jobs. Let's make sure the PM counters stay balanced by
--	 * manually calling pm_runtime_put_noidle().
-+	 * dropping the job's reference once the core has been reset.
- 	 */
- 	scoped_guard(mutex, &core->job_lock) {
--		if (core->in_flight_job)
--			pm_runtime_put_noidle(core->dev);
-+		put_job_ref = core->in_flight_job;
- 
- 		iommu_detach_group(NULL, core->iommu_group);
- 
-@@ -427,6 +428,9 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
- 	/* Proceed with reset now. */
- 	rocket_core_reset(core);
- 
-+	if (put_job_ref)
-+		pm_runtime_put_autosuspend(core->dev);
-+
- 	/* NPU has been reset, we can clear the reset pending bit. */
- 	atomic_set(&core->reset.pending, 0);
- 
--- 
-Armbian
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
 Date: Sat, 14 Nov 2026 16:05:22 +1300
 Subject: accel/rocket: factor the completion tail out of the IRQ handler
@@ -292,16 +12,17 @@ Reviewed-by: Igor Paunovic <royalnet026@gmail.com>
 Reviewed-by: Heiko Stuebner <heiko@sntech.de>
 Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/d3edc2ee1e2f6e431f3a22fad4466a1a59e053b6.1794615323.git.gahing@gahingwoo.com
+[rpardini: rebased onto v7.4-rc4: use core->iommu_group in rocket_job_next_locked(), after upstream 5c4aeafcac8c ("accel/rocket: Fix the extra iommu_group_get call in rocket_job_handle_irq")]
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- drivers/accel/rocket/rocket_job.c | 30 ++++++----
+ drivers/accel/rocket/rocket_job.c | 30 +++++++++++++++++++-----------
  1 file changed, 19 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 111111111111..222222222222 100644
+index 454d465a39e3..baf0d0c0b9d8 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
-@@ -365,6 +365,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+@@ -369,6 +369,24 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
  	return ERR_PTR(ret);
  }
  
@@ -317,7 +38,7 @@ index 111111111111..222222222222 100644
 +		return;
 +	}
 +
-+	iommu_detach_group(NULL, iommu_group_get(core->dev));
++	iommu_detach_group(NULL, core->iommu_group);
 +	dma_fence_signal(core->in_flight_job->done_fence);
 +	pm_runtime_put_autosuspend(core->dev);
 +	core->in_flight_job = NULL;
@@ -326,7 +47,7 @@ index 111111111111..222222222222 100644
  static void rocket_job_handle_irq(struct rocket_core *core)
  {
  	pm_runtime_mark_last_busy(core->dev);
-@@ -378,17 +396,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+@@ -382,17 +400,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
  		rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
  		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
  
@@ -336,7 +57,7 @@ index 111111111111..222222222222 100644
 -				return;
 -			}
 -
--			iommu_detach_group(NULL, iommu_group_get(core->dev));
+-			iommu_detach_group(NULL, core->iommu_group);
 -			dma_fence_signal(core->in_flight_job->done_fence);
 -			pm_runtime_put_autosuspend(core->dev);
 -			core->in_flight_job = NULL;
@@ -345,8 +66,6 @@ index 111111111111..222222222222 100644
  	}
  }
  
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -369,11 +88,11 @@ Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/381d2bc99486ca312e1d02f482eccd37def29831.1794615323.git.gahing@gahingwoo.com
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml | 40 +++++++++-
+ .../npu/rockchip,rk3588-rknn-core.yaml        | 40 ++++++++++++++++++-
  1 file changed, 38 insertions(+), 2 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
-index 111111111111..222222222222 100644
+index caca2a4903cd..2eb9337819e6 100644
 --- a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
 +++ b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
 @@ -21,6 +21,7 @@ properties:
@@ -454,8 +173,6 @@ index 111111111111..222222222222 100644
  
  additionalProperties: false
  
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -480,11 +197,11 @@ Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/f2e91cd17bab66e4fd8901704c89ce0d717cff18.1794615323.git.gahing@gahingwoo.com
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml | 26 ++++++++++
+ .../bindings/iommu/rockchip,iommu.yaml        | 26 +++++++++++++++++++
  1 file changed, 26 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
-index 111111111111..222222222222 100644
+index 6ce41d11ff5e..e40c9ac2b463 100644
 --- a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
 +++ b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
 @@ -26,6 +26,7 @@ properties:
@@ -542,8 +259,6 @@ index 111111111111..222222222222 100644
  additionalProperties: false
  
  examples:
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -564,15 +279,16 @@ A device without match data fails before any resource is allocated.
 Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/fcdd7117d3d7fe99ea1658c39b6d1a05428823f4.1794615323.git.gahing@gahingwoo.com
+[rpardini: rebased onto v7.4-rc4: keep upstream 97e48904cbdb ("accel/rocket: number the cores by devicetree position, not bind order") core index in rocket_probe()]
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- drivers/accel/rocket/rocket_core.c |  8 ++---
- drivers/accel/rocket/rocket_core.h |  6 ++++
- drivers/accel/rocket/rocket_drv.c  | 18 ++++++++--
+ drivers/accel/rocket/rocket_core.c |  8 ++++----
+ drivers/accel/rocket/rocket_core.h |  6 ++++++
+ drivers/accel/rocket/rocket_drv.c  | 18 +++++++++++++++---
  3 files changed, 25 insertions(+), 7 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
-index 111111111111..222222222222 100644
+index d4c06ad4ba95..6071ced660ec 100644
 --- a/drivers/accel/rocket/rocket_core.c
 +++ b/drivers/accel/rocket/rocket_core.c
 @@ -23,7 +23,7 @@ int rocket_core_init(struct rocket_core *core)
@@ -606,7 +322,7 @@ index 111111111111..222222222222 100644
 +	reset_control_bulk_deassert(core->soc->num_resets, core->resets);
  }
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 111111111111..222222222222 100644
+index 0b7e82ae7ef2..0b88aaf4dd75 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
 @@ -35,9 +35,15 @@ enum rocket_clk {
@@ -622,18 +338,19 @@ index 111111111111..222222222222 100644
  	struct device *dev;
  	struct rocket_device *rdev;
 +	const struct rocket_soc_data *soc;
- 	unsigned int index;
- 
- 	int irq;
+ 	/*
+ 	 * Hardware number of the core: its position among the core nodes in
+ 	 * the devicetree.
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 111111111111..222222222222 100644
+index e62a20edeca7..68263b0768f5 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
-@@ -159,8 +159,14 @@ static const struct drm_driver rocket_drm_driver = {
+@@ -174,9 +174,15 @@ static int rocket_core_hw_index(struct device *dev)
  
  static int rocket_probe(struct platform_device *pdev)
  {
 +	const struct rocket_soc_data *soc = of_device_get_match_data(&pdev->dev);
+ 	int index = rocket_core_hw_index(&pdev->dev);
  	int ret;
  
 +	if (!soc) {
@@ -641,18 +358,18 @@ index 111111111111..222222222222 100644
 +		return -ENODEV;
 +	}
 +
- 	if (rdev == NULL) {
- 		/* First core probing, initialize DRM device. */
- 		rdev = rocket_device_init(drm_dev, &rocket_drm_driver);
-@@ -179,6 +185,7 @@ static int rocket_probe(struct platform_device *pdev)
+ 	if (index < 0)
+ 		return index;
+ 
+@@ -203,6 +209,7 @@ static int rocket_probe(struct platform_device *pdev)
  
  	rdev->cores[core].rdev = rdev;
  	rdev->cores[core].dev = &pdev->dev;
 +	rdev->cores[core].soc = soc;
- 	rdev->cores[core].index = core;
+ 	rdev->cores[core].index = index;
  
  	rdev->num_cores++;
-@@ -216,8 +223,13 @@ static void rocket_remove(struct platform_device *pdev)
+@@ -242,8 +249,13 @@ static void rocket_remove(struct platform_device *pdev)
  	}
  }
  
@@ -667,7 +384,7 @@ index 111111111111..222222222222 100644
  	{}
  };
  MODULE_DEVICE_TABLE(of, dt_match);
-@@ -243,7 +255,7 @@ static int rocket_device_runtime_resume(struct device *dev)
+@@ -269,7 +281,7 @@ static int rocket_device_runtime_resume(struct device *dev)
  	if (core < 0)
  		return -ENODEV;
  
@@ -676,7 +393,7 @@ index 111111111111..222222222222 100644
  	if (err) {
  		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
  		return err;
-@@ -263,7 +275,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
+@@ -289,7 +301,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
  	if (!rocket_job_is_idle(&rdev->cores[core]))
  		return -EBUSY;
  
@@ -685,8 +402,6 @@ index 111111111111..222222222222 100644
  
  	return 0;
  }
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -713,18 +428,19 @@ Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
 
 Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/57874e7459ed84ad47b2e31a62871ff535da249b.1794615323.git.gahing@gahingwoo.com
+[rpardini: rebased onto v7.4-rc4: context only in rocket_drv.h (struct rocket_vm)]
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- drivers/accel/rocket/rocket_core.c   |  2 +
- drivers/accel/rocket/rocket_core.h   |  3 ++
- drivers/accel/rocket/rocket_device.c |  3 +-
- drivers/accel/rocket/rocket_drv.c    | 14 +++++--
- drivers/accel/rocket/rocket_drv.h    |  2 +
- drivers/accel/rocket/rocket_job.c    | 20 ++++++++--
+ drivers/accel/rocket/rocket_core.c   |  2 ++
+ drivers/accel/rocket/rocket_core.h   |  3 +++
+ drivers/accel/rocket/rocket_device.c |  3 ++-
+ drivers/accel/rocket/rocket_drv.c    | 14 +++++++++++---
+ drivers/accel/rocket/rocket_drv.h    |  2 ++
+ drivers/accel/rocket/rocket_job.c    | 20 ++++++++++++++++----
  6 files changed, 36 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
-index 111111111111..222222222222 100644
+index 6071ced660ec..cf9b33231bd4 100644
 --- a/drivers/accel/rocket/rocket_core.c
 +++ b/drivers/accel/rocket/rocket_core.c
 @@ -32,6 +32,8 @@ int rocket_core_init(struct rocket_core *core)
@@ -737,7 +453,7 @@ index 111111111111..222222222222 100644
  	if (err)
  		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 111111111111..222222222222 100644
+index 0b88aaf4dd75..b62d4d1028d3 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
 @@ -32,12 +32,15 @@ enum rocket_clk {
@@ -757,7 +473,7 @@ index 111111111111..222222222222 100644
  
  struct rocket_core {
 diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
-index 111111111111..222222222222 100644
+index db137e2ec15e..868af86d00ce 100644
 --- a/drivers/accel/rocket/rocket_device.c
 +++ b/drivers/accel/rocket/rocket_device.c
 @@ -9,6 +9,7 @@
@@ -778,10 +494,10 @@ index 111111111111..222222222222 100644
  			num_cores++;
  
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 111111111111..222222222222 100644
+index 68263b0768f5..09a0fca4bb3f 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
-@@ -226,13 +226,21 @@ static void rocket_remove(struct platform_device *pdev)
+@@ -252,13 +252,21 @@ static void rocket_remove(struct platform_device *pdev)
  static const struct rocket_soc_data rk3588_soc_data = {
  	.num_clks = 4,
  	.num_resets = 2,
@@ -805,7 +521,7 @@ index 111111111111..222222222222 100644
  
  static int find_core_for_dev(struct device *dev)
  {
-@@ -291,7 +299,7 @@ static struct platform_driver rocket_driver = {
+@@ -317,7 +325,7 @@ static struct platform_driver rocket_driver = {
  	.driver	 = {
  		.name = "rocket",
  		.pm = pm_ptr(&rocket_pm_ops),
@@ -815,7 +531,7 @@ index 111111111111..222222222222 100644
  };
  
 diff --git a/drivers/accel/rocket/rocket_drv.h b/drivers/accel/rocket/rocket_drv.h
-index 111111111111..222222222222 100644
+index 7069ececffc4..2ba8366887d3 100644
 --- a/drivers/accel/rocket/rocket_drv.h
 +++ b/drivers/accel/rocket/rocket_drv.h
 @@ -6,10 +6,12 @@
@@ -829,10 +545,10 @@ index 111111111111..222222222222 100644
  extern const struct dev_pm_ops rocket_pm_ops;
 +extern const struct of_device_id rocket_dt_match[];
  
- struct rocket_iommu_domain {
+ struct rocket_vm {
  	struct iommu_domain *domain;
 diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
-index 111111111111..222222222222 100644
+index baf0d0c0b9d8..132aa7407620 100644
 --- a/drivers/accel/rocket/rocket_job.c
 +++ b/drivers/accel/rocket/rocket_job.c
 @@ -31,6 +31,11 @@
@@ -869,8 +585,6 @@ index 111111111111..222222222222 100644
  
  	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
  
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -897,12 +611,12 @@ Link: https://patch.msgid.link/bd963b70e40af3c3c74ac1569cda7be885b0ada1.17946153
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
  drivers/accel/rocket/rocket_core.h |  1 +
- drivers/accel/rocket/rocket_drv.c  | 29 +++++++
- include/uapi/drm/rocket_accel.h    | 40 ++++++++++
+ drivers/accel/rocket/rocket_drv.c  | 29 ++++++++++++++++++++++
+ include/uapi/drm/rocket_accel.h    | 40 ++++++++++++++++++++++++++++++
  3 files changed, 70 insertions(+)
 
 diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
-index 111111111111..222222222222 100644
+index b62d4d1028d3..90719cbf7c14 100644
 --- a/drivers/accel/rocket/rocket_core.h
 +++ b/drivers/accel/rocket/rocket_core.h
 @@ -41,6 +41,7 @@ struct rocket_soc_data {
@@ -914,7 +628,7 @@ index 111111111111..222222222222 100644
  
  struct rocket_core {
 diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
-index 111111111111..222222222222 100644
+index 09a0fca4bb3f..f5065b3accdc 100644
 --- a/drivers/accel/rocket/rocket_drv.c
 +++ b/drivers/accel/rocket/rocket_drv.c
 @@ -5,6 +5,7 @@
@@ -925,7 +639,7 @@ index 111111111111..222222222222 100644
  #include <drm/rocket_accel.h>
  #include <linux/clk.h>
  #include <linux/err.h>
-@@ -129,6 +130,31 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
+@@ -128,6 +129,31 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
  	module_put(THIS_MODULE);
  }
  
@@ -957,7 +671,7 @@ index 111111111111..222222222222 100644
  static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
  #define ROCKET_IOCTL(n, func) \
  	DRM_IOCTL_DEF_DRV(ROCKET_##n, rocket_ioctl_##func, 0)
-@@ -137,6 +163,7 @@ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
+@@ -136,6 +162,7 @@ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
  	ROCKET_IOCTL(SUBMIT, submit),
  	ROCKET_IOCTL(PREP_BO, prep_bo),
  	ROCKET_IOCTL(FINI_BO, fini_bo),
@@ -965,7 +679,7 @@ index 111111111111..222222222222 100644
  };
  
  DEFINE_DRM_ACCEL_FOPS(rocket_accel_driver_fops);
-@@ -227,12 +254,14 @@ static const struct rocket_soc_data rk3588_soc_data = {
+@@ -253,12 +280,14 @@ static const struct rocket_soc_data rk3588_soc_data = {
  	.num_clks = 4,
  	.num_resets = 2,
  	.task_con_16bit = false,
@@ -981,7 +695,7 @@ index 111111111111..222222222222 100644
  
  const struct of_device_id rocket_dt_match[] = {
 diff --git a/include/uapi/drm/rocket_accel.h b/include/uapi/drm/rocket_accel.h
-index 111111111111..222222222222 100644
+index d0685e372b79..597bf892c96d 100644
 --- a/include/uapi/drm/rocket_accel.h
 +++ b/include/uapi/drm/rocket_accel.h
 @@ -15,11 +15,13 @@ extern "C" {
@@ -1043,8 +757,6 @@ index 111111111111..222222222222 100644
  #if defined(__cplusplus)
  }
  #endif
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -1073,11 +785,11 @@ Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/f9f4f43cd1c4c8c6cee0371b4b92badf37e68832.1794615323.git.gahing@gahingwoo.com
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- arch/arm64/boot/dts/rockchip/rk3576.dtsi | 70 +++++++++-
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 70 +++++++++++++++++++++++-
  1 file changed, 69 insertions(+), 1 deletion(-)
 
 diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
-index 111111111111..222222222222 100644
+index 35de20c9cb62..f55aecd3f6f5 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
 @@ -1057,7 +1057,7 @@ power: power-controller {
@@ -1164,8 +876,6 @@ index 111111111111..222222222222 100644
  		gpu: gpu@27800000 {
  			compatible = "rockchip,rk3576-mali", "arm,mali-bifrost";
  			reg = <0x0 0x27800000 0x0 0x20000>;
--- 
-Armbian
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jiaxing Hu <gahing@gahingwoo.com>
@@ -1182,11 +892,11 @@ Tested-by: Sidong Yang <sidong.yang@furiosa.ai> # RK3588, ROCK 5B+
 Link: https://patch.msgid.link/c0d64d55586774802bdd70defa016be6912ab83e.1794615323.git.gahing@gahingwoo.com
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts | 22 ++++++++++
+ .../boot/dts/rockchip/rk3576-rock-4d.dts      | 22 +++++++++++++++++++
  1 file changed, 22 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
-index 111111111111..222222222222 100644
+index f068794e48d4..72b251d396fe 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
 +++ b/arch/arm64/boot/dts/rockchip/rk3576-rock-4d.dts
 @@ -722,6 +722,10 @@ &pcie0 {
@@ -1225,6 +935,3 @@ index 111111111111..222222222222 100644
  &sai6 {
  	status = "okay";
  };
--- 
-Armbian
-
