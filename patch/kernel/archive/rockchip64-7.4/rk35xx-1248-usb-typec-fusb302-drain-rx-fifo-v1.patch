@@ -1,0 +1,112 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH] usb: typec: fusb302: Drain the RX FIFO on each PD
+ interrupt
+From: Alexey Charkov <alchark@flipper.net>
+Date: Mon, 02 Nov 2026 16:37:59 +0400
+Message-Id: <20261102-fusb302-drain-rxfifo-v1-1-bd9b232ab345@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The driver reads one message from the RX FIFO per GCRCSENT or TX_SUCCESS
+interrupt, assuming every queued message raises one. The chip, however,
+queues some messages without acknowledging them or raising any interrupt,
+e.g. it decodes only the low four bits of the message type and mistakes
+Get_Source_Cap_Extended (17) for a GoodCRC (1). From then on every read
+returns the message queued before the one that raised the interrupt, so
+replies answer the wrong message and a Soft_Reset is never seen. The
+partner escalates to a Hard Reset, which an Apple Studio Display repeats
+every 1.5s.
+
+Furthermore, two different messages received in quick succession may be
+queued without raising separate interrupts, causing all subsequent PD
+communications to be permanently out of sync, which usually also leads to
+a hard reset eventually.
+
+Read messages until the FIFO reports empty, so that each one is handled
+on the event it arrived with, whatever the chip left unannounced before it.
+
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261102-fusb302-drain-rxfifo-v1-1-bd9b232ab345@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 35 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 3319f6a2b0c9..6841db172e11 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -1481,6 +1481,36 @@ static int fusb302_pd_read_message(struct fusb302_chip *chip,
+ 	return ret;
+ }
+ 
++/* The 80-byte RX FIFO holds at most 11 messages without data objects */
++#define FUSB302_RX_FIFO_MAX_MSGS	11
++
++static int fusb302_pd_read_messages(struct fusb302_chip *chip)
++{
++	struct pd_message pd_msg;
++	u8 status1;
++	int ret;
++	int i;
++
++	/*
++	 * Drain the whole RX FIFO rather than one message per interrupt:
++	 * messages the chip does not acknowledge raise no interrupt, and
++	 * reading one message per event would then leave every later read
++	 * returning the message queued before the one that raised it.
++	 */
++	for (i = 0; i < FUSB302_RX_FIFO_MAX_MSGS; i++) {
++		ret = fusb302_i2c_read(chip, FUSB_REG_STATUS1, &status1);
++		if (ret < 0)
++			return ret;
++		if (status1 & FUSB_REG_STATUS1_RX_EMPTY)
++			return 0;
++		ret = fusb302_pd_read_message(chip, &pd_msg);
++		if (ret < 0)
++			return ret;
++	}
++
++	return 0;
++}
++
+ static irqreturn_t fusb302_irq_intn(int irq, void *dev_id)
+ {
+ 	struct fusb302_chip *chip = dev_id;
+@@ -1513,7 +1543,6 @@ static void fusb302_irq_work(struct work_struct *work)
+ 	bool intr_togdone;
+ 	bool intr_bc_lvl;
+ 	bool intr_comp_chng;
+-	struct pd_message pd_msg;
+ 
+ 	mutex_lock(&chip->lock);
+ 	/* grab a snapshot of intr flags */
+@@ -1602,7 +1631,7 @@ static void fusb302_irq_work(struct work_struct *work)
+ 
+ 	if (interrupta & FUSB_REG_INTERRUPTA_TX_SUCCESS) {
+ 		fusb302_log(chip, "IRQ: PD tx success");
+-		ret = fusb302_pd_read_message(chip, &pd_msg);
++		ret = fusb302_pd_read_messages(chip);
+ 		if (ret < 0) {
+ 			fusb302_log(chip,
+ 				    "cannot read in PD message, ret=%d", ret);
+@@ -1622,7 +1651,7 @@ static void fusb302_irq_work(struct work_struct *work)
+ 
+ 	if (interruptb & FUSB_REG_INTERRUPTB_GCRCSENT) {
+ 		fusb302_log(chip, "IRQ: PD sent good CRC");
+-		ret = fusb302_pd_read_message(chip, &pd_msg);
++		ret = fusb302_pd_read_messages(chip);
+ 		if (ret < 0) {
+ 			fusb302_log(chip,
+ 				    "cannot read in PD message, ret=%d", ret);
+
+---
+base-commit: 7649ba73f9e7e1e04d0b46213e39c79ae09dd55c
+change-id: 20261102-fusb302-drain-rxfifo-58ea00906afb
+
+Best regards,
+--  
+Alexey Charkov <alchark@flipper.net>
+

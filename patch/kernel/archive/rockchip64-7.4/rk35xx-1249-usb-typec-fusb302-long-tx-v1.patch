@@ -1,0 +1,85 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH] usb: typec: fusb302: Send PD messages longer than one
+ SMBus block
+From: Alexey Charkov <alchark@flipper.net>
+Date: Mon, 02 Nov 2026 17:44:38 +0400
+Message-Id: <20261102-fusb302-long-tx-v1-1-0d2719488c3b@flipper.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The whole message, tokens included, goes to the FIFO in a single SMBus
+block write, which carries at most 32 bytes and silently drops the rest.
+A message with six or seven data objects needs up to 39, so it loses its
+closing tokens including TXON: the chip never sends it, the transmission
+times out, and the truncated bytes stay in the TX FIFO ahead of the next
+message. A Discover Identity ACK carrying a full set of sink-vdos is one
+such message, as is a Source_Capabilities with six or seven PDOs.
+
+Write the message in chunks of at most one SMBus block. The FIFOS
+register has no address auto-increment and queues every byte written to
+it, so consecutive writes append to the 48-byte TX FIFO. TXON is the
+one token that is not queued but starts the transmitter as soon as it is
+written. It still comes last, so transmission begins only once the whole
+message is in the FIFO, as the datasheet recommends.
+
+Flush the TX FIFO if a write fails, so that a partial message cannot
+stay queued and go out together with the next one as a garbled frame.
+
+Signed-off-by: Alexey Charkov <alchark@flipper.net>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://patch.msgid.link/20261102-fusb302-long-tx-v1-1-0d2719488c3b@flipper.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 3319f6a2b0c9..e10b7a4b679f 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -967,6 +967,7 @@ static int fusb302_pd_send_message(struct fusb302_chip *chip,
+ 	int ret = 0;
+ 	u8 buf[40];
+ 	u8 pos = 0;
++	u8 i;
+ 	int len;
+ 
+ 	/* SOP tokens */
+@@ -1001,9 +1002,23 @@ static int fusb302_pd_send_message(struct fusb302_chip *chip,
+ 	/* start transmission */
+ 	buf[pos++] = FUSB302_TKN_TXON;
+ 
+-	ret = fusb302_i2c_block_write(chip, FUSB_REG_FIFOS, pos, buf);
+-	if (ret < 0)
+-		return ret;
++	/*
++	 * An SMBus block write carries at most I2C_SMBUS_BLOCK_MAX bytes, and
++	 * a message with more than five data objects needs more. The FIFO
++	 * register queues every byte written to it except TXON, which starts
++	 * the transmitter instead. TXON comes last, so the message can go out
++	 * in several writes.
++	 */
++	for (i = 0; i < pos; i += I2C_SMBUS_BLOCK_MAX) {
++		ret = fusb302_i2c_block_write(chip, FUSB_REG_FIFOS,
++					      min_t(u8, pos - i, I2C_SMBUS_BLOCK_MAX),
++					      &buf[i]);
++		if (ret < 0) {
++			/* don't leave a partial message ahead of the next one */
++			fusb302_pd_tx_flush(chip);
++			return ret;
++		}
++	}
+ 	fusb302_log(chip, "sending PD message header: %x", msg->header);
+ 	fusb302_log(chip, "sending PD message len: %d", len);
+ 
+
+---
+base-commit: 7649ba73f9e7e1e04d0b46213e39c79ae09dd55c
+change-id: 20261102-fusb302-long-tx-d2d06ed2a937
+
+Best regards,
+--  
+Alexey Charkov <alchark@flipper.net>
+

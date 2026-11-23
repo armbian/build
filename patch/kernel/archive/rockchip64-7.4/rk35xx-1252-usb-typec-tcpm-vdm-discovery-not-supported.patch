@@ -1,0 +1,75 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2] usb: typec: tcpm: advance vdm_discovery_state on
+ Discover Identity Not_Supported
+From: Xu Yang <xu.yang_2@nxp.com>
+Date: Wed, 16 Sep 2026 12:39:57 +0800
+Message-Id: <20260916043957.3362995-1-xu.yang_2@oss.nxp.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Commit Fixes: 205dc9cb39f5 ("usb: typec: tcpm: implement retry mechanism
+for Discover Identity VDMs") advances vdm_discovery_state to
+VDM_DISCOVERY_COMPLETE when a CMDT_RSP_NAK is received, but it does not
+advance the state when a non-modal port returns PD_CTRL_NOT_SUPP.
+
+This can re-arm another vdm_discovery_work if the port is going to
+respond with PD_CTRL_NOT_SUPP to the partner.
+
+  tcpm_pd_handle_msg(port, PD_MSG_CTRL_NOT_SUPP, NONE_AMS);
+    tcpm_queue_message();
+      mod_tcpm_delayed_work();
+        tcpm_state_machine_work()
+          tcpm_send_queued_message()  -> send PD_MSG_CTRL_NOT_SUPP
+          run_state_machine()
+            case SRC_READY:
+            case SNK_READY:
+              mod_vdm_discovery_delayed_work(port, 0);
+
+If both the port and its partner do not support modal operation, they
+will send DISCOVER_IDENTITY to each other infinitely.
+
+Advance vdm_discovery_state to VDM_DISCOVERY_COMPLETE in this path as
+well. In particular, update the state to VDM_DISCOVERY_COMPLETE if it comes
+from the port partner, and to VDM_DISCOVERY_CABLE_IDENT if it comes from a
+cable.
+
+Fixes: 205dc9cb39f5 ("usb: typec: tcpm: implement retry mechanism for Discover Identity VDMs")
+Signed-off-by: Xu Yang <xu.yang_2@nxp.com>
+Reviewed-by: RD Babiera <rdbabiera@google.com>
+Acked-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Link: https://patch.msgid.link/20260916043957.3362995-1-xu.yang_2@oss.nxp.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+Changes in v2:
+ - cover a cable returns PD_CTRL_NOT_SUPP case reported by sashiko
+ - kick off vdm_discovery work to continue working
+ - correct previous wrong fix commit id
+---
+ drivers/usb/typec/tcpm/tcpm.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 2d6b14aa2085..5cea820e00c4 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -3891,6 +3891,16 @@ static void tcpm_pd_ctrl_request(struct tcpm_port *port,
+ 		case SRC_READY:
+ 		case SNK_READY:
+ 			if (port->vdm_state > VDM_STATE_READY) {
++				if (port->ams == DISCOVER_IDENTITY) {
++					if (rx_sop_type == TCPC_TX_SOP) {
++						tcpm_update_vdm_discovery_state(port,
++								VDM_DISCOVERY_COMPLETE);
++					} else if (rx_sop_type == TCPC_TX_SOP_PRIME) {
++						tcpm_update_vdm_discovery_state(port,
++								VDM_DISCOVERY_CABLE_IDENT);
++						mod_vdm_discovery_delayed_work(port, 0);
++					}
++				}
+ 				port->vdm_state = VDM_STATE_DONE;
+ 				if (tcpm_vdm_ams(port))
+ 					tcpm_ams_finish(port);
+-- 
+2.34.1
+
