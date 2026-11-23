@@ -17,6 +17,9 @@ reconstruction (MC_NO_WRITEBACK cleared), or P and B pictures read
 stale references. This covers every decoder. The tiled, AFBC and P010
 formats are unchanged.
 
+The H.264 4:0:0 chroma fill ends with the visible picture, so later
+slices keep the hidden luma of earlier ones.
+
 A 4K H.265 picture in NV12 now takes 23.7 ms (67 ms before, 19.4 ms in
 NV12_32L32). The cost is memory: a linear capture buffer is about twice
 as large (4K NV12: 12.4 MB -> 25.0 MB of IOMMU-mapped system memory).
@@ -27,7 +30,7 @@ Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
  drivers/staging/media/sunxi/cedrus/cedrus.c       |   1 +
  drivers/staging/media/sunxi/cedrus/cedrus.h       | 100 ++++++++++++++++++----
  drivers/staging/media/sunxi/cedrus/cedrus_dec.c   |   9 +-
- drivers/staging/media/sunxi/cedrus/cedrus_h264.c  |  18 ++--
+ drivers/staging/media/sunxi/cedrus/cedrus_h264.c  |  23 +++--
  drivers/staging/media/sunxi/cedrus/cedrus_h265.c  |  11 ++-
  drivers/staging/media/sunxi/cedrus/cedrus_hw.c    |  62 ++++++++++++++
  drivers/staging/media/sunxi/cedrus/cedrus_hw.h    |   6 ++
@@ -38,7 +41,7 @@ Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
  drivers/staging/media/sunxi/cedrus/cedrus_video.c |   7 +-
  drivers/staging/media/sunxi/cedrus/cedrus_vp8.c   |  14 +--
  drivers/staging/media/sunxi/cedrus/cedrus_vp9.c   |  23 ++++-
- 14 files changed, 259 insertions(+), 54 deletions(-)
+ 14 files changed, 263 insertions(+), 55 deletions(-)
 
 diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
 index aac0ec9..6b817c6 100644
@@ -271,7 +274,7 @@ index 639c337..68bd6ae 100644
  	error = ctx->current_codec->setup(ctx, &run);
  	if (error)
 diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
-index 2dd7fed..914f13d 100644
+index 2dd7fed..3b5adcc 100644
 --- a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
 +++ b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
 @@ -84,8 +84,8 @@ static void cedrus_fill_ref_pic(struct cedrus_ctx *ctx,
@@ -301,7 +304,25 @@ index 2dd7fed..914f13d 100644
  }
  
  static enum cedrus_irq_status
-@@ -554,7 +555,10 @@ static int cedrus_h264_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+@@ -535,13 +536,16 @@ static void cedrus_h264_fill_mono_chroma(struct cedrus_ctx *ctx,
+ {
+ 	struct vb2_buffer *buf = &run->dst->vb2_buf;
+ 	size_t luma = (size_t)ctx->dst_fmt.bytesperline * ctx->dst_fmt.height;
++	/* Not the hidden reference surface: earlier slices wrote it. */
++	size_t end = ctx->dst_fmt.sizeimage -
++		     cedrus_dst_tiled_behind_size(ctx, &ctx->dst_fmt);
+ 	size_t size = vb2_plane_size(buf, 0);
+ 	u8 *vaddr = vb2_plane_vaddr(buf, 0);
+ 
+ 	if (!vaddr || size <= luma)
+ 		return;
+ 
+-	memset(vaddr + luma, 0x80, min_t(size_t, ctx->dst_fmt.sizeimage, size) - luma);
++	memset(vaddr + luma, 0x80, min(end, size) - luma);
+ }
+ 
+ static int cedrus_h264_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+@@ -554,7 +558,10 @@ static int cedrus_h264_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
  
  	cedrus_engine_enable(ctx);
  
