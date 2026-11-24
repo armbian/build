@@ -48,38 +48,131 @@ load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfil
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 # overlay_prefix holds one or more prefixes. The first match wins. Full overlay names also work.
+# A failed fdt apply is not atomic: it leaves the working tree in a state where the overlays
+# that follow also fail. So each failure reloads the base DT and replays the overlays that did
+# apply, instead of dropping the whole set for this boot. A replay counts as failed when a dtbo
+# cannot be loaded again or no longer applies. Once that happens the boot continues with the base
+# DT alone and no further overlay is applied, rather than with a tree we cannot trust.
+setenv overlay_ok ""
+setenv dt_fallback "false"
 for overlay_file in ${overlays}; do
 	setenv overlay_found "false"
 	for overlay_prefix_item in ${overlay_prefix}; do
-		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+		if test "${dt_fallback}" = "false" && test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
 			setenv overlay_found "true"
 			echo "Applying kernel provided DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo"
-			fdt apply ${load_addr} || setenv overlay_error "true"
+			if fdt apply ${load_addr}; then
+				setenv overlay_ok "${overlay_ok} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-${overlay_file}.dtbo"
+			else
+				echo "DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo does not apply, skipping it"
+				setenv overlay_error "true"
+				if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+					fdt addr ${fdt_addr_r}
+					fdt resize 65536
+				else
+					setenv dt_fallback "true"
+				fi
+				setenv replay_path
+				for replay_path in ${overlay_ok}; do
+					if test "${dt_fallback}" = "false" && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${replay_path}; then
+						echo "Re-applying DT overlay ${replay_path}"
+						fdt apply ${load_addr} || setenv dt_fallback "true"
+					else
+						setenv dt_fallback "true"
+					fi
+				done
+				if test "${dt_fallback}" = "true"; then
+					echo "Replaying DT overlays failed, continuing with the base DT only"
+					if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+						fdt addr ${fdt_addr_r}
+						fdt resize 65536
+					else
+						setenv dt_fallback "true"
+					fi
+					setenv overlay_ok ""
+				fi
+			fi
 		fi
 	done
-	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_file}.dtbo; then
+	if test "${dt_fallback}" = "false" && test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
-		fdt apply ${load_addr} || setenv overlay_error "true"
+		if fdt apply ${load_addr}; then
+			setenv overlay_ok "${overlay_ok} ${prefix}dtb/rockchip/overlay/${overlay_file}.dtbo"
+		else
+			echo "DT overlay ${overlay_file}.dtbo does not apply, skipping it"
+			setenv overlay_error "true"
+				if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+					fdt addr ${fdt_addr_r}
+					fdt resize 65536
+				else
+					setenv dt_fallback "true"
+				fi
+				setenv replay_path
+				for replay_path in ${overlay_ok}; do
+					if test "${dt_fallback}" = "false" && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${replay_path}; then
+						echo "Re-applying DT overlay ${replay_path}"
+						fdt apply ${load_addr} || setenv dt_fallback "true"
+					else
+						setenv dt_fallback "true"
+					fi
+				done
+				if test "${dt_fallback}" = "true"; then
+					echo "Replaying DT overlays failed, continuing with the base DT only"
+					if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+						fdt addr ${fdt_addr_r}
+						fdt resize 65536
+					else
+						setenv dt_fallback "true"
+					fi
+					setenv overlay_ok ""
+				fi
+		fi
 	fi
 done
 for overlay_file in ${user_overlays}; do
-	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+	if test "${dt_fallback}" = "false" && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
-		fdt apply ${load_addr} || setenv overlay_error "true"
+		if fdt apply ${load_addr}; then
+			setenv overlay_ok "${overlay_ok} ${prefix}overlay-user/${overlay_file}.dtbo"
+		else
+			echo "User DT overlay ${overlay_file}.dtbo does not apply, skipping it"
+			setenv overlay_error "true"
+				if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+					fdt addr ${fdt_addr_r}
+					fdt resize 65536
+				else
+					setenv dt_fallback "true"
+				fi
+				setenv replay_path
+				for replay_path in ${overlay_ok}; do
+					if test "${dt_fallback}" = "false" && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${replay_path}; then
+						echo "Re-applying DT overlay ${replay_path}"
+						fdt apply ${load_addr} || setenv dt_fallback "true"
+					else
+						setenv dt_fallback "true"
+					fi
+				done
+				if test "${dt_fallback}" = "true"; then
+					echo "Replaying DT overlays failed, continuing with the base DT only"
+					if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+						fdt addr ${fdt_addr_r}
+						fdt resize 65536
+					else
+						setenv dt_fallback "true"
+					fi
+					setenv overlay_ok ""
+				fi
+		fi
 	fi
 done
-if test "${overlay_error}" = "true"; then
-	echo "Error applying DT overlays, restoring original DT"
-	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
-else
+if test "${dt_fallback}" = "false"; then
 	for overlay_prefix_item in ${overlay_prefix}; do
 		if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-fixup.scr && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix_item}-fixup.scr; then
 			echo "Applying kernel provided DT fixup script (${overlay_prefix_item}-fixup.scr)"
 			source ${load_addr}
 		fi
 	done
-	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}fixup.scr; then
-		load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}fixup.scr
+	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}fixup.scr && load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}fixup.scr; then
 		echo "Applying user provided fixup script (fixup.scr)"
 		source ${load_addr}
 	fi
