@@ -1,0 +1,39 @@
+#!/bin/bash
+# Orange Pi 5 Max, vendor kernel: bring up the AP6611S Bluetooth on UART7.
+#
+# The vendor device tree attaches hci_bcm to UART7 through serdev, but the
+# chip's power (BT_REG_ON) belongs to the rfkill-bt switch "bt_default",
+# which starts blocked. hci_bcm probes at boot while the chip may still be
+# off, its HCI reset times out, and BlueZ sees no controller. Power-cycle
+# the chip and probe hci_bcm again, which then loads SYN43711A0.hcd.
+set -euo pipefail
+
+serial_driver=/sys/bus/serial/drivers/hci_uart_bcm
+serial_device=serial0-0
+modprobe hci_uart
+
+for ((attempt = 0; attempt < 8; attempt++)); do
+	[[ -w "$serial_driver/bind" ]] && break
+	sleep 1
+done
+
+radio_index=
+for radio in /sys/class/rfkill/rfkill*; do
+	if [[ -r "$radio/name" && $(< "$radio/name") == bt_default ]]; then
+		radio_index=${radio##*rfkill}
+		break
+	fi
+done
+if [[ -z "$radio_index" || ! -w "$serial_driver/bind" ]]; then
+	echo "Bluetooth UART driver or bt_default rfkill switch not found" >&2
+	exit 1
+fi
+
+if [[ -L "$serial_driver/$serial_device" ]]; then
+	printf '%s' "$serial_device" > "$serial_driver/unbind"
+fi
+rfkill block "$radio_index"
+sleep 1
+rfkill unblock "$radio_index"
+sleep 1
+printf '%s' "$serial_device" > "$serial_driver/bind"
