@@ -224,6 +224,12 @@ function custom_kernel_config__ask_modules() {
 	opts_y+=("CONFIG_FSL_SDK_FMAN" "CONFIG_FSL_SDK_BMAN" "CONFIG_FSL_SDK_QMAN")
 	opts_y+=("CONFIG_FSL_SDK_DPA" "CONFIG_FSL_SDK_DPAA_ETH" "CONFIG_FSL_DPAA_1588")
 	opts_val["CONFIG_FSL_DPAA_ETH_MAX_BUF_COUNT"]="640"
+	# Jumbo frames, as ASK's defconfig sets them: FMan accepts 9.6K frames
+	# and DPAA sizes its Rx buffers to take one whole, so the offload paths that re-inject or
+	# transform a frame (SEC, fragmenter, Wi-Fi) get it in one buffer. JUMBO_FRAME requires
+	# MAX_FRAME_SIZE=9600 (sdk_dpaa/Kconfig); the default is 1522.
+	opts_val["CONFIG_FSL_FM_MAX_FRAME_SIZE"]="9600"
+	opts_y+=("CONFIG_FSL_DPAA_ETH_JUMBO_FRAME")
 	opts_n+=("CONFIG_FSL_FMAN")
 
 	# Enable the ASK modules in kernel config. CONFIG_ASK_CDX=m builds both cdx.ko and
