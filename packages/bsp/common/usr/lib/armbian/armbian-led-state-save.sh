@@ -20,9 +20,9 @@ CMD_FIND=$(which find)
 # $2 = path of destination state file
 function store_led() {
 
-	PATH="$1"
-	TRIGGER_PATH="$1/trigger"
-	DESTINATION="$2"
+	local LED_PATH="$1"
+	local TRIGGER_PATH="$1/trigger"
+	local DESTINATION="$2"
 
 	TRIGGER_CONTENT=$(<$TRIGGER_PATH)
 
@@ -30,14 +30,14 @@ function store_led() {
 
 	TRIGGER_VALUE=${BASH_REMATCH[1]}
 
-	echo "[$LED]" >> $STATE_PATH
+	echo "[$LED_PATH]" >> $DESTINATION
 	echo "trigger=$TRIGGER_VALUE" >> $DESTINATION
 
 	# In case the trigger is any of the kbd-*, don't store any other parameter
 	# This avoids num/scroll/capslock from being restored at startup
 	[[ "$TRIGGER_VALUE" =~ kbd-* ]] && return
 
-	COMMAND_PARAMS="$CMD_FIND $PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
+	COMMAND_PARAMS="$CMD_FIND $LED_PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
 	PARAMS=$($COMMAND_PARAMS)
 
 	# In case trigger is representing link-state for any network, use
@@ -47,7 +47,7 @@ function store_led() {
 
 	for PARAM in $PARAMS; do
 
-		PARAM_PATH="$PATH/$PARAM"
+		PARAM_PATH="$LED_PATH/$PARAM"
 		VALUE=$(<$PARAM_PATH)
 
 		# Skip an empty value, for example the brightness of a hardware controlled led
