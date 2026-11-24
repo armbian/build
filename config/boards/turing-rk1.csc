@@ -35,7 +35,10 @@ function post_family_tweaks__turing-rk1_default_serial_console_by_branch() {
 
 	case $BRANCH in
 		vendor*)
-			sed -i 's/console=ttyS2,1500000/console=ttyS9,115200/g' $SDCARD/boot/boot.cmd
+			sed -i \
+				-e 's/setenv serialcon "ttyS2"/setenv serialcon "ttyS9"/' \
+				-e 's/console=${serialcon},1500000/console=${serialcon},115200/' \
+				"$SDCARD/boot/boot.cmd"
 			;;
 		*)
 			sed -i 's/console=ttyS2,1500000/console=ttyS0,115200/g' $SDCARD/boot/boot.cmd
