@@ -1,0 +1,115 @@
+From e8247385974299623c8fd28db6879c17561f75f3 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Mon, 23 Nov 2026 22:13:52 +1300
+Subject: [PATCH] iommu/rockchip: Disable paging on banks that still page
+ before a force reset
+
+After an RK3576 NPU job timeout resets the core, the banks of its IOMMU
+can be left in different states: bank 0 is still paging while bank 1
+has been reset.
+
+In this state the existing stall and paging helpers do nothing, so the
+force reset that follows fails as well. The IOMMU can then no longer be
+enabled, and the NPU stops working.
+
+When the banks disagree, stop paging on the banks that still page
+first, then run the existing sequence.
+
+Tested on a ROCK 4D with repeated forced job timeouts. Without this
+patch, one in every 2 to 10 timeouts was not recovered from; with it,
+20 out of 20 recovered.
+
+Fixes: cd6438c5f844 ("iommu/rockchip: Reconstruct to support multi slaves")
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+---
+Not tested on the RK3588.
+
+LLM-assisted.
+
+ drivers/iommu/rockchip-iommu.c | 61 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index 1fa3110b142a..5eabefb0ad14 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -507,6 +507,64 @@ static int rk_iommu_disable_paging(struct rk_iommu *iommu)
+ 	return ret;
+ }
+ 
++/*
++ * The helpers above only act when every bank agrees. After a reset of the
++ * master, one bank can still be paging; stop it bank by bank.
++ */
++static void rk_iommu_quiesce_paging_banks(struct rk_iommu *iommu)
++{
++	int i, ret;
++	u32 status;
++
++	for (i = 0; i < iommu->num_mmu; i++) {
++		void __iomem *base = iommu->bases[i];
++
++		if (!(rk_iommu_read(base, RK_MMU_STATUS) & RK_MMU_STATUS_PAGING_ENABLED))
++			continue;
++
++		dev_warn_ratelimited(iommu->dev, "bank %d still paging, status %#08x; disabling it\n",
++				     i, rk_iommu_read(base, RK_MMU_STATUS));
++
++		if (rk_iommu_read(base, RK_MMU_STATUS) & RK_MMU_STATUS_PAGE_FAULT_ACTIVE)
++			writel(RK_MMU_CMD_PAGE_FAULT_DONE, base + RK_MMU_COMMAND);
++
++		rk_iommu_base_command(base, RK_MMU_CMD_ENABLE_STALL);
++		ret = readl_poll_timeout(base + RK_MMU_STATUS, status,
++					 status & RK_MMU_STATUS_STALL_ACTIVE,
++					 RK_MMU_POLL_PERIOD_US, RK_MMU_POLL_TIMEOUT_US);
++		if (ret)
++			dev_err(iommu->dev, "bank %d: stall timed out, status %#08x\n",
++				i, status);
++
++		rk_iommu_base_command(base, RK_MMU_CMD_DISABLE_PAGING);
++		ret = readl_poll_timeout(base + RK_MMU_STATUS, status,
++					 !(status & RK_MMU_STATUS_PAGING_ENABLED),
++					 RK_MMU_POLL_PERIOD_US, RK_MMU_POLL_TIMEOUT_US);
++		if (ret)
++			dev_err(iommu->dev, "bank %d: disable paging timed out, status %#08x\n",
++				i, status);
++
++		rk_iommu_base_command(base, RK_MMU_CMD_DISABLE_STALL);
++		ret = readl_poll_timeout(base + RK_MMU_STATUS, status,
++					 !(status & RK_MMU_STATUS_STALL_ACTIVE),
++					 RK_MMU_POLL_PERIOD_US, RK_MMU_POLL_TIMEOUT_US);
++		if (ret)
++			dev_err(iommu->dev, "bank %d: disable stall timed out, status %#08x\n",
++				i, status);
++	}
++}
++
++static bool rk_iommu_banks_disagree_on_paging(struct rk_iommu *iommu)
++{
++	int i, n = 0;
++
++	for (i = 0; i < iommu->num_mmu; i++)
++		n += !!(rk_iommu_read(iommu->bases[i], RK_MMU_STATUS) &
++			RK_MMU_STATUS_PAGING_ENABLED);
++
++	return n && n != iommu->num_mmu;
++}
++
+ static int rk_iommu_force_reset(struct rk_iommu *iommu)
+ {
+ 	int ret, i;
+@@ -947,6 +1005,9 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
+ 	if (ret)
+ 		return ret;
+ 
++	if (rk_iommu_banks_disagree_on_paging(iommu))
++		rk_iommu_quiesce_paging_banks(iommu);
++
+ 	ret = rk_iommu_enable_stall(iommu);
+ 	if (ret)
+ 		goto out_disable_clocks;
+
+base-commit: 909ef7a9a30fa139e69e555e3606680f5cca7726
+-- 
+2.43.0
+
