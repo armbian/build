@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @description Standard GRUB bootloader setup for UEFI-capable boards (amd64, arm64, loong64), with optional amd64 BIOS support and a `DISTRO_GENERIC_KERNEL` mode that boots the distro kernel instead of Armbian's. Installs `grub-efi`, generates `grub.cfg`, and sets `GRUB_GFXPAYLOAD_LINUX=text` with `splash plymouth.ignore-serial-consoles` to keep the framebuffer console on `fbcon` and kernel boot messages visible.
+# @description Standard GRUB bootloader setup for UEFI-capable boards (amd64, arm64, loong64), with optional amd64 BIOS support and a `DISTRO_GENERIC_KERNEL` mode that boots the distro kernel instead of Armbian's. Installs `grub-efi`, generates `grub.cfg`, and sets `GRUB_GFXPAYLOAD_LINUX=text` with `splash plymouth.ignore-serial-consoles loglevel=3` to keep the framebuffer console on `fbcon` with kernel errors only.
 
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the u ser.
 function extension_prepare_config__prepare_grub_standard() {
@@ -324,17 +324,16 @@ configure_grub() {
 	#      verbose/text theme", so a desktop installed later still
 	#      booted to a black/text screen.
 	#
-	# CLI images: NO 'quiet' and NO 'loglevel=3'. Plymouth still
-	# draws the splash on top of the kernel boot messages, but the
-	# messages remain visible underneath so users can see what their
-	# system is doing. Press Esc during boot to drop the splash and
-	# read the messages directly.
+	# All images: 'loglevel=3'. The console shows kernel errors only, during
+	# boot and after it. Kernel info and warning messages must not mix into the
+	# login prompt or the first-run setup. 'dmesg' and the journal keep them.
+	# CLI images: NO 'quiet'. The systemd boot status stays visible.
 	# Desktop images with Plymouth: a clean splash from GRUB to the
 	# desktop. No messages and no cursor; Esc still shows the boot log.
 	# Without Plymouth (PLYMOUTH=no) the messages stay: else the screen is blank.
-	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles"
+	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles loglevel=3"
 	if [[ "${BUILD_DESKTOP}" == "yes" && "${PLYMOUTH}" == "yes" ]]; then
-		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet loglevel=3 vt.global_cursor_default=0"
+		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet vt.global_cursor_default=0"
 	fi
 	if [[ "${ARCH}" == "amd64" ]]; then
 		GRUB_CMDLINE_LINUX_DEFAULT+=" i915.force_probe=*"

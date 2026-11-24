@@ -29,7 +29,7 @@ case "${BRANCH}" in
 		declare -g DISTRO_GENERIC_KERNEL=yes
 		;;
 	cloud)
-		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
+		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 max_loop=32"
 		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
