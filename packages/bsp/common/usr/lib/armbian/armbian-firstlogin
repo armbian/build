@@ -321,21 +321,53 @@ find_locales() {
 
 # Print "timezone|country code" for this machine. Try the next service when one
 # fails or is rate limited. Print nothing when all fail.
+# At first login, DNS or the network can still be starting: retry all services 3 times.
+# The clock can be wrong before NTP sync, then TLS fails: ip-api.com uses plain HTTP.
+# Cloudflare at 1.1.1.1 needs no DNS. It gives the country only; the timezone comes
+# from zone.tab when the country has one zone. -k: a wrong clock must not break it.
+# Failures go to the journal: journalctl -t armbian-firstlogin
 geolocate() {
-	local url filter tz cc
-	while IFS=' ' read -r url filter; do
-		IFS='|' read -r tz cc < <(curl --max-time 5 -s "${url}" | jq -r "${filter}" 2> /dev/null)
-		[[ -n "${tz}" && -f "/usr/share/zoneinfo/${tz}" ]] || continue
-		[[ "${cc}" =~ ^[A-Z]{2}$ ]] || cc=""
-		echo "${tz}|${cc}"
-		return 0
-	done <<- EOT
-		https://ipwhois.app/json/${PUBLIC_IP} "\(.timezone // "")|\(.country_code // "")"
-		https://ipinfo.io/json "\(.timezone // "")|\(.country // "")"
-		https://ipwho.is/ "\(.timezone.id // "")|\(.country_code // "")"
-		https://get.geojs.io/v1/ip/geo.json "\(.timezone // "")|\(.country_code // "")"
-		https://ipapi.co/json/ "\(.timezone // "")|\(.country_code // "")"
-	EOT
+	local round url filter json rc tz cc dns_failed
+	local -a opts
+	echo -e "\nDetecting location ..." >&2
+	for round in 1 2 3; do
+		# a dead resolver makes each curl wait for its timeout: test DNS once per round
+		dns_failed=0
+		timeout 4 getent hosts ipinfo.io > /dev/null 2>&1 || dns_failed=1
+		while IFS=' ' read -r url filter; do
+			# DNS failed: use only services at an IP address
+			[[ ${dns_failed} == 1 && ! "${url}" =~ ^https?://[0-9.]+/ ]] && continue
+			opts=(--connect-timeout 3 --max-time 6 -s)
+			[[ "${filter}" == trace ]] && opts+=(-k)
+			json=$(curl "${opts[@]}" "${url}")
+			rc=$?
+			if [[ "${filter}" == trace ]]; then
+				cc=$(sed -n 's/^loc=//p' <<< "${json}")
+				tz=$(awk -F'\t' -v cc="${cc}" '$1 == cc {print $3}' /usr/share/zoneinfo/zone.tab 2> /dev/null)
+				[[ $(wc -l <<< "${tz}") == 1 ]] || tz=""
+			else
+				IFS='|' read -r tz cc < <(jq -r "${filter}" <<< "${json}" 2> /dev/null)
+			fi
+			[[ -n "${tz}" && -f "/usr/share/zoneinfo/${tz}" ]] || tz=""
+			[[ "${cc}" =~ ^[A-Z]{2}$ ]] || cc=""
+			if [[ -n "${tz}" || ( -n "${cc}" && "${filter}" == trace ) ]]; then
+				echo "${tz}|${cc}"
+				return 0
+			fi
+			logger -t armbian-firstlogin "geolocation: ${url} failed, try ${round}, curl exit ${rc}, reply: ${json:0:80}"
+		done <<- EOT
+			https://ipwhois.app/json/${PUBLIC_IP} "\(.timezone // "")|\(.country_code // "")"
+			https://ipinfo.io/json "\(.timezone // "")|\(.country // "")"
+			https://ipwho.is/ "\(.timezone.id // "")|\(.country_code // "")"
+			https://get.geojs.io/v1/ip/geo.json "\(.timezone // "")|\(.country_code // "")"
+			https://ipapi.co/json/ "\(.timezone // "")|\(.country_code // "")"
+			http://ip-api.com/json/ "\(.timezone // "")|\(.countryCode // "")"
+			https://1.1.1.1/cdn-cgi/trace trace
+		EOT
+		# no route to the internet: retries do not help
+		ip route get 1.1.1.1 > /dev/null 2>&1 || break
+		[[ ${round} -lt 3 ]] && sleep 5
+	done
 	return 1
 }
 
@@ -501,14 +533,16 @@ set_timezone_and_locales() {
 	# Geolocation. A failed lookup yields no usable values.
 	IFS='|' read -r TZDATA CCODE < <(geolocate)
 	GEO_FAILED=0
-	[[ -z "${TZDATA}" ]] && GEO_FAILED=1
-	# no timezone: the user does not confirm the location, so offer all locales
-	[[ -z "${TZDATA}" && $preset_unattended != 1 ]] && CCODE=""
+	[[ -z "${TZDATA}${CCODE}" ]] && GEO_FAILED=1
 
 	unset response
 	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-		if [ -z "${SET_LANG_BASED_ON_LOCATION}" ] && [ -n "${TZDATA}" ] && [[ $preset_unattended != 1 ]]; then
-			echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
+		if [ -z "${SET_LANG_BASED_ON_LOCATION}" ] && [ -n "${TZDATA}${CCODE}" ] && [[ $preset_unattended != 1 ]]; then
+			if [[ -n "${TZDATA}" ]]; then
+				echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
+			else
+				echo -e "Detected country: \x1B[92m$CCODE\x1B[0m"
+			fi
 			echo ""
 			read -r -p "Set user language based on your location? [Y/n] " response
 			response=${response:-Y}
