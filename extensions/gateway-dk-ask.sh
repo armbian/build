@@ -611,8 +611,25 @@ Description: NXP ASK hardware flow-offload userspace for Mono Gateway DK
  kernel modules ship in the linux-image package.
 EOF
 
+	# Upgrading from the pre-flowtable package (ASK 1.0.0: cmm, fci, auto_bridge): disable cmm
+	# while its unit file still exists — the upgrade removes the file, and an enablement link
+	# left behind would dangle.
+	cat > "${pkgdir}/DEBIAN/preinst" << 'EOF'
+#!/bin/bash
+if [ "$1" = upgrade ] && [ -e /etc/systemd/system/cmm.service ]; then
+    systemctl disable --now cmm.service 2>/dev/null || true
+fi
+EOF
+	chmod 755 "${pkgdir}/DEBIAN/preinst"
+
+	# The pre-flowtable image also carried an unowned /etc/modules-load.d/ask-modules.conf naming
+	# fci and auto_bridge, which no longer exist (systemd-modules-load would fail on every boot);
+	# /etc/modules-load.d/ask.conf replaces it. Removed only when it is that file.
 	cat > "${pkgdir}/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
+if grep -qsxE '(fci|auto_bridge)' /etc/modules-load.d/ask-modules.conf; then
+    rm -f /etc/modules-load.d/ask-modules.conf
+fi
 systemctl daemon-reload || true
 if command -v systemctl >/dev/null 2>&1; then
     systemctl enable ask-flowtable.service 2>/dev/null || true
