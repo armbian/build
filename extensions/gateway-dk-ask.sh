@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @description Integrates NXP's ASK data-plane acceleration for the Mono Gateway DK (LS1046A). Builds the ASK kernel modules (CDX, FCI, auto-bridge, sfp-led, lp5812) in-tree, then compiles userspace tools (`fmlib`, `fmc`, `libfci`, `libcli`, `dpa-app`, `cmm`) and patched libraries in the chroot. Everything ships as one `gateway-dk-ask` `.deb`.
+# @description Integrates NXP's ASK data-plane acceleration for the Mono Gateway DK (LS1046A). Overlays ASK's copy of the NXP DPAA/FMan/QBMan SDK and its kernel patch series onto the mainline kernel, builds the ASK kernel modules (`cdx`, `ask_flowtable`, sfp-led, lp5812) in-tree, and packages the `ask-flowtable` offload daemon as `gateway-dk-ask` `.deb`. Also ships the NXP 88W9098 WiFi driver and firmware as `gateway-dk-wifi` `.deb`.
 
 #
 # SPDX-License-Identifier: GPL-2.0
@@ -7,48 +7,50 @@
 # Copyright (c) 2026 Mono Technologies Inc.
 #
 # NXP ASK (Application Solutions Kit) extension for LS1046A
-# Integrates kernel modules (CDX, FCI, auto-bridge, sfp-led, lp5812) in-tree
-# and builds userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm),
-# patched system libraries, and configuration files.
 #
-# All ASK sources, patches, and configs come from the ASK repo.
+# ASK 1.6.0 (flowtable model): the data plane is an nftables flowtable driven
+# into CDX hardware. Two kernel modules (cdx, ask_flowtable) build IN-TREE from
+# the ASK repo's consolidated cdx/ dir (the SDK source they #include is only
+# present during the kernel's own `make modules`, so an out-of-tree build
+# against the trimmed linux-headers .deb cannot see it) and ship in the
+# linux-image .deb. Userspace is a single libc-only daemon, ask-flowtable, built
+# from the repo's flowtable/ dir; it shells out to nft/ip at runtime and ships
+# in gateway-dk-ask with its systemd unit and config.
+#
+# The pre-1.1.0 userspace stack (fmlib, fmc, libfci, libcli, dpa-app, cmm), the
+# patched system libraries (libnetfilter-conntrack, libnfnetlink), the QOSMARK/
+# QOSCONNMARK xtables extensions and the FMan-PCD XMLs are all gone: the PCD is
+# now built in-kernel (cdx/cdx_pcd.c) and offload is nftables-native.
+#
+# Board-specific LED modules (sfp-led, lp5812) remain in-tree BSP. All ASK
+# sources, patches, and configs come from the ASK repo.
 #
 
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:05aaf4ff0830de45b26fcc1a9bc75749c08b8bf3" # mono-1.0.0 (peeled commit)
-declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
-declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
-declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
-declare -g FMC_COMMIT="5b9f4b16a864e9dfa58cdcc860be278a7f66ac18"
-declare -g LIBCLI_REPO="https://github.com/dparrish/libcli.git"
-declare -g LIBCLI_COMMIT="6a3b2f96c4f0916e2603a96bf24d704f6a904e7a"
+declare -g ASK_BRANCH="commit:27eed72e926bf54b41cb055c51a0487630f797f9" # mono-1.6.1 (peeled commit)
 
 # NXP DPAA/FMan/QBMan SDK source. Mainline does not carry these drivers, so the
 # kernel base (kernel.org stable, set in the ls1046a family config) is overlaid with
-# this SDK before the ASK hook patches apply. The SDK ref is NOT hand-maintained here:
-# it is read at build time from ASK's format-neutral pin (pins/nxp-sdk-srcrev.inc), so
-# ASK_BRANCH stays the single pin and the SDK can never drift from what ASK targets.
-declare -g NXP_SDK_REPO="https://github.com/nxp-qoriq/linux.git"
+# them before the ASK hook patches apply. Since ASK 1.6.0 the SDK is ASK's own copy
+# (sdk/linux in the ASK repo: NXP's drivers with ASK's fixes made in place, one copy
+# for every kernel line), so ASK_BRANCH is the single pin and nothing is fetched from NXP.
 
 # NXP 88W9098 (u-blox JODY-W3) WiFi+BT combo — an optional PCIe card. The mlan/moal
 # fullmac WiFi driver and the combo firmware are baked into every gateway image (inert
 # with no card present, and the firmware also quiets the DTS-declared BT node's
 # btnxpuart probe). Built as a standalone kernel-module .deb (gateway-dk-wifi), NOT
-# in-tree, so it tracks the kernel .deb loosely. Pins mirror OpenWrt's package/kernel
-# /nxp-mwifiex + package/firmware/nxp-wifi-firmware.
+# in-tree, so it tracks the kernel .deb loosely. Driver pin matches ASK's meta-ask
+# nxp-mwifiex recipe for this kernel line.
 declare -g NXP_MWIFIEX_REPO="https://github.com/nxp-imx/mwifiex.git"
 declare -g NXP_MWIFIEX_COMMIT="09f41e1423e4806a127507d5fa284cd02c46772f" # branch hotfix/lf-6.12.49_2.2.0_hotfix
 declare -g NXP_WIFI_FW_REPO="https://github.com/nxp-imx/imx-firmware.git"
 declare -g NXP_WIFI_FW_COMMIT="8c9b278016c97527b285f2fcbe53c2d428eb171d" # tag lf-6.12.49_2.2.0 (FwImage_9098_PCIE)
 
 # ASK component directories
-declare -g ASK_CDX_DIR="cdx"
-declare -g ASK_FCI_DIR="fci"
-declare -g ASK_AUTOBRIDGE_DIR="auto_bridge"
-declare -g ASK_DPA_APP_DIR="dpa_app"
-declare -g ASK_CMM_DIR="cmm"
+declare -g ASK_CDX_DIR="cdx"             # out-of-tree kernel modules: cdx.ko + ask_flowtable.ko
+declare -g ASK_FLOWTABLE_DIR="flowtable" # libc-only userspace daemon: ask-flowtable
 
 # Mount local ASK repo into Docker container when using file:// URL
 function host_pre_docker_launch__mount_local_ask() {
@@ -89,12 +91,11 @@ function post_family_config__ask_fetch_repo() {
 	declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"
 }
 
-# Post-config setup: enable kernel headers (userspace builds need FMAN UAPI headers)
-# and derive multiarch triplet from KERNEL_COMPILER (set by arch config)
+# Post-config setup: ship the linux-headers .deb in the image. The WiFi driver
+# (__002) builds mlan/moal out-of-tree against them; ask-flowtable is libc-only
+# and the in-tree ASK modules build with the kernel, so neither needs headers.
 function extension_finish_config__ask_setup() {
 	declare -g INSTALL_HEADERS="yes"
-	[[ -z "${KERNEL_COMPILER}" ]] && exit_with_error "ASK extension: KERNEL_COMPILER is not set, cannot derive host triplet"
-	declare -g ASK_HOST_TRIPLET="${KERNEL_COMPILER%-}"
 }
 
 # Copy ASK kernel module sources into the kernel tree and enable them in Kconfig.
@@ -113,8 +114,8 @@ function custom_kernel_config__ask_modules() {
 	# declare -f covers this function's code but not the content of the board BSP files it copies
 	# into the kernel tree; fold those in too — via calculate_hash_for_files, which hashes each
 	# file's SRC-relative path and content (sorted, order-independent) — so editing e.g. sfp-led.c
-	# or the board Kconfig patch rebuilds the kernel. (CDX/FCI/auto_bridge sources come from the
-	# ASK repo, already covered by the ASK pin above.)
+	# or the board module Kconfig/Makefile rebuilds the kernel. (The ASK repo cdx/ sources come
+	# from the ASK repo, already covered by the ASK pin above.)
 	declare hash_files="undetermined"
 	calculate_hash_for_files \
 		"${SRC}"/packages/bsp/gateway-dk/ask-modules.Kconfig \
@@ -123,13 +124,17 @@ function custom_kernel_config__ask_modules() {
 		"${SRC}"/packages/bsp/gateway-dk/sfp-led.Kbuild \
 		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.c \
 		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.h \
-		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.Kbuild \
-		"${SRC}"/packages/bsp/gateway-dk/ask-kconfig-board-modules.patch
+		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.Kbuild
 	kernel_config_modifying_hashes+=("ask_bsp_files=${hash_files}")
 
 	# Skip file operations during config-dump-json and version calculation
 	[[ ! -f .config ]] && return 0
 
+	# The ASK data-plane is built IN-TREE: the consolidated cdx/ dir is copied into the kernel
+	# tree and built with `make modules`, so the SDK source it #includes (sdk_fman, ncsw_config.mk,
+	# crypto/caam) is present — an out-of-tree build against the trimmed linux-headers .deb cannot
+	# see those. cdx/Kbuild emits both cdx.ko and ask_flowtable.ko from CONFIG_ASK_CDX=m; the
+	# modules ship in the linux-image .deb. The board LED/SFP drivers build the same in-tree way.
 	display_alert "ASK extension" "copying ASK module sources into kernel tree" "info"
 
 	local ask_drv="${kernel_work_dir}/drivers/net/ethernet/freescale/ask"
@@ -141,30 +146,26 @@ function custom_kernel_config__ask_modules() {
 		run_host_command_logged rm -rf "${ask_drv}"
 	fi
 
-	# Copy module sources and Kbuild files from ASK cache
-	# (Kbuild files coexist with old Makefiles — kbuild prefers Kbuild when both exist)
+	# Parent Kconfig + Makefile that wire the ASK modules into the in-tree build (from the BSP;
+	# ASK's repo root carries no in-tree parent — its other integrations build out-of-tree).
 	run_host_command_logged mkdir -pv "${ask_drv}"
-	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
-	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
-	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
-
-	# Parent Kconfig + Makefile that wire the ASK modules into the in-tree build. ASK 1.0.0
-	# dropped these from its repo root (Yocto/OpenWrt build the modules out-of-tree), so Armbian
-	# carries them in the BSP; the per-module Kbuilds still gate on their CONFIG_ASK_* symbols.
 	run_host_command_logged cp -v "${bsp_dir}/ask-modules.Kconfig" "${ask_drv}/Kconfig"
 	run_host_command_logged cp -v "${bsp_dir}/ask-modules.Makefile" "${ask_drv}/Makefile"
 
-	# Board-specific modules (not part of ASK repo — from Armbian BSP)
+	# ASK (since 1.1.0) consolidates the data plane into a single cdx/ dir whose Kbuild emits both
+	# cdx.ko and ask_flowtable.ko (the old separate fci/ and auto_bridge/ dirs are gone).
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
+
+	# Board-specific LED modules (not part of ASK repo — from Armbian BSP). Their Kconfig
+	# entries are baked into ask-modules.Kconfig; wire their obj dirs into the Makefile here.
 	if [[ "${BOARD}" == "gateway-dk" ]]; then
+		display_alert "ASK extension" "copying board LED module sources into kernel tree" "info"
 		run_host_command_logged mkdir -pv "${ask_drv}/sfp_led" "${ask_drv}/leds_lp5812"
 		run_host_command_logged cp -v "${bsp_dir}/sfp-led.c" "${ask_drv}/sfp_led/"
 		run_host_command_logged cp -v "${bsp_dir}/sfp-led.Kbuild" "${ask_drv}/sfp_led/Kbuild"
 		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.c" "${ask_drv}/leds_lp5812/"
 		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.h" "${ask_drv}/leds_lp5812/"
 		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.Kbuild" "${ask_drv}/leds_lp5812/Kbuild"
-
-		# Add board-specific entries to ASK Kconfig and Makefile
-		patch -p1 -d "${ask_drv}" < "${bsp_dir}/ask-kconfig-board-modules.patch"
 		echo 'obj-$(CONFIG_ASK_SFP_LED)	+= sfp_led/' >> "${ask_drv}/Makefile"
 		echo 'obj-$(CONFIG_ASK_LEDS_LP5812)	+= leds_lp5812/' >> "${ask_drv}/Makefile"
 	fi
@@ -181,13 +182,13 @@ function custom_kernel_config__ask_modules() {
 	fi
 
 	if ! grep -q 'ask/' "${fsl_dir}/Makefile"; then
-		display_alert "ASK extension" "adding ASK modules to freescale Makefile" "info"
+		display_alert "ASK extension" "adding ASK dir to freescale Makefile" "info"
 		echo 'obj-y += ask/' >> "${fsl_dir}/Makefile"
 	else
-		display_alert "ASK extension" "ASK modules already present in freescale Makefile"
+		display_alert "ASK extension" "ASK dir already present in freescale Makefile"
 	fi
 
-	display_alert "ASK extension" "ASK module sources and Kbuild files placed in kernel tree" "info"
+	display_alert "ASK extension" "ASK + board module sources placed in kernel tree" "info"
 
 	# Wire the SDK's fsl_qbman staging driver (provided by the 005 overlay) into
 	# drivers/staging the same append way Armbian's own out-of-tree drivers do — post-patch
@@ -225,29 +226,32 @@ function custom_kernel_config__ask_modules() {
 	opts_val["CONFIG_FSL_DPAA_ETH_MAX_BUF_COUNT"]="640"
 	opts_n+=("CONFIG_FSL_FMAN")
 
-	# Enable ASK modules in kernel config (opts_m array, same pattern as meson64_common.inc)
+	# Enable the ASK modules in kernel config. CONFIG_ASK_CDX=m builds both cdx.ko and
+	# ask_flowtable.ko (cdx/Kbuild: obj-$(CONFIG_ASK_CDX) += cdx.o ask_flowtable.o).
 	opts_y+=("CONFIG_NXP_ASK")
 	opts_m+=("CONFIG_ASK_CDX")
-	opts_m+=("CONFIG_ASK_FCI")
-	opts_m+=("CONFIG_ASK_AUTO_BRIDGE")
+	# ask-flowtable keeps its flowtable in an `inet` (mixed IPv4/IPv6) nftables table; without
+	# the inet flowtable type, `nft add flowtable inet ...` fails and nothing is offloaded.
+	opts_m+=("CONFIG_NF_FLOW_TABLE_INET")
 	if [[ "${BOARD}" == "gateway-dk" ]]; then
 		opts_m+=("CONFIG_ASK_SFP_LED")
 		opts_m+=("CONFIG_ASK_LEDS_LP5812")
 	fi
 }
 
-# NXP SDK driver source absent from mainline — copied verbatim into its normal mainline
-# locations. The path set is from the OpenWrt-first reference (scripts/mono-sync-ask-kernel.sh)
-# and the Yocto meta-ask recipe, so all three consumers vendor the exact same tree. ASK-added
-# files (e.g. include/linux/fsl_oh_port.h) arrive with the patch series, not here.
+# SDK driver source absent from mainline — copied from ASK's sdk/linux into its normal
+# mainline locations. The path set is ASK's NXP_SDK_PATHS (meta-ask linux-ask.inc) minus the
+# dtsi, which go to a private dir (below), so every ASK integration installs the exact same
+# tree. ASK-added files outside these
+# paths (e.g. include/linux/fsl_oh_port.h) arrive with the patch series, not here.
 declare -ga ASK_SDK_PATHS=(
 	"drivers/net/ethernet/freescale/sdk_dpaa"
 	"drivers/net/ethernet/freescale/sdk_fman"
 	"drivers/staging/fsl_qbman"
-	"include/uapi/linux/fmd"
 	"include/linux/fsl_bman.h"
 	"include/linux/fsl_qman.h"
 	"include/linux/fsl_usdpaa.h"
+	"include/dt-bindings/soc/fsl,qoriq-rcpm.h"
 )
 
 # SDK-flavour DPAA device tree. Mainline ships same-named files under freescale/ with mainline
@@ -278,9 +282,8 @@ declare -ga ASK_SDK_DTSI=(
 	"qoriq-fman3-0-10g-1.dtsi"
 )
 
-# Synthesize the kernel-side overlay patches from pinned upstream sources ($1 = dest dir):
-#   005-nxp-sdk-overlay.patch            — NXP DPAA/FMan/QBMan SDK, fetched from NXP at the
-#                                          ref ASK pins (the single source of truth)
+# Synthesize the kernel-side overlay patches from the pinned ASK tree ($1 = dest dir):
+#   005-nxp-sdk-overlay.patch            — NXP DPAA/FMan/QBMan SDK, ASK's copy (sdk/linux)
 #   006-mono-gateway-dk-devicetree.patch — the ASK-owned board device tree + its dtb-y entry
 #
 # Mainline carries neither, and Armbian's patcher git-resets the kernel tree and deletes
@@ -294,21 +297,23 @@ function ask_synthesize_kernel_overlay_patches() {
 	declare patch_dst="$1"
 	declare fsl_dts_dir="arch/arm64/boot/dts/freescale"
 
-	# Single pin: read the NXP SDK ref from ASK's format-neutral pin file.
-	declare pin_file="${ASK_CACHE_DIR}/pins/nxp-sdk-srcrev.inc"
-	[[ -f "${pin_file}" ]] || exit_with_error "ASK NXP SDK pin file not found" "${pin_file}"
-	declare sdk_ref
-	sdk_ref="$(sed -n 's/^NXP_SDK_SRCREV *= *"\([0-9a-fA-F]\{40\}\)".*/\1/p' "${pin_file}" | head -1)"
-	[[ -n "${sdk_ref}" ]] || exit_with_error "Could not read NXP_SDK_SRCREV from" "${pin_file}"
+	# The SDK is ASK's own copy, laid out as a kernel tree; it comes with the ASK pin.
+	declare sdk_src="${ASK_CACHE_DIR}/sdk/linux"
+	declare sdk_ref="ASK sdk/linux @ ${ASK_BRANCH}"
+	[[ -d "${sdk_src}/drivers/net/ethernet/freescale/sdk_dpaa" ]] || exit_with_error "ASK SDK copy not found" "${sdk_src}"
 	declare dts_src="${ASK_CACHE_DIR}/dts/mono-gateway-dk.dts"
 	[[ -f "${dts_src}" ]] || exit_with_error "ASK board DTS not found" "${dts_src}"
-	display_alert "ASK extension" "NXP SDK overlay pinned @ ${sdk_ref}" "info"
+	display_alert "ASK extension" "NXP SDK overlay from ${sdk_ref}" "info"
 
-	# Fetch the SDK via Armbian's helper: cached under cache/sources, mirror-aware. First fetch
-	# of the NXP tree is large; subsequent builds reuse the cache. fetch_from_repo changes cwd.
-	fetch_from_repo "${NXP_SDK_REPO}" "nxp-sdk-linux" "commit:${sdk_ref}"
-	declare sdk_src="${SRC}/cache/sources/nxp-sdk-linux"
-	cd "${kernel_work_dir}" || exit_with_error "Cannot cd back to kernel_work_dir" "${kernel_work_dir}"
+	# Like ASK's own Yocto overlay (meta-ask do_overlay_sdk), refuse an SDK copy
+	# holding a file this overlay would not install: it would be pinned yet in no kernel tree.
+	declare f p listed
+	while IFS= read -r f; do
+		listed=0
+		for p in "${ASK_SDK_PATHS[@]}"; do [[ "${f}" == "${p}" || "${f}" == "${p}/"* ]] && listed=1 && break; done
+		[[ "${listed}" == 1 || ( "${f}" == "${fsl_dts_dir}/"* && " ${ASK_SDK_DTSI[*]} " == *" ${f##*/} "* ) ]] ||
+			exit_with_error "ASK sdk/linux holds a file outside the SDK paths this overlay installs" "${f}"
+	done < <(cd "${sdk_src}" && find . \( -type f -o -type l \) | sed 's|^\./||')
 
 	# Deterministic pristine-mainline diff base. kernel_drivers_create_patches ran before us,
 	# and patching.py resets again after, so reset here to be certain.
@@ -321,7 +326,7 @@ function ask_synthesize_kernel_overlay_patches() {
 	for pth in "${ASK_SDK_PATHS[@]}"; do
 		src="${sdk_src}/${pth}"
 		dst="${kernel_work_dir}/${pth}"
-		[[ -e "${src}" ]] || exit_with_error "NXP SDK path missing (ASK-added files come from the patch series)" "${pth} @ ${sdk_ref}"
+		[[ -e "${src}" ]] || exit_with_error "SDK path missing (ASK-added files come from the patch series)" "${pth} @ ${sdk_ref}"
 		if [[ -d "${src}" ]]; then
 			run_host_command_logged rm -rf "${dst}"
 			run_host_command_logged mkdir -pv "${dst}"
@@ -339,7 +344,7 @@ function ask_synthesize_kernel_overlay_patches() {
 	declare dtsi
 	for dtsi in "${ASK_SDK_DTSI[@]}"; do
 		src="${sdk_src}/${fsl_dts_dir}/${dtsi}"
-		[[ -f "${src}" ]] || exit_with_error "NXP SDK dtsi missing" "${dtsi} @ ${sdk_ref}"
+		[[ -f "${src}" ]] || exit_with_error "SDK dtsi missing" "${dtsi} @ ${sdk_ref}"
 		run_host_command_logged cp -a "${src}" "${kernel_work_dir}/${ASK_SDK_DTS_DIR}/${dtsi}"
 	done
 
@@ -374,7 +379,7 @@ function ask_synthesize_kernel_overlay_patches() {
 			exit_with_error "Synthesized overlay contains a binary file patch(1) cannot apply" "${synth##*/}"
 	done
 
-	# Restore pristine mainline; patching.py resets again and re-applies 005/006 + 010-110.
+	# Restore pristine mainline; patching.py resets again and re-applies 005/006 + the ASK series.
 	run_host_command_logged git -C "${kernel_work_dir}" reset --hard "${kernel_git_revision}"
 	run_host_command_logged git -C "${kernel_work_dir}" clean -fdxq
 	display_alert "ASK extension" "synthesized SDK overlay (005) + board device tree (006)" "info"
@@ -411,7 +416,7 @@ function ask_strip_staging_wiring_hunks() {
 # patches — everything here comes from the pinned ASK tree (or NXP at ASK's pin):
 #   005-nxp-sdk-overlay.patch            — synthesized NXP SDK overlay (see above)
 #   006-mono-gateway-dk-devicetree.patch — synthesized ASK board device tree (see above)
-#   010-110                              — ASK hook series + SDK-on-mainline build/fix patches
+#   NNN-*.patch                          — ASK hook series for this kernel line (patches/kernel/<line>)
 # userpatches/ is the Armbian-standard location for extension-provided patches; the build
 # framework merges them with the committed patches in patch/kernel/ at build time. Runs
 # immediately before patching, after hashing (staging here does not perturb the kernel hash).
@@ -425,29 +430,32 @@ function kernel_extra_create_patches__ask_kernel_patches() {
 	# only our files and never blanket-rm's a user's own patches.
 	: > "${manifest}"
 
-	# 1. NXP SDK overlay (005) + ASK board device tree (006); both sort before the 010-110
-	#    hooks (005 provides the SDK sources those hooks edit).
+	# 1. NXP SDK overlay (005) + ASK board device tree (006); both sort before the ASK
+	#    series (005 provides the SDK sources those patches edit).
 	ask_synthesize_kernel_overlay_patches "${patch_dst}"
 	printf '%s\n' "005-nxp-sdk-overlay.patch" "006-mono-gateway-dk-devicetree.patch" >> "${manifest}"
 
-	# 2. ASK hook + fix series 010-110, straight from the pinned ASK tree. Skip the legacy
-	#    5.4 reference monolith (999-*); match every numeric-prefixed patch so nothing (e.g.
-	#    100+) is silently dropped. Each patch is filtered to drop drivers/staging/{Makefile,
+	# 2. ASK hook + fix series for this kernel line (patches/kernel/<major.minor>), straight
+	#    from the pinned ASK tree; match every numeric-prefixed patch so nothing (e.g. 100+)
+	#    is silently dropped. ASK lists the lines a release is qualified for in RELEASED_LINES;
+	#    refuse a release that does not list ours. Each patch is filtered to drop drivers/staging/{Makefile,
 	#    Kconfig} hunks — Armbian's driver harness echo-appends out-of-tree drivers
 	#    (rtl8723cs, ...) to those files BEFORE the ASK series, breaking patch context for the
 	#    SDK's fsl_qbman wiring; that wiring is re-added collision-proof post-patch in
 	#    custom_kernel_config__ask_modules. Non-staging hunks are preserved verbatim.
+	grep -qxF "${KERNEL_MAJOR_MINOR}" "${ASK_CACHE_DIR}/RELEASED_LINES" ||
+		exit_with_error "ASK release is not qualified for this kernel line (RELEASED_LINES)" "${KERNEL_MAJOR_MINOR}"
+	declare series_dir="${ASK_CACHE_DIR}/patches/kernel/${KERNEL_MAJOR_MINOR}"
 	declare ask_patch b staged=0
 	shopt -s nullglob
-	for ask_patch in "${ASK_CACHE_DIR}"/patches/kernel/[0-9]*.patch; do
+	for ask_patch in "${series_dir}"/[0-9]*.patch; do
 		b="$(basename "${ask_patch}")"
-		[[ "${b}" == 999-* ]] && continue
 		ask_strip_staging_wiring_hunks "${ask_patch}" "${patch_dst}/${b}"
 		echo "${b}" >> "${manifest}"
 		staged=$((staged + 1))
 	done
 	shopt -u nullglob
-	[[ "${staged}" -gt 0 ]] || exit_with_error "No ASK kernel patches found" "${ASK_CACHE_DIR}/patches/kernel/[0-9]*.patch"
+	[[ "${staged}" -gt 0 ]] || exit_with_error "No ASK kernel patches found" "${series_dir}/[0-9]*.patch"
 	display_alert "ASK extension" "staged SDK overlay + ${staged} ASK kernel patches in userpatches" "info"
 }
 
@@ -471,257 +479,118 @@ function post_family_config__cleanup_ask_kernel_patch() {
 	return 0
 }
 
-# Install module autoload config (modules are in the kernel .deb, just need the load list)
-function post_install_kernel_debs__ask_module_autoload() {
-	cp "${ASK_CACHE_DIR}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
-}
-
-# Copy patches into chroot before patched library builds (runs before build_ask_userspace)
-function pre_customize_image__000_prepare_ask_patches() {
-	# Stage per-package trees (version subdirs preserved) so rebuild_patched_deb
-	# can pick the patch matching the upstream source version.
-	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink")
-	for pdir in "${patch_dirs[@]}"; do
-		[[ -d "${ASK_CACHE_DIR}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ASK_CACHE_DIR}/patches/${pdir}"
-		mkdir -p "${SDCARD}/tmp/ask-patches/${pdir}"
-		cp -a "${ASK_CACHE_DIR}/patches/${pdir}/." "${SDCARD}/tmp/ask-patches/${pdir}/"
-	done
-
-	# Enable deb-src for apt-get source (handles both Debian and Ubuntu)
-	# deb822 format: *.sources files (Debian bookworm+, Ubuntu noble+)
-	# Legacy format: sources.list (older Debian/Ubuntu)
-	chroot_sdcard "shopt -s nullglob; \
-		for f in /etc/apt/sources.list.d/*.sources; do \
-			sed -i 's/^Types: deb\$/Types: deb deb-src/' \"\$f\"; \
-		done; \
-		if [ -f /etc/apt/sources.list ]; then \
-			sed -i 's/^#\\s*deb-src/deb-src/' /etc/apt/sources.list; \
-		fi && apt-get update -qq"
-	chroot_sdcard_apt_get_install dpkg-dev devscripts
-}
-
-# Build and install all ASK userspace components
+# Build and install the ASK userspace.
+#
+# ASK is flowtable-native (since 1.1.0): the whole userspace is one libc-only daemon,
+# ask-flowtable, built from the ASK repo's flowtable/ dir. It shells out to nft
+# and ip at runtime (RDEPENDS nftables, iproute2) and reconciles the nftables
+# flowtable that drives CDX hardware offload. The pre-1.1.0 stack (fmlib, fmc,
+# libfci, libcli, dpa-app, cmm), the patched libnetfilter-conntrack/libnfnetlink,
+# and the QOSMARK/QOSCONNMARK xtables extensions are all gone.
+#
+# The kernel modules (cdx, ask_flowtable) are built in-tree and ship in the
+# linux-image .deb; this function owns only the userspace package.
 function pre_customize_image__001_build_ask_userspace() {
-	display_alert "ASK extension" "building userspace components" "info"
+	display_alert "ASK extension" "building ask-flowtable userspace" "info"
 
 	local kernel_ver
 	kernel_ver=$(ls -1v "${SDCARD}/lib/modules/" | tail -1)
 	[[ -z "${kernel_ver}" ]] && exit_with_error "No kernel version found in ${SDCARD}/lib/modules/"
-	local kdir="/usr/src/linux-headers-${kernel_ver}"
 
-	# Install build dependencies and runtime packages in chroot
-	# iptables is a runtime dep — CMM uses QOSMARK rules via our xtables extensions
-	display_alert "ASK extension" "installing build dependencies" "info"
-	chroot_sdcard_apt_get_install build-essential \
-		pkg-config libxml2-dev libpcap-dev libcrypt-dev libtclap-dev libxtables-dev \
-		iptables
+	# Build toolchain (native arm64 under qemu) + runtime deps. ask-flowtable itself links only
+	# libc; nftables + iproute2 are the tools it shells out to at runtime.
+	display_alert "ASK extension" "installing build + runtime dependencies" "info"
+	chroot_sdcard_apt_get_install build-essential nftables iproute2
 
-	# Copy sources into chroot
+	# --- ask-flowtable (the entire userspace: one libc-only daemon) ---
+	display_alert "ASK extension" "building ask-flowtable" "info"
 	mkdir -p "${SDCARD}/tmp/ask-userspace"
+	cp -a "${ASK_CACHE_DIR}/${ASK_FLOWTABLE_DIR}" "${SDCARD}/tmp/ask-userspace/flowtable"
+	chroot_sdcard "cd /tmp/ask-userspace/flowtable && \
+		make CC=gcc clean || true && \
+		make CC=gcc all && \
+		install -D -m 755 src/ask-flowtable /usr/sbin/ask-flowtable" ||
+		exit_with_error "ask-flowtable build failed"
 
-	# --- fmlib ---
-	display_alert "ASK extension" "building fmlib" "info"
-	fetch_from_repo "${FMLIB_REPO}" "fmlib" "commit:${FMLIB_COMMIT}"
-	cp -a "${SRC}/cache/sources/fmlib" "${SDCARD}/tmp/ask-userspace/fmlib"
-	cp "${ASK_CACHE_DIR}/patches/fmlib/"*.patch "${SDCARD}/tmp/ask-userspace/"
+	# --- runtime config + units (staged into the rootfs, then snapshotted into the .deb) ---
+	# Offload policy (the daemon falls back to identical built-in defaults if absent).
+	install -D -m 644 "${ASK_CACHE_DIR}/config/offload.conf" "${SDCARD}/etc/ask/offload.conf"
 
-	chroot_sdcard "cd /tmp/ask-userspace/fmlib && \
-		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
-		make KERNEL_SRC=${kdir} libfm-arm.a && \
-		make DESTDIR=/ PREFIX=/usr LIB_DEST_DIR=/usr/lib/${ASK_HOST_TRIPLET} install-libfm-arm" ||
-		exit_with_error "fmlib build failed"
+	# Module autoload list. cdx + ask_flowtable are in-tree (linux-image); list them here so
+	# systemd-modules-load brings the data plane up at boot, in order (ask_flowtable needs cdx).
+	# mlan/moal are loaded by the gateway-dk-wifi package, not here.
+	install -d "${SDCARD}/etc/modules-load.d"
+	cat > "${SDCARD}/etc/modules-load.d/ask.conf" << 'ASKMOD'
+# ASK fast-path kernel modules, loaded in order at boot.
+# cdx brings up the DPAA/FMan offload hardware; ask_flowtable binds the
+# nftables flowtable to it and must load after cdx.
+cdx
+ask_flowtable
+# Connection tracking, which the Linux flowtable offloads from.
+nf_conntrack
+nf_conntrack_netlink
+# iptables conntrack match - needed to activate connection tracking
+xt_conntrack
+ASKMOD
 
-	# --- fmc ---
-	display_alert "ASK extension" "building fmc" "info"
-	fetch_from_repo "${FMC_REPO}" "fmc" "commit:${FMC_COMMIT}"
-	cp -a "${SRC}/cache/sources/fmc" "${SDCARD}/tmp/ask-userspace/fmc"
-	cp "${ASK_CACHE_DIR}/patches/fmc/"*.patch "${SDCARD}/tmp/ask-userspace/"
+	# systemd service. ASK ships recovery units + an ask-flowtable.service.d/ drop-in but leaves
+	# the base unit to the consumer (see the ASK repo's integration/README.md). This is the base
+	# unit for the phase-1, no-auto-recovery integration: the daemon supervises its own worker,
+	# and `service-start` double-forks it and waits on a readiness pipe (and no-ops cleanly if cdx
+	# is not loaded) — so Type=forking, mirroring the upstream SysV S50ask-flowtable contract.
+	install -d "${SDCARD}/etc/systemd/system"
+	cat > "${SDCARD}/etc/systemd/system/ask-flowtable.service" << 'ASKSVC'
+[Unit]
+Description=ASK hardware flow-offload service
+After=network-online.target systemd-modules-load.service
+Wants=network-online.target
 
-	chroot_sdcard "cd /tmp/ask-userspace/fmc && \
-		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
-		make MACHINE=ls1043 \
-			FMD_USPACE_HEADER_PATH=/usr/include/fmd \
-			FMD_USPACE_LIB_PATH=/usr/lib/${ASK_HOST_TRIPLET} \
-			LIBXML2_HEADER_PATH=/usr/include/libxml2 \
-			TCLAP_HEADER_PATH=/usr/include \
-			-C source && \
-		install -m 755 source/fmc /usr/bin/ && \
-		install -d /usr/include/fmc && \
-		install -m 644 source/fmc.h /usr/include/fmc/ && \
-		install -m 644 source/libfmc.a /usr/lib/${ASK_HOST_TRIPLET}/ && \
-		install -d /etc/fmc/config && \
-		install -m 644 etc/fmc/config/* /etc/fmc/config/" ||
-		exit_with_error "fmc build failed"
+[Service]
+Type=forking
+ExecStart=/usr/sbin/ask-flowtable service-start
+ExecStop=/usr/sbin/ask-flowtable service-stop
+ExecReload=/usr/sbin/ask-flowtable service-restart
 
-	# --- libcli ---
-	display_alert "ASK extension" "building libcli" "info"
-	fetch_from_repo "${LIBCLI_REPO}" "libcli" "commit:${LIBCLI_COMMIT}"
-	cp -a "${SRC}/cache/sources/libcli" "${SDCARD}/tmp/ask-userspace/libcli"
+[Install]
+WantedBy=multi-user.target
+ASKSVC
 
-	chroot_sdcard "cd /tmp/ask-userspace/libcli && \
-		make CFLAGS='-Wno-calloc-transposed-args' && \
-		make PREFIX=/usr DESTDIR=/ install" ||
-		exit_with_error "libcli build failed"
-
-	# --- libfci ---
-	display_alert "ASK extension" "building libfci" "info"
-	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}/lib" "${SDCARD}/tmp/ask-userspace/libfci"
-
-	chroot_sdcard "cd /tmp/ask-userspace/libfci && \
-		make && \
-		install -m 644 libfci.a /usr/lib/${ASK_HOST_TRIPLET}/ && \
-		install -m 644 include/libfci.h /usr/include/" ||
-		exit_with_error "libfci build failed"
-
-	# --- dpa-app ---
-	display_alert "ASK extension" "building dpa-app" "info"
-	cp -a "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}" "${SDCARD}/tmp/ask-userspace/dpa-app"
-	# Copy CDX header
-	mkdir -p "${SDCARD}/usr/include/cdx"
-	cp "${ASK_CACHE_DIR}/${ASK_CDX_DIR}/cdx_ioctl.h" "${SDCARD}/usr/include/cdx/"
-
-	chroot_sdcard "cd /tmp/ask-userspace/dpa-app && \
-		make CC=gcc \
-			CFLAGS='-DENDIAN_LITTLE -DLS1043 -DNCSW_LINUX -DDPAA_DEBUG_ENABLE -DSEC_PROFILE_SUPPORT -DVLAN_FILTER \
-				-I/usr/include/fmc -I/usr/include/fmd -I/usr/include/fmd/integrations \
-				-I/usr/include/fmd/Peripherals -I/usr/include/fmd/Peripherals/common -I/usr/include/cdx' \
-			LDFLAGS='-lfmc -lfm-arm -lstdc++ -lxml2 -lpthread -lcli' && \
-		install -m 755 dpa_app /usr/bin/" ||
-		exit_with_error "dpa-app build failed"
-
-	# Install DPA-App config files (from ASK repo)
-	cp "${ASK_CACHE_DIR}/config/gateway-dk/cdx_cfg.xml" "${SDCARD}/etc/"
-	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_pcd.xml" "${SDCARD}/etc/"
-	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/"
-
-	# --- xtables extensions (standalone .so files, not patching iptables) ---
-	# Note: we don't use pkg-config for libxtables here. These are dlopen()-loaded
-	# extensions — they don't link against libxtables.so, they use symbols resolved
-	# from the iptables process that loads them. The -I./include picks up our local
-	# xt_QOSMARK.h etc. UAPI headers which aren't in libxtables-dev (they're our
-	# additions). Adding -lxtables would cause duplicate symbol issues at load time.
-	local ask_xtables_modules=(libxt_qosmark libxt_QOSMARK libxt_qosconnmark libxt_QOSCONNMARK)
-	display_alert "ASK extension" "building xtables extensions" "info"
-	cp -a "${ASK_CACHE_DIR}/iptables-extensions" "${SDCARD}/tmp/ask-userspace/iptables-extensions"
-	chroot_sdcard "cd /tmp/ask-userspace/iptables-extensions && \
-		for name in ${ask_xtables_modules[*]}; do \
-			gcc -shared -fPIC -O2 \
-				-I./include \
-				-o \"\${name}.so\" \"\${name}.c\" || exit 1; \
-		done && \
-		install -d /usr/lib/${ASK_HOST_TRIPLET}/xtables && \
-		for name in ${ask_xtables_modules[*]}; do \
-			install -m 644 \"\${name}.so\" /usr/lib/${ASK_HOST_TRIPLET}/xtables/ || exit 1; \
-		done" ||
-		exit_with_error "xtables extensions build failed"
-
-	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
-	build_ask_patched_libraries
-
-	# --- cmm ---
-	display_alert "ASK extension" "building cmm" "info"
-	cp -a "${ASK_CACHE_DIR}/${ASK_CMM_DIR}" "${SDCARD}/tmp/ask-userspace/cmm"
-	# Copy auto-bridge header for CMM
-	cp "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}/include/auto_bridge.h" "${SDCARD}/usr/include/"
-
-	# CMM's Makefile sets base CFLAGS (with +=) internally and uses pkg-config for
-	# libnetfilter_conntrack. auto_bridge.h already at /usr/include, libfci built in-tree.
-	# Extra defines passed as env var so Makefile's += appends to them (not overrides).
-	chroot_sdcard "cd /tmp/ask-userspace/cmm && \
-		make clean || true && \
-		CFLAGS='-DFLOW_STATS -DSEC_PROFILE_SUPPORT -DUSE_QOSCONNMARK \
-			-DENABLE_INGRESS_QOS -DIPSEC_NO_FLOW_CACHE -DVLAN_FILTER' \
-		make \
-			LIBFCI_DIR=/tmp/ask-userspace/libfci \
-			ABM_DIR=/usr \
-			SYSROOT=/ && \
-		install -m 755 src/cmm /usr/bin/" ||
-		exit_with_error "cmm build failed"
-
-	# Install and enable CMM service (from ASK repo)
-	# Guarded by ConditionPathExists=/dev/cdx_ctrl — won't start without ASK FMAN ucode on NOR
-	cp "${ASK_CACHE_DIR}/config/cmm.service" "${SDCARD}/etc/systemd/system/"
-	mkdir -p "${SDCARD}/etc/config"
-	cp "${ASK_CACHE_DIR}/config/fastforward" "${SDCARD}/etc/config/"
-	chroot_sdcard systemctl enable cmm.service
-
-	# Pin patched packages — ASK patches add kernel offloading hooks (comcerto-fp,
-	# QOSMARK/QOSCONNMARK) that don't exist upstream.  An apt upgrade would replace
-	# them with vanilla Debian builds and break CMM/CDX data-plane acceleration.
-	# These are shipped as separate .debs (not bundled into gateway-dk-ask) because
-	# they replace system packages and must be managed by dpkg as proper overrides.
-	# The postinst re-applies holds on every upgrade. Security updates must be
-	# tracked and re-patched manually.
-	display_alert "ASK extension" "pinning patched packages" "info"
-	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0"
-
-	# Install sysctl tuning for conntrack
-	install -Dm 644 "${SRC}/packages/bsp/gateway-dk/99-ls1046a-conntrack.conf" \
+	# Conntrack sysctl tuning for the offload path.
+	install -D -m 644 "${SRC}/packages/bsp/gateway-dk/99-ls1046a-conntrack.conf" \
 		"${SDCARD}/etc/sysctl.d/99-ls1046a-conntrack.conf"
 
-	# Cleanup build sources
-	rm -rf "${SDCARD}/tmp/ask-userspace" "${SDCARD}/tmp/ask-patches"
+	# Enable the service in the image (started at first boot; no-ops if cdx is absent).
+	chroot_sdcard systemctl enable ask-flowtable.service
 
-	# --- Package ASK userspace as a .deb (kernel modules are in linux-image .deb) ---
+	# Cleanup build sources
+	rm -rf "${SDCARD}/tmp/ask-userspace"
+
+	# --- Package the userspace as a .deb (kernel modules ship in linux-image) ---
 	display_alert "ASK extension" "packaging ASK userspace .deb" "info"
 	local pkgname="gateway-dk-ask"
 	local pkgdir
 	pkgdir=$(mktemp -d)
 	mkdir -p "${pkgdir}/DEBIAN"
 
-	# Snapshot userspace files into package tree
 	local -a ask_files=(
-		usr/bin/fmc
-		usr/bin/dpa_app
-		usr/bin/cmm
-		etc/fmc
-		etc/cdx_cfg.xml
-		etc/cdx_pcd.xml
-		etc/cdx_sp.xml
-		etc/systemd/system/cmm.service
-		etc/config/fastforward
+		usr/sbin/ask-flowtable
+		etc/ask/offload.conf
+		etc/modules-load.d/ask.conf
+		etc/systemd/system/ask-flowtable.service
 		etc/sysctl.d/99-ls1046a-conntrack.conf
-		usr/include/fmc
-		usr/include/fmd
-		usr/include/libfci.h
-		usr/include/cdx
-		usr/include/auto_bridge.h
 	)
+	local f
 	for f in "${ask_files[@]}"; do
-		if [[ -e "${SDCARD}/${f}" ]]; then
-			mkdir -p "$(dirname "${pkgdir}/${f}")"
-			cp -a "${SDCARD}/${f}" "${pkgdir}/${f}"
-		fi
-	done
-	# Libraries — snapshot all ASK-installed libs from chroot
-	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}"
-	for lib in libfm-arm.a libfmc.a; do
-		[[ -f "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" ]] &&
-			cp -a "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/"
-	done
-	for pattern in libcli libfci; do
-		for f in "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/"${pattern}*; do
-			[[ -f "$f" ]] && cp -a "$f" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/"
-		done
+		[[ -e "${SDCARD}/${f}" ]] || exit_with_error "ASK userspace file missing" "${f}"
+		mkdir -p "$(dirname "${pkgdir}/${f}")"
+		cp -a "${SDCARD}/${f}" "${pkgdir}/${f}"
 	done
 
-	# xtables extensions — use the same explicit list as the build step
-	local ask_xtables_modules=(libxt_qosmark libxt_QOSMARK libxt_qosconnmark libxt_QOSCONNMARK)
-	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables"
-	for name in "${ask_xtables_modules[@]}"; do
-		local src="${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/${name}.so"
-		[[ -f "${src}" ]] || exit_with_error "xtables extension missing" "${name}.so"
-		cp -a "${src}" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"
-	done
-
-	# Version: kernel version + build date — allows bugfix rebuilds without kernel change
+	# Version: kernel version + build date — allows userspace bugfix rebuilds without a kernel
+	# change. Depends uses >= on linux-image (not =): ask-flowtable shells out to nft/ip and does
+	# not link the kernel modules, so a kernel point-release needs no ASK userspace rebuild.
 	local ask_version="${kernel_ver}+$(date +%Y%m%d)"
 
-	# Depends uses >= (not =): this is intentional. The kernel may receive minor version bumps
-	# without ASK changes. Using = would require rebuilding ASK for every kernel point release
-	# even when the modules are unchanged. The modules are ABI-compatible within the same
-	# LINUXFAMILY and BRANCH. DKMS is not used — this is a controlled appliance where both
-	# packages are built and validated together.
 	cat > "${pkgdir}/DEBIAN/control" << EOF
 Package: ${pkgname}
 Version: ${ask_version}
@@ -729,51 +598,37 @@ Architecture: arm64
 Section: net
 Priority: optional
 Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
-Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2 | libxml2-16, libpcap0.8, iptables
-Description: NXP ASK hardware offloading userspace for Mono Gateway DK
- Userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) and configuration
- for NXP ASK data-plane acceleration on the LS1046A Gateway DK.
- Kernel modules (CDX, FCI, auto-bridge, sfp-led, leds-lp5812) are in the
- linux-image package.
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), nftables, iproute2
+Description: NXP ASK hardware flow-offload userspace for Mono Gateway DK
+ The ask-flowtable daemon maintains the nftables flowtable that drives NXP ASK
+ CDX/FMan hardware offload on the LS1046A Gateway DK. The CDX and ask_flowtable
+ kernel modules ship in the linux-image package.
 EOF
 
-	cat > "${pkgdir}/DEBIAN/postinst" << EOF
+	cat > "${pkgdir}/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 systemctl daemon-reload || true
-ldconfig || true
-# Enable CMM service on OTA install (guarded by ConditionPathExists=/dev/cdx_ctrl at runtime)
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable cmm.service 2>/dev/null || true
+    systemctl enable ask-flowtable.service 2>/dev/null || true
 fi
-# Re-pin patched ASK libraries — vanilla Debian versions break CMM/CDX offloading
-apt-mark hold libnetfilter-conntrack3 libnfnetlink0 2>/dev/null || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postinst"
 
 	cat > "${pkgdir}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
-systemctl stop cmm.service 2>/dev/null || true
+systemctl stop ask-flowtable.service 2>/dev/null || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/prerm"
 
-	cat > "${pkgdir}/DEBIAN/postrm" << EOF
+	cat > "${pkgdir}/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
-ldconfig || true
 systemctl daemon-reload || true
-if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
-    apt-mark unhold libnetfilter-conntrack3 libnfnetlink0 2>/dev/null || true
-fi
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postrm"
 
 	cat > "${pkgdir}/DEBIAN/conffiles" << 'CONFFILES'
-/etc/cdx_cfg.xml
-/etc/cdx_pcd.xml
-/etc/cdx_sp.xml
-/etc/config/fastforward
-/etc/fmc/config/cfgdata.xsd
-/etc/fmc/config/hxs_pdl_v3.xml
-/etc/fmc/config/netpcd.xsd
+/etc/ask/offload.conf
+/etc/modules-load.d/ask.conf
 /etc/sysctl.d/99-ls1046a-conntrack.conf
 CONFFILES
 
@@ -808,7 +663,7 @@ function pre_customize_image__002_build_wifi() {
 
 	# Driver: small repo, fetch via Armbian's helper. Firmware: the NXP imx-firmware tree is
 	# huge (all i.MX firmware), so pull ONLY the one image dir with a shallow sparse checkout
-	# — same as OpenWrt's package/firmware/nxp-wifi-firmware. Re-fetch only when the pin moves.
+	# of FwImage_9098_PCIE. Re-fetch only when the pin moves.
 	fetch_from_repo "${NXP_MWIFIEX_REPO}" "nxp-mwifiex" "commit:${NXP_MWIFIEX_COMMIT}"
 	local fwcache="${SRC}/cache/sources/nxp-wifi-firmware"
 	if [[ "$(cat "${fwcache}/.mono-fw-ref" 2> /dev/null)" != "${NXP_WIFI_FW_COMMIT}" ]]; then
@@ -827,15 +682,15 @@ function pre_customize_image__002_build_wifi() {
 	cp -a "${SRC}/cache/sources/nxp-mwifiex" "${SDCARD}/tmp/wifi/mwifiex"
 
 	# Mainline cfg80211 compat: the driver gates set_monitor_channel's net_device arg on
-	# >= 6.13, but the 6.12.y stable series backported that one API in 6.12.101. OpenWrt
-	# sidesteps this via mac80211 backports; the in-kernel cfg80211 build needs this one-op fix.
+	# >= 6.13, but the 6.12.y stable series backported that one API in 6.12.101; the in-kernel
+	# cfg80211 build needs this one-op fix.
 	run_host_command_logged patch -p1 -d "${SDCARD}/tmp/wifi/mwifiex" \
 		< "${SRC}/packages/bsp/gateway-dk/mwifiex-cfg80211-set_monitor_channel.patch"
 
 	# Build mlan.ko + moal.ko against the kernel headers. PCIe-9098 only (every other SDIO/USB/
-	# PCIe variant off); cfg80211 fullmac, STA + uAP, no WEXT. Flags mirror OpenWrt's
-	# package/kernel/nxp-mwifiex and are passed as command-line vars so they override the driver
-	# Makefile's own CPTCFG/CONFIG_CFG80211 autodetection. Native arm64 build under qemu — slow.
+	# PCIe variant off); cfg80211 fullmac, STA + uAP, no WEXT. Flags are passed as command-line
+	# vars so they override the driver Makefile's own CPTCFG/CONFIG_CFG80211 autodetection.
+	# Native arm64 build under qemu — slow.
 	chroot_sdcard "cd /tmp/wifi/mwifiex && make -j\$(nproc) KERNELDIR=${kdir} ARCH=arm64 \
 		CONFIG_PCIE9098=y CONFIG_SD8978=n CONFIG_SD8987=n CONFIG_SD9177=n CONFIG_SD9098=n \
 		CONFIG_SDIW610=n CONFIG_USBIW610=n CONFIG_SDAW693=n CONFIG_PCIEAW693=n \
@@ -918,59 +773,4 @@ EOF
 	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get install -y /root/${debfile}" ||
 		exit_with_error "gateway-dk-wifi install failed"
 	rm -f "${SDCARD}/root/${debfile}"
-}
-
-# Build patched versions of system libraries
-function build_ask_patched_libraries() {
-	# Install all build dependencies upfront
-	display_alert "ASK extension" "installing build deps for patched libraries" "info"
-	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -y build-dep \
-		libnetfilter-conntrack libnfnetlink"
-
-	# Staging dir for patched .debs (saved to output later)
-	mkdir -p "${SDCARD}/tmp/ask-patched-debs"
-
-	# Rebuild each patched library in an isolated directory
-	rebuild_patched_deb "libnetfilter-conntrack" \
-		"01-nxp-ask-comcerto-fp-extensions.patch" \
-		"libnetfilter-conntrack3_*.deb libnetfilter-conntrack-dev_*.deb"
-
-	rebuild_patched_deb "libnfnetlink" \
-		"01-nxp-ask-nonblocking-heap-buffer.patch" \
-		"libnfnetlink0_*.deb libnfnetlink-dev_*.deb"
-
-	# Copy patched .debs to output for distribution
-	mkdir -p "${SRC}/output/debs"
-	cp "${SDCARD}"/tmp/ask-patched-debs/*.deb "${SRC}/output/debs/" 2> /dev/null || true
-	rm -rf "${SDCARD}/tmp/ask-patched-debs"
-}
-
-# Helper: rebuild a Debian package with an ASK patch in an isolated chroot directory.
-# Usage: rebuild_patched_deb <pkg_name> <patch_file> <deb_globs>
-# The patch is resolved under /tmp/ask-patches/<pkg>/<upstream_version>/<patch_file>,
-# where <upstream_version> is parsed from the source tree's debian/changelog after
-# apt-get source. This lets a single ASK repo cover multiple target distros whose
-# upstream library versions differ (e.g. Trixie/Noble 1.1.0 vs Resolute 1.1.1).
-function rebuild_patched_deb() {
-	local pkg="$1" patch="$2" debs="$3"
-	local workdir="/tmp/ask-rebuild-${pkg}"
-
-	display_alert "ASK extension" "rebuilding ${pkg}" "info"
-	# Note: ${debs} is intentionally unquoted — it contains globs that must expand in the chroot
-	chroot_sdcard "set -e && \
-		rm -rf '${workdir}' && mkdir -p '${workdir}' && cd '${workdir}' && \
-		apt-get source '${pkg}' && \
-		cd \$(ls -d ${pkg}-*/ | head -1) && \
-		upstream_ver=\$(dpkg-parsechangelog -l debian/changelog -S Version \
-			| sed -E 's/^[0-9]+://; s/-[^-]+\$//; s/^([0-9]+\\.[0-9]+\\.[0-9]+).*/\\1/') && \
-		patch_path=\"/tmp/ask-patches/${pkg}/\${upstream_ver}/${patch}\" && \
-		if [ ! -f \"\${patch_path}\" ]; then \
-			echo \"ERROR: no ASK patch for ${pkg} upstream \${upstream_ver} (looked for \${patch_path})\" >&2; \
-			exit 1; \
-		fi && \
-		patch -p1 < \"\${patch_path}\" && \
-		DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
-		cd '${workdir}' && dpkg -i ${debs} && \
-		cp ${debs} /tmp/ask-patched-debs/ && \
-		rm -rf '${workdir}'" || exit_with_error "${pkg} rebuild failed"
 }
