@@ -687,11 +687,16 @@ function pre_customize_image__002_build_wifi() {
 	mkdir -p "${SDCARD}/tmp/wifi"
 	cp -a "${SRC}/cache/sources/nxp-mwifiex" "${SDCARD}/tmp/wifi/mwifiex"
 
-	# Mainline cfg80211 compat: the driver gates set_monitor_channel's net_device arg on
-	# >= 6.13, but the 6.12.y stable series backported that one API in 6.12.101; the in-kernel
-	# cfg80211 build needs this one-op fix.
-	run_host_command_logged patch -p1 -d "${SDCARD}/tmp/wifi/mwifiex" \
-		< "${SRC}/packages/bsp/gateway-dk/mwifiex-cfg80211-set_monitor_channel.patch"
+	# ASK carries the driver's fixes for this kernel line (cfg80211 set_monitor_channel compat,
+	# skb ownership, ralist locking, scan teardown, ...) next to its Yocto recipe; apply them
+	# in order from the pinned ASK tree rather than keep a drifting copy here.
+	local wifi_patch wifi_patches=0
+	for wifi_patch in "${ASK_CACHE_DIR}/meta-ask/recipes-kernel/nxp-mwifiex/files/${KERNEL_MAJOR_MINOR}"/[0-9]*.patch; do
+		[[ -f "${wifi_patch}" ]] || continue
+		run_host_command_logged patch -p1 -d "${SDCARD}/tmp/wifi/mwifiex" < "${wifi_patch}"
+		wifi_patches=$((wifi_patches + 1))
+	done
+	[[ "${wifi_patches}" -gt 0 ]] || exit_with_error "No mwifiex patches in the ASK tree for kernel line" "${KERNEL_MAJOR_MINOR}"
 
 	# Build mlan.ko + moal.ko against the kernel headers. PCIe-9098 only (every other SDIO/USB/
 	# PCIe variant off); cfg80211 fullmac, STA + uAP, no WEXT. Flags are passed as command-line
