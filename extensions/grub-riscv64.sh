@@ -121,10 +121,10 @@ configure_grub() {
 	# regenerate grub.cfg from there. Plymouth handles the
 	# "no theme installed" / "no DRM" cases gracefully.
 	# (No i915.force_probe here — that's an x86 Intel-graphics
-	# driver knob and is meaningless on riscv64. No 'quiet' /
-	# 'loglevel=3' either: kernel boot messages stay visible
-	# underneath the splash so users can see what's happening.)
-	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles"
+	# driver knob and is meaningless on riscv64. No 'quiet' either.)
+	# 'loglevel=3', as in extensions/grub.sh: the console shows critical
+	# kernel messages only. 'dmesg' and the journal keep all messages.
+	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles loglevel=3"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
