@@ -16,6 +16,8 @@ function post_family_tweaks__uefi_initramfs() {
 	echo "COMPRESS=zstd" > "${SDCARD}"/etc/initramfs-tools/conf.d/armbian-uefi.conf
 	install -Dm755 "$SRC/packages/bsp/uefi/armbian-initramfs-dep" "${SDCARD}/usr/lib/armbian/armbian-initramfs-dep"
 	install -Dm644 "$SRC/packages/bsp/uefi/armbian-initramfs-dep.service" "${SDCARD}/usr/lib/systemd/system/armbian-initramfs-dep.service"
+	# Keep the boot disk drivers. Else a copy to another disk does not boot.
+	install -Dm755 "$SRC/packages/bsp/uefi/armbian-initramfs-boot-storage" "${SDCARD}/etc/initramfs-tools/hooks/armbian-boot-storage"
 	chroot_sdcard systemctl --no-reload enable armbian-initramfs-dep.service
 }
 
