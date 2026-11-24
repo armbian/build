@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juanesf <juanesf91@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 00:00:00 +0000
+Subject: [PATCH] sunxi: a733: reset the FE1.1S hub via VBUSM (PM5) in the SPL
+
+The Radxa Cubie A7A has an FE1.1S USB 2.0 hub (U6) on the third USB2
+PHY (USB2-DP/DM, balls C36/B37), i.e. the DWC3/xHCI upstream port. The
+hub is strapped self-powered (BUSJ=1 via R61) and therefore uses VBUSM
+(pin 16) as its upstream VBUS detector: a low level makes it drop the
+1.5k pull-up on DPU and restart the upstream link state machine, even
+though VD33 (DCDC1 via R58) and VDD5 (VCC5V0_SYS via FB3) are always
+present. VBUSM is driven by USB_HOST_EN (PM5, ball N36) through R59;
+the same PM5 also enables U5 (VCC5V0_USB20).
+
+The vendor boot0 starts with PM5 low, so the hub sees a 0->1 edge on
+VBUSM at power-on and presents its D+ pull-up. The mainline SPL
+inherits PM5 high and never produces that edge: the xHCI USB2 port
+stays CCS=0 and neither the hub (1a40:0101) nor the AIC8800 behind it
+(a69c:8d81) enumerate. This reproduces on both our 7.4 port and on
+Jernej's a733-display-wip tree with all VBUS regulators enabled.
+
+Reproduce the edge at the earliest safe point: right after the AXP8191
+probe in sunxi_pmic_init_a733(), while the R_PIO bank is already
+clocked and long before U-Boot or Linux probe the DWC3. Drive PM5 low
+for 30 ms, then high again. No SoC/PMIC rail is touched.
+
+NOTE: cycling DCDC1 is deliberately NOT used. DCDC1 also feeds VCC-PL
+(via R110), which powers PL0/PL1 (S-TWI0) - the very I2C bus used to
+talk to the AXP318 - and SWOUT1/SWOUT2; dropping it would hang the SPL.
+
+Signed-off-by: Juanesf <juanesf91@users.noreply.github.com>
+---
+ arch/arm/mach-sunxi/dram_sun60i_a733.c | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun60i_a733.c b/arch/arm/mach-sunxi/dram_sun60i_a733.c
+--- a/arch/arm/mach-sunxi/dram_sun60i_a733.c
++++ b/arch/arm/mach-sunxi/dram_sun60i_a733.c
+@@ -1857,6 +1857,39 @@
+ 		       val, AXP8191_CHIP_ID_VAL);
+ 	}
+ 
++	/* 6b. Reset the FE1.1S USB 2.0 hub via its VBUSM input.
++	 *
++	 * U6 (FE1.1S) is strapped self-powered (BUSJ=1, R61 pull-up), so it
++	 * uses VBUSM (pin 16) as the upstream VBUS detector: a low level
++	 * makes it drop the 1.5k pull-up on DPU and restart its upstream
++	 * link state machine, even with VD33/VDD5 always present. VBUSM is
++	 * fed from USB_HOST_EN (PM5) through R59; the same PM5 also enables
++	 * U5 (VCC5V0_USB20). DCDC1/VCC_3V3_USB20HUB must NOT be cycled: it
++	 * also feeds VCC-PL and would kill the S-TWI0 bus used here.
++	 *
++	 * boot0 starts with PM5 low, so the hub sees the 0->1 edge. The
++	 * mainline SPL inherits PM5 high and never produces it. Reproduce
++	 * the edge here, while the R_PIO bank is already clocked and before
++	 * U-Boot/Linux probe the DWC3 (third PHY, USB2-DP/DM at C36/B37).
++	 */
++	{
++		void __iomem *r_pio = IOMEM(0x07025000);
++		u32 pm_cfg0, pm_dat;
++
++		/* PM5: mux = output (PM_CFG0 bits [23:20] = 0x1) */
++		pm_cfg0 = readl(r_pio + 0x20);
++		clrsetbits_le32(r_pio + 0x20, 0xf << 20, 0x1 << 20);
++
++		pm_dat = readl(r_pio + 0x40);
++		clrbits_le32(r_pio + 0x40, BIT(5));   /* VBUSM = 0, U5 off */
++		mdelay(30);                            /* hub drops DPU pull-up */
++		setbits_le32(r_pio + 0x40, BIT(5));    /* VBUSM = 1, re-attach */
++		mdelay(5);
++
++		printf("PMIC: cycled USB_HOST_EN (PM5) for FE1.1S VBUSM reset (cfg %08x, dat %08x -> %08x)\n",
++		       pm_cfg0, pm_dat, readl(r_pio + 0x40));
++	}
++
+ 	/* 7. LPDDR5 PMIC Sequence from running Linux / boot0 axp8191_live_regs.txt:
+ 	 * Sets DCDC1..9 voltages and enables, DC1SW1/2 switches, and all LDOs (BLDOs @ 1.8V for DRAM VDD1) */
+ 	static const struct {

@@ -1,0 +1,119 @@
+From: Juan Sanchez <juanesf91@gmail.com>
+Subject: [PATCH] arm64: dts: allwinner: a733: enable the Cubie A7A USB hub
+
+Add fixed VBUS regulators for the FE1.1S hub and the USB 3.0 port.
+Wire them to the DWC3 glue and keep the root ports powered.
+Wire the allwinner,sram phandle used by U2P0 PHY calibration.
+Set USB2 clock parents and rates to the BSP values.
+Leave the AXP318 dcdc8 node unchanged.
+
+Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
+Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
+---
+diff --git a/Documentation/devicetree/bindings/usb/snps,dwc3.yaml b/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
+index 4380bb6fa2f0..409a2e999d4b 100644
+--- a/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
++++ b/Documentation/devicetree/bindings/usb/snps,dwc3.yaml
+@@ -75,6 +75,14 @@ properties:
+   resets:
+     minItems: 1
+ 
++  snps,keep-roothub-ports-powered:
++    description:
++      Do not clear the PORT_POWER bit of the xHCI root hub ports when
++      switching the DWC3 to host mode. Needed on platforms where VBUS is
++      provided by an always-on external supply and the xHCI does not
++      re-assert PP after its reset.
++    type: boolean
++
+ unevaluatedProperties: false
+ 
+ required:
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7a.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7a.dts
+index 33babe5ac93c..78965a125ee6 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7a.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7a.dts
+@@ -102,6 +102,32 @@ reg_pcie_3v3: pcie-3v3 {
+ 		enable-active-high;
+ 	};
+ 
++	/* U5: VBUS of the four downstream ports behind the FE1.1S hub.
++	 * USB_HOST_EN = PM5. Without this the hub and the AIC8800 on its
++	 * port 4 never see VBUS and do not present on USB2/EHCI1. */
++	reg_usb_host_en: usb-host-en {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc5v0-usb20";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		vin-supply = <&reg_vcc5v>;
++		gpio = <&r_pio 1 5 GPIO_ACTIVE_HIGH>; /* PM5 */
++		enable-active-high;
++		regulator-always-on;
++	};
++
++	/* U2: VBUS of the USB 3.0 Type-A / OTG port (USB0-DRVVBUS = PL2). */
++	reg_usb0_drvvbus: usb0-drvvbus {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc5v0-usb30-otg";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		vin-supply = <&reg_vcc5v>;
++		gpio = <&r_pio 0 2 GPIO_ACTIVE_HIGH>; /* PL2 */
++		enable-active-high;
++		regulator-always-on;
++	};
++
+ 	reg_ldo2v5: ldo2v5 {
+ 		/* SY8089A buck feeding the PMIC BLDO and CLDO groups */
+ 		compatible = "regulator-fixed";
+@@ -589,17 +618,25 @@ flash@0 {
+ };
+ 
+ &usb3 {
++	/* VBUS load switch for the USB2 side (FE1.1S hub / AIC8800 path).
++	 * dwc3-of-simple enables it before the child dwc3 probes. */
++	vbus-supply = <&reg_usb_host_en>;
+ 	/* No combo PHY in use, take the PIPE clock from the USB2 side */
+ 	assigned-clocks = <&serdes_ccu CLK_SERDES_USB3_PIPE>,
+ 			  <&ccu CLK_USB2_SUSPEND>,
++			  <&ccu CLK_USB2_U2_REF>,
+ 			  <&ccu CLK_USB2_U3_UTMI>,
+ 			  <&ccu CLK_USB2_U2_PIPE>;
+-	assigned-clock-parents = <&ccu CLK_USB2_U2_PIPE>, <&ccu CLK_SYS_24M>;
+-	assigned-clock-rates = <0>, <0>, <300000000>, <480000000>;
++	assigned-clock-parents = <&ccu CLK_USB2_U2_PIPE>,
++				 <&ccu CLK_SYS_24M>,
++				 <&ccu CLK_SYS_24M>;
++	assigned-clock-rates = <0>, <0>, <0>, <300000000>, <480000000>;
+ 	status = "okay";
+ };
+ 
+ &usbphy {
++	usb0_vbus-supply = <&reg_usb0_drvvbus>;
++	usb1_vbus-supply = <&reg_usb_host_en>;
+ 	status = "okay";
+ };
+ 
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 000bb68cc286..6fd3f625fb2f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -779,6 +779,7 @@ usbphy: phy@4100400 {
+ 				      "usb1_reset",
+ 				      "usb2_reset";
+ 			power-domains = <&pck600 PD_USB2>;
++			allwinner,sram = <&syscon>;
+ 			status = "disabled";
+ 			#phy-cells = <1>;
+ 		};
+@@ -927,6 +928,10 @@ dwc3: usb@6a00000 {
+ 				maximum-speed = "high-speed";
+ 				snps,dis_u2_susphy_quirk;
+ 				snps,dis_enblslpm_quirk;
++				/* VBUS is provided by an always-on switch (PM5); the
++				 * xHCI here never re-asserts PP after its reset, so
++				 * skip dwc3_power_off_all_roothub_ports(). */
++				snps,keep-roothub-ports-powered;
+ 			};
+ 		};
+ 

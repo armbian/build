@@ -1,0 +1,53 @@
+From: Juan Sanchez <juanesf91@gmail.com>
+Subject: [PATCH] regulator: axp20x: cycle AXP318 rails across the 1.54 V threshold
+
+AXP318 DCDC6/7/8/9 cannot cross the 1.54 V boundary while a rail is on.
+axp318_threshold_check() returns -EBUSY and aborts regulator registration.
+Cycle the rail off, write the selector, and restore the prior state.
+Rails already off and non-crossing transitions keep the existing path.
+
+Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
+Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
+---
+diff --git a/drivers/regulator/axp20x-regulator.c b/drivers/regulator/axp20x-regulator.c
+--- a/drivers/regulator/axp20x-regulator.c
++++ b/drivers/regulator/axp20x-regulator.c
+@@ -658,13 +658,36 @@
+ static int axp318_threshold_set_voltage_sel(struct regulator_dev *rdev,
+ 					    unsigned int sel)
+ {
+-	int ret;
++	int ret, enabled;
++
++	enabled = rdev->desc->ops->is_enabled(rdev);
++	if (enabled < 0)
++		return enabled;
++
++	/* The AXP318 allows any voltage while the rail is off, but not crossing
++	 * the 1.54 V boundary while it is on. */
++	if (!enabled)
++		return regulator_set_voltage_sel_regmap(rdev, sel);
+ 
+ 	ret = axp318_threshold_check(rdev, sel);
++	if (ret != -EBUSY) {
++		if (ret < 0)
++			return ret;
++
++		return regulator_set_voltage_sel_regmap(rdev, sel);
++	}
++
++	ret = regulator_disable_regmap(rdev);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	return regulator_set_voltage_sel_regmap(rdev, sel);
++	ret = regulator_set_voltage_sel_regmap(rdev, sel);
++	if (ret < 0) {
++		regulator_enable_regmap(rdev);
++		return ret;
++	}
++
++	return regulator_enable_regmap(rdev);
+ }
+ 
+ static const struct regulator_ops axp20x_ops_fixed = {

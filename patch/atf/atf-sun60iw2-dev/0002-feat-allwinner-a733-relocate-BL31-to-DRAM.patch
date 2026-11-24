@@ -1,0 +1,136 @@
+From e396d1e1daafe371fca380aaf873b4ad20c258ea Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Thu, 17 Sep 2026 10:11:00 +1000
+Subject: [PATCH 2/6] feat(allwinner): a733: relocate BL31 to DRAM
+
+The Allwinner A733 U-Boot SPL is ~136 KB due to embedded LPDDR5 PMU
+firmware, leaving insufficient contiguous SRAM to host BL31 alongside SPL
+without collision.
+
+Relocate BL31 to DRAM at 0x48000000 (the 2 MB reservation traditionally
+labeled SRAM A2 in vendor firmwares). Link unified contiguous sections
+with SEPARATE_NOBITS_REGION := 0, map the BL31 DRAM execution region as
+secure memory, and register a reserved-memory node in the device tree to
+protect BL31 from non-secure OS payloads.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+---
+ plat/allwinner/common/include/platform_def.h    | 13 ++++++++++++-
+ plat/allwinner/common/sunxi_common.c            | 12 ++++++++++++
+ plat/allwinner/common/sunxi_prepare_dtb.c       |  8 +++++++-
+ plat/allwinner/sun60i_a733/include/sunxi_mmap.h | 14 +++++---------
+ plat/allwinner/sun60i_a733/platform.mk          |  2 +-
+ 5 files changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/plat/allwinner/common/include/platform_def.h b/plat/allwinner/common/include/platform_def.h
+index 5940737d8e..80cd6e4b06 100644
+--- a/plat/allwinner/common/include/platform_def.h
++++ b/plat/allwinner/common/include/platform_def.h
+@@ -13,7 +13,18 @@
+ 
+ #include <sunxi_mmap.h>
+ 
+-#ifdef SUNXI_BL31_IN_DRAM
++#ifdef PLAT_sun60i_a733
++
++#define BL31_BASE			SUNXI_BL31_DRAM_BASE
++#define BL31_LIMIT			(SUNXI_BL31_DRAM_BASE + \
++					 SUNXI_BL31_DRAM_SIZE)
++
++#define MAX_XLAT_TABLES			4
++#define PLAT_VIRT_ADDR_SPACE_SIZE	(1ULL << 32)
++
++#define SUNXI_BL33_VIRT_BASE		PRELOADED_BL33_BASE
++
++#elif defined(SUNXI_BL31_IN_DRAM)
+ 
+ #define BL31_BASE			SUNXI_DRAM_BASE
+ #define BL31_LIMIT			(SUNXI_DRAM_BASE + 0x40000)
+diff --git a/plat/allwinner/common/sunxi_common.c b/plat/allwinner/common/sunxi_common.c
+index 62f4fcbd9e..c8b8eb31f5 100644
+--- a/plat/allwinner/common/sunxi_common.c
++++ b/plat/allwinner/common/sunxi_common.c
+@@ -16,6 +16,17 @@
+ #include <sunxi_mmap.h>
+ #include <sunxi_private.h>
+ 
++#ifdef PLAT_sun60i_a733
++static const mmap_region_t sunxi_mmap[MAX_STATIC_MMAP_REGIONS + 1] = {
++	MAP_REGION_FLAT(SUNXI_DEV_BASE, SUNXI_DEV_SIZE,
++			MT_DEVICE | MT_RW | MT_SECURE | MT_EXECUTE_NEVER),
++	MAP_REGION(PRELOADED_BL33_BASE, SUNXI_BL33_VIRT_BASE,
++		   SUNXI_DRAM_MAP_SIZE, MT_RW_DATA | MT_NS),
++	MAP_REGION_FLAT(BL31_BASE, BL31_LIMIT - BL31_BASE,
++			MT_MEMORY | MT_RW | MT_SECURE),
++	{},
++};
++#else
+ static const mmap_region_t sunxi_mmap[MAX_STATIC_MMAP_REGIONS + 1] = {
+ 	MAP_REGION_FLAT(SUNXI_SRAM_BASE, SUNXI_SRAM_SIZE,
+ 			MT_DEVICE | MT_RW | MT_SECURE | MT_EXECUTE_NEVER),
+@@ -25,6 +36,7 @@ static const mmap_region_t sunxi_mmap[MAX_STATIC_MMAP_REGIONS + 1] = {
+ 		   SUNXI_DRAM_MAP_SIZE, MT_RW_DATA | MT_NS),
+ 	{},
+ };
++#endif
+ 
+ unsigned int plat_get_syscnt_freq2(void)
+ {
+diff --git a/plat/allwinner/common/sunxi_prepare_dtb.c b/plat/allwinner/common/sunxi_prepare_dtb.c
+index 0f689744a1..3150eb9c9d 100644
+--- a/plat/allwinner/common/sunxi_prepare_dtb.c
++++ b/plat/allwinner/common/sunxi_prepare_dtb.c
+@@ -26,7 +26,13 @@ void sunxi_prepare_dtb(void *fdt)
+ 		return;
+ 	}
+ 
+-#ifdef SUNXI_BL31_IN_DRAM
++#if defined(PLAT_sun60i_a733)
++	/* Reserve memory used by Trusted Firmware. */
++	if (fdt_add_reserved_memory(fdt, "tf-a@48000000", BL31_BASE,
++				    BL31_LIMIT - BL31_BASE)) {
++		WARN("Failed to add reserved memory nodes to DT.\n");
++	}
++#elif defined(SUNXI_BL31_IN_DRAM)
+ 	/* Reserve memory used by Trusted Firmware. */
+ 	if (fdt_add_reserved_memory(fdt, "tf-a@40000000", BL31_BASE,
+ 				    BL31_LIMIT - BL31_BASE)) {
+diff --git a/plat/allwinner/sun60i_a733/include/sunxi_mmap.h b/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
+index a1cd9049e9..2084a812e1 100644
+--- a/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
++++ b/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
+@@ -12,16 +12,12 @@
+ #define SUNXI_ROM_SIZE			0x00010000
+ #define SUNXI_SRAM_BASE			0x00040000
+ #define SUNXI_SRAM_SIZE			0x00034000
+-/* Where U-Boot's SPL sits, and what BL31 may take back from it. */
+-#define SUNXI_SRAM_A1_BASE		0x00047000
+-#define SUNXI_SRAM_A1_SIZE		0x00011000
+-#define SUNXI_SRAM_A2_BASE		0x00040000
+-#define SUNXI_SRAM_A2_BL31_OFFSET	0x00018000
+-#define SUNXI_SRAM_A2_SIZE		0x00034000
+-#define SUNXI_DEV_BASE			0x01000000
+-#define SUNXI_DEV_SIZE			0x09000000
++#define SUNXI_DEV_BASE			0x00000000
++#define SUNXI_DEV_SIZE			0x40000000
+ #define SUNXI_DRAM_BASE			0x40000000
+-#define SUNXI_DRAM_VIRT_BASE		0x0a000000
++#define SUNXI_DRAM_VIRT_BASE		0x4a000000
++#define SUNXI_BL31_DRAM_BASE		0x48000000
++#define SUNXI_BL31_DRAM_SIZE		0x00200000
+ 
+ /* Memory-mapped devices */
+ #define SUNXI_PIO_BASE			0x02000000
+diff --git a/plat/allwinner/sun60i_a733/platform.mk b/plat/allwinner/sun60i_a733/platform.mk
+index a3010bf941..f7df5667bc 100644
+--- a/plat/allwinner/sun60i_a733/platform.mk
++++ b/plat/allwinner/sun60i_a733/platform.mk
+@@ -27,4 +27,4 @@ BL31_SOURCES		+=	lib/cpus/${ARCH}/cortex_a76.S
+ CTX_INCLUDE_AARCH32_REGS	:=	0
+ 
+ # Put NOBITS memory where U-Boot's SPL was, keeping its first page.
+-SEPARATE_NOBITS_REGION	:=	1
++SEPARATE_NOBITS_REGION	:=	0
+-- 
+2.53.0
+

@@ -1,0 +1,137 @@
+From bf2f93042c72660c4e33e2c6fe148ec916dbfaa6 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Thu, 17 Sep 2026 10:14:00 +1000
+Subject: [PATCH 5/6] feat(allwinner): a733: un-gate SPC, interconnect, DMA,
+ and IOMMU security controllers
+
+Several hardware security controllers on the A733 default to Secure-only
+access at reset:
+- The Security Permission Controller (SPC) includes per-core CPU decode
+  ports and a decoder bypass register alongside the 24 peripheral decode
+  ports. Without unlocking these, non-secure DMA transactions from PCIe,
+  Display Engine 3.5, and NPU fault or hang the bus.
+- The CCU CPU interconnect clocks and resets require un-gating to allow
+  inter-cluster master routing.
+- The secondary DMA controller (DMAC0) security register must be un-gated
+  to allow non-secure channel allocation.
+- The dual IOMMUs (IOMMU0 and IOMMU1) default to blocking all non-secure
+  master transactions unless auto-bypass is configured.
+- R_PRCM security switch bits must be cleared to allow non-secure access
+  to always-on power management registers.
+
+Configure these gates, decode ports, and bypass registers in sunxi_security_setup().
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+---
+ plat/allwinner/common/sunxi_security.c        | 30 +++++++++++++++++++
+ .../allwinner/sun60i_a733/include/sunxi_ccu.h |  2 ++
+ .../sun60i_a733/include/sunxi_mmap.h          |  6 ++++
+ .../allwinner/sun60i_a733/include/sunxi_spc.h |  3 ++
+ 4 files changed, 41 insertions(+)
+
+diff --git a/plat/allwinner/common/sunxi_security.c b/plat/allwinner/common/sunxi_security.c
+index a614d9d9bc..1e4324a929 100644
+--- a/plat/allwinner/common/sunxi_security.c
++++ b/plat/allwinner/common/sunxi_security.c
+@@ -29,14 +29,35 @@ void sunxi_security_setup(void)
+ 	for (i = 0; i < SUNXI_SPC_NUM_PORTS; i++)
+ 		mmio_write_32(SUNXI_SPC_DECPORT_SET_REG(i), 0xffffffff);
+ 
++#ifdef SUNXI_SPC_CPU_DECPORT_SET_REG
++	for (i = 0; i < PLATFORM_CORE_COUNT; i++)
++		mmio_write_32(SUNXI_SPC_CPU_DECPORT_SET_REG(i), 0xffffffff);
++#endif
++
++#ifdef SUNXI_SPC_BYPASS_REG
++	mmio_write_32(SUNXI_SPC_BYPASS_REG, 0xfffffbff);
++#endif
++
+ 	/* set MBUS clocks, bus clocks (AXI/AHB/APB) and PLLs to non-secure */
+ 	mmio_write_32(SUNXI_CCU_SEC_SWITCH_REG, 0x7);
+ 
+ 	/* Set R_PRCM bus clocks to non-secure */
++#ifdef PLAT_sun60i_a733
++	mmio_setbits_32(SUNXI_R_PRCM_SEC_SWITCH_REG, 0x7);
++#else
+ 	mmio_write_32(SUNXI_R_PRCM_SEC_SWITCH_REG, 0x1);
++#endif
+ 
+ 	/* Set all DMA channels (16 max.) to non-secure */
+ 	mmio_write_32(SUNXI_DMA_BASE + DMA_SEC_REG, 0xffff);
++#ifdef SUNXI_DMA0_BASE
++	mmio_write_32(SUNXI_DMA0_BASE + DMA_SEC_REG, 0xffff);
++#endif
++
++#ifdef SUNXI_IOMMU0_BASE
++	mmio_write_32(SUNXI_IOMMU0_BASE + SUNXI_IOMMU_AUTO_BYPASS_REG, 0xffffffff);
++	mmio_write_32(SUNXI_IOMMU1_BASE + SUNXI_IOMMU_AUTO_BYPASS_REG, 0xffffffff);
++#endif
+ 
+ 	/* Some SoCs feature more protection bits in the PRCM block */
+ #ifdef SUNXI_R_TZMA_BASE
+@@ -51,6 +72,15 @@ void sunxi_security_setup(void)
+ 	mmio_write_32(SUNXI_R_SPC_BASE + 0x24, 0xffffffff);
+ #endif
+ 
++#ifdef SUNXI_CCU_CPU_INTERCONN_BGR_REG
++	mmio_write_32(SUNXI_CCU_CPU_INTERCONN_BGR_REG, 0x80000002);
++	mmio_write_32(SUNXI_CCU_CPU_INTERCONN_RST_REG, 0x00010001);
++#endif
++
++#ifdef SUNXI_SYSCON_REMAP_REG
++	mmio_write_32(SUNXI_SYSCON_REMAP_REG, 0);
++#endif
++
+ #ifdef SUNXI_DSP_PRCM_BASE
+ 	mmio_write_32(SUNXI_DSP_PRCM_BASE + 8, 7);
+ #endif
+diff --git a/plat/allwinner/sun60i_a733/include/sunxi_ccu.h b/plat/allwinner/sun60i_a733/include/sunxi_ccu.h
+index 6bcdfde288..597463e20c 100644
+--- a/plat/allwinner/sun60i_a733/include/sunxi_ccu.h
++++ b/plat/allwinner/sun60i_a733/include/sunxi_ccu.h
+@@ -8,6 +8,8 @@
+ #define SUNXI_CCU_H
+ 
+ #define SUNXI_CCU_SEC_SWITCH_REG	(SUNXI_CCU_BASE + 0x1f00)
++#define SUNXI_CCU_CPU_INTERCONN_BGR_REG	(SUNXI_CCU_BASE + 0x0800)
++#define SUNXI_CCU_CPU_INTERCONN_RST_REG	(SUNXI_CCU_BASE + 0x0850)
+ 
+ #define SUNXI_R_PRCM_SEC_SWITCH_REG	(SUNXI_R_PRCM_BASE + 0x0290)
+ 
+diff --git a/plat/allwinner/sun60i_a733/include/sunxi_mmap.h b/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
+index 2084a812e1..04f117147a 100644
+--- a/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
++++ b/plat/allwinner/sun60i_a733/include/sunxi_mmap.h
+@@ -31,6 +31,10 @@
+ #define SUNXI_GICD_BASE			0x03400000
+ #define SUNXI_GICR_BASE			0x03460000
+ #define SUNXI_DMA_BASE			0x04601000
++#define SUNXI_DMA0_BASE			0x04024000
++#define SUNXI_IOMMU0_BASE		0x03900000
++#define SUNXI_IOMMU1_BASE		0x03910000
++#define SUNXI_IOMMU_AUTO_BYPASS_REG	0x0030
+ #define SUNXI_R_SPC_BASE		0x07002000
+ #define SUNXI_R_TZMA_BASE		0x07003000
+ #define SUNXI_R_PRCM_BASE		0x07010000
+@@ -45,4 +49,6 @@
+ #define SUNXI_CLUSTER_CFG_BASE		0x08860000
+ #define SUNXI_CPU_PLL_CFG_BASE		0x08870000
+ 
++#define SUNXI_SYSCON_REMAP_REG		(SUNXI_SYSCON_BASE + 0x9008)
++
+ #endif /* SUNXI_MMAP_H */
+diff --git a/plat/allwinner/sun60i_a733/include/sunxi_spc.h b/plat/allwinner/sun60i_a733/include/sunxi_spc.h
+index 352259827d..a48e5a4833 100644
+--- a/plat/allwinner/sun60i_a733/include/sunxi_spc.h
++++ b/plat/allwinner/sun60i_a733/include/sunxi_spc.h
+@@ -13,4 +13,7 @@
+ #define SUNXI_SPC_DECPORT_SET_REG(p)	(SUNXI_SPC_BASE + 0x0004 + 0x10 * (p))
+ #define SUNXI_SPC_DECPORT_CLR_REG(p)	(SUNXI_SPC_BASE + 0x0008 + 0x10 * (p))
+ 
++#define SUNXI_SPC_BYPASS_REG		(SUNXI_SPC_BASE + 0x00e0)
++#define SUNXI_SPC_CPU_DECPORT_SET_REG(c)	(SUNXI_SPC_BASE + 0x0104 + 0x10 * (c))
++
+ #endif /* SUNXI_SPC_H */
+-- 
+2.53.0
+
