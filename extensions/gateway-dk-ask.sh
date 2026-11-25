@@ -639,22 +639,35 @@ EOF
 	chmod 755 "${pkgdir}/DEBIAN/preinst"
 
 	# The pre-flowtable image also carried an unowned /etc/modules-load.d/ask-modules.conf naming
-	# fci and auto_bridge, which no longer exist (systemd-modules-load would fail on every boot);
-	# /etc/modules-load.d/ask.conf replaces it. Removed only when it is that file.
+	# fci and auto_bridge, which no longer exist (systemd-modules-load would fail on every boot).
+	# Drop those two entries; remove the file only when nothing but the stock list is left, which
+	# /etc/modules-load.d/ask.conf now loads, so entries an administrator added survive.
+	# prerm records a running service on upgrade; bring it back once the new daemon is in place.
 	cat > "${pkgdir}/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
-if grep -qsxE '(fci|auto_bridge)' /etc/modules-load.d/ask-modules.conf; then
-    rm -f /etc/modules-load.d/ask-modules.conf
+legacy=/etc/modules-load.d/ask-modules.conf
+if grep -qsxE '(fci|auto_bridge)' "$legacy"; then
+    sed -i -E '/^(fci|auto_bridge)$/d' "$legacy"
+    if ! grep -vxE '[[:space:]]*(#.*)?|cdx|nf_conntrack|nf_conntrack_netlink|xt_conntrack' "$legacy" | grep -q .; then
+        rm -f "$legacy"
+    fi
 fi
 systemctl daemon-reload || true
 if command -v systemctl >/dev/null 2>&1; then
     systemctl enable ask-flowtable.service 2>/dev/null || true
+fi
+if [ -e /run/gateway-dk-ask.restart ]; then
+    rm -f /run/gateway-dk-ask.restart
+    systemctl start ask-flowtable.service || true
 fi
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postinst"
 
 	cat > "${pkgdir}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
+if [ "$1" = upgrade ] && systemctl is-active --quiet ask-flowtable.service 2>/dev/null; then
+    touch /run/gateway-dk-ask.restart
+fi
 systemctl stop ask-flowtable.service 2>/dev/null || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/prerm"
