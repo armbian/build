@@ -693,6 +693,7 @@ function check_filesystem_compatibility_on_host() {
 		if ! grep -q "\<$ROOTFS_TYPE\>" /proc/filesystems; then # ensure exact match with \<...\>
 			# Try modprobing the fs module since it doesn't show up in /proc/filesystems if it's an unloaded module versus built-in
 			if ! modprobe "$ROOTFS_TYPE"; then
+				display_alert "Load the module on the build host, then build again" "sudo modprobe $ROOTFS_TYPE" "wrn"
 				exit_with_error "Filesystem type unsupported by build host:" "$ROOTFS_TYPE"
 			else
 				display_alert "Sucessfully loaded kernel module for filesystem" "$ROOTFS_TYPE" ""
