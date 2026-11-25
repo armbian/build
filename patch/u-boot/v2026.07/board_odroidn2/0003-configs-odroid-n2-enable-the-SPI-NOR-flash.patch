@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Thu, 26 Nov 2026 01:55:48 +0200
+Subject: [PATCH] configs: odroid-n2: enable the SPI NOR flash
+
+The SPI NOR of the ODROID-N2/N2+ shares the SoC pins BOOT_3..BOOT_7
+with the eMMC data lines D3..D7, so the device tree has spifc disabled
+and the defconfig has no SPI support. Enable both, and describe how to
+write the flash in the board documentation.
+
+Normal boot does not touch the flash: there is no SF boot target or
+bootdev, and the environment is not in SPI. The first probe of the SPI
+controller ("sf probe") muxes BOOT_4..BOOT_6 and the chip select
+(BOOT_14) to the flash, while the eMMC stays set up for eight lines, so
+the eMMC must not be accessed after that until reset. On an N2+, an
+eMMC access after "sf probe" also made the boot ROM fail to read the
+SPI NOR after the reset.
+
+The 4-bit eMMC setup used on the VIM3 does not help: pin 7 of the
+flash (RESET# on the MX25U6435F) is on eMMC D3, and on an N2+ eMMC reads
+in 4-bit mode broke writes to the flash under Linux.
+
+An OS booted through EFI without its own device tree gets this one,
+where spifc and the 8-bit eMMC claim the same pins.
+
+Tested on an ODROID-N2+ (MX25U6435F; spi-max-frequency 104 MHz, about
+83 MHz after the controller divider): the eMMC comes up with the same
+bus width with and without this patch; sf update of 1 MiB reads back
+equal; the board boots from the SPI NOR after reset. Boards with an XTX
+flash were not tested.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ arch/arm/dts/meson-g12b-odroid-n2-u-boot.dtsi |  9 ++++++++
+ configs/odroid-n2_defconfig                   |  9 ++++++++
+ doc/board/amlogic/odroid-n2.rst               | 21 +++++++++++++++++++
+ 3 files changed, 39 insertions(+)
+
+diff --git a/arch/arm/dts/meson-g12b-odroid-n2-u-boot.dtsi b/arch/arm/dts/meson-g12b-odroid-n2-u-boot.dtsi
+index a92f9e9ff13..1dfb521e65f 100644
+--- a/arch/arm/dts/meson-g12b-odroid-n2-u-boot.dtsi
++++ b/arch/arm/dts/meson-g12b-odroid-n2-u-boot.dtsi
+@@ -11,3 +11,12 @@
+ 	status = "okay";
+ 	vref-supply = <&vddao_1v8>;
+ };
++
++/*
++ * The SPI NOR shares BOOT_3..BOOT_7 with eMMC D3..D7. Probing spifc
++ * ("sf probe") muxes BOOT_4..BOOT_6 to it; do not access the eMMC after
++ * that until reset.
++ */
++&spifc {
++	status = "okay";
++};
+diff --git a/configs/odroid-n2_defconfig b/configs/odroid-n2_defconfig
+index 73a1a08afde..1f237d928ba 100644
+--- a/configs/odroid-n2_defconfig
++++ b/configs/odroid-n2_defconfig
+@@ -30,6 +30,7 @@ CONFIG_CMD_DFU=y
+ CONFIG_CMD_GPIO=y
+ # CONFIG_CMD_LOADS is not set
+ CONFIG_CMD_MMC=y
++CONFIG_CMD_SPI=y
+ CONFIG_CMD_USB=y
+ CONFIG_CMD_USB_MASS_STORAGE=y
+ # CONFIG_CMD_SETEXPR is not set
+@@ -40,6 +41,11 @@ CONFIG_ADC=y
+ CONFIG_SARADC_MESON=y
+ CONFIG_DFU_RAM=y
+ CONFIG_MMC_MESON_GX=y
++CONFIG_MTD=y
++CONFIG_DM_MTD=y
++CONFIG_DM_SPI_FLASH=y
++CONFIG_SPI_FLASH_MACRONIX=y
++CONFIG_SPI_FLASH_XTX=y
+ CONFIG_DM_MDIO=y
+ CONFIG_DM_MDIO_MUX=y
+ CONFIG_ETH_DESIGNWARE_MESON8B=y
+@@ -55,6 +61,9 @@ CONFIG_DM_REGULATOR_FIXED=y
+ CONFIG_DEBUG_UART_ANNOUNCE=y
+ CONFIG_DEBUG_UART_SKIP_INIT=y
+ CONFIG_MESON_SERIAL=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_MESON_SPIFC=y
+ CONFIG_USB=y
+ CONFIG_DM_USB_GADGET=y
+ CONFIG_USB_XHCI_HCD=y
+diff --git a/doc/board/amlogic/odroid-n2.rst b/doc/board/amlogic/odroid-n2.rst
+index 5222a21c808..194edde081b 100644
+--- a/doc/board/amlogic/odroid-n2.rst
++++ b/doc/board/amlogic/odroid-n2.rst
+@@ -130,3 +130,24 @@ Then write U-Boot to SD or eMMC with:
+     $ DEV=/dev/boot_device
+     $ dd if=fip/u-boot.bin.sd.bin of=$DEV conv=fsync,notrunc bs=512 skip=1 seek=1
+     $ dd if=fip/u-boot.bin.sd.bin of=$DEV conv=fsync,notrunc bs=1 count=440
++
++Writing U-Boot to the SPI NOR
++-----------------------------
++
++The SPI NOR shares the SoC pins BOOT_3..BOOT_7 with the eMMC data lines
++D3..D7. The boot ROM reads it when the boot switch is set to SPI at power-on.
++
++U-Boot uses the eMMC with all eight data lines. The first probe of the SPI
++controller, for instance by "sf probe", muxes BOOT_4..BOOT_6 to the flash,
++and the eMMC must not be accessed after that until reset. Load the image
++first, from the eMMC or any other device, then write it:
++
++.. code-block:: none
++
++    => load mmc 1:1 ${loadaddr} u-boot.bin
++    => sf probe
++    => sf update ${loadaddr} 0 ${filesize}
++    => reset
++
++Here u-boot.bin is the signed image from the steps above (fip/u-boot.bin, or
++u-boot.bin in the build-fip.sh output directory), not u-boot.bin.sd.bin.
