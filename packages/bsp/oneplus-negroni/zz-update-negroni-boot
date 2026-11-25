@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+
+# initramfs-tools runs this after it writes /boot/initrd.img-<version>, whether a
+# kernel package, a trigger or update-initramfs asked for it. boot_b is what ABL
+# boots, so rebuild and flash it from the newest installed kernel.
+[[ -r /proc/device-tree/compatible ]] || exit 0
+grep -Fxq 'oplus,negroni' < <(tr '\0' '\n' </proc/device-tree/compatible) || exit 0
+[[ -f /etc/initramfs-tools/conf.d/negroni-root ]] || exit 0
+[[ -z ${DPKG_ROOT:-} ]] || exit 0
+# The image build runs update-initramfs in a chroot; only the booted phone owns boot_b.
+if ischroot; then exit 0; fi
+
+fail() {
+	printf 'Negroni: %s\n' "$*" >&2
+	exit 1
+}
+
+version=${1:-}
+[[ $version =~ ^[[:alnum:]][[:alnum:].+_~-]*$ ]] || fail "Missing or invalid kernel version"
+kernel=/boot/vmlinuz-$version
+initramfs=${2:-}
+[[ $initramfs == "/boot/initrd.img-$version" ]] || fail "Unexpected initramfs path: $initramfs"
+[[ -s $kernel && -s $initramfs && -s /lib/modules/$version/modules.dep ]] ||
+	fail "Missing matching kernel, initramfs or modules for $version"
+
+newest=$(find /boot -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sed 's/^vmlinuz-//' | sort -V | tail -n1)
+if [[ $version != "$newest" ]]; then
+	printf 'Negroni: boot_b keeps %s; skipping older kernel %s\n' "$newest" "$version"
+	exit 0
+fi
+
+root_device=$(findmnt -nro SOURCE --mountpoint /)
+[[ -b /dev/disk/by-partlabel/userdata && "$root_device" -ef /dev/disk/by-partlabel/userdata ]] ||
+	fail "Root filesystem is outside internal userdata"
+[[ $(findmnt -nro FSTYPE --mountpoint /) == ext4 ]] || fail "Expected ext4 on userdata"
+uuid=$(findmnt -nro UUID --mountpoint /)
+[[ -n $uuid ]] && grep -Fxq "ROOT=UUID=$uuid" /etc/initramfs-tools/conf.d/negroni-root ||
+	fail "Initramfs root UUID differs from mounted userdata"
+
+boot=/dev/disk/by-partlabel/boot_b
+[[ -b $boot && $(lsblk -dnro PARTLABEL "$boot") == boot_b ]] ||
+	fail "Cannot locate the boot_b partition"
+[[ -b /dev/disk/by-partlabel/boot_a && ! "$boot" -ef /dev/disk/by-partlabel/boot_a ]] ||
+	fail "Cannot locate a separate boot_a partition"
+
+exec /usr/lib/negroni/pack-ufs-boot "$kernel" "$initramfs" --update-boot-b

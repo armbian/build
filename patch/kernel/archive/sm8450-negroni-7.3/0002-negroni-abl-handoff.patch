@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kwaa <50108258+kwaa@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 12:00:00 +0000
+Subject: arm64: merge the Negroni device tree with ABL boot data
+
+Copy the memory nodes, memory reservations, /reserved-memory regions not
+already in the mainline tree, and the initrd and usable-memory properties
+of /chosen from the ABL device tree into a copy of the built-in Negroni
+DTB, and boot with that copy.
+---
+ arch/arm64/kernel/negroni-fdt.c | 158 ++++++++++
+ 1 file changed, 158 insertions(+)
+
+diff --git a/arch/arm64/kernel/negroni-fdt.c b/arch/arm64/kernel/negroni-fdt.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/arm64/kernel/negroni-fdt.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/cache.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/libfdt.h>
++#include <linux/string.h>
++
++extern const u8 __dtb_sm8450_oneplus_negroni_begin[];
++#define negroni_mainline_dtb __dtb_sm8450_oneplus_negroni_begin
++
++int __init negroni_abl_fdt(const void *stock, void **result);
++
++static u8 boot_fdt[256 * 1024] __ro_after_init __aligned(8);
++
++static int __init copy_property(const void *stock, int source, int target,
++				const char *name)
++{
++	int len;
++	const void *value = fdt_getprop(stock, source, name, &len);
++
++	if (!value)
++		return len == -FDT_ERR_NOTFOUND ? 0 : len;
++	return fdt_setprop(boot_fdt, target, name, value, len);
++}
++
++static int __init copy_memory(const void *stock)
++{
++	int node, count = 0;
++
++	if (fdt_address_cells(stock, 0) != fdt_address_cells(boot_fdt, 0) ||
++	    fdt_size_cells(stock, 0) != fdt_size_cells(boot_fdt, 0))
++		return -FDT_ERR_BADNCELLS;
++
++	fdt_for_each_subnode(node, stock, 0) {
++		const char *type, *name;
++		int len, target, ret;
++
++		type = fdt_getprop(stock, node, "device_type", &len);
++		if (!type || len != sizeof("memory") || memcmp(type, "memory", len))
++			continue;
++		if (!fdt_getprop(stock, node, "reg", &len) || !len)
++			return -FDT_ERR_BADVALUE;
++		name = fdt_get_name(stock, node, NULL);
++		if (!name)
++			return -FDT_ERR_BADSTRUCTURE;
++		target = fdt_add_subnode(boot_fdt, 0, name);
++		if (target == -FDT_ERR_EXISTS)
++			target = fdt_subnode_offset(boot_fdt, 0, name);
++		if (target < 0)
++			return target;
++		ret = fdt_setprop_string(boot_fdt, target, "device_type", "memory");
++		if (!ret)
++			ret = copy_property(stock, node, target, "reg");
++		if (!ret)
++			ret = copy_property(stock, node, target, "linux,usable-memory");
++		if (ret)
++			return ret;
++		count++;
++	}
++
++	return count ? 0 : -FDT_ERR_NOTFOUND;
++}
++
++static bool __init already_reserved(int parent, const void *reg, int len,
++				    bool no_map)
++{
++	int node;
++
++	fdt_for_each_subnode(node, boot_fdt, parent) {
++		int size;
++		const void *value = fdt_getprop(boot_fdt, node, "reg", &size);
++
++		if (value && size == len && !memcmp(value, reg, len) &&
++		    (!no_map || fdt_getprop(boot_fdt, node, "no-map", NULL)))
++			return true;
++	}
++	return false;
++}
++
++static int __init copy_reservations(const void *stock)
++{
++	int node, count, i, ret;
++	int source = fdt_path_offset(stock, "/reserved-memory");
++	int target = fdt_path_offset(boot_fdt, "/reserved-memory");
++
++	count = fdt_num_mem_rsv(stock);
++	if (count < 0)
++		return count;
++	for (i = 0; i < count; i++) {
++		u64 address, size;
++
++		ret = fdt_get_mem_rsv(stock, i, &address, &size);
++		if (!ret)
++			ret = fdt_add_mem_rsv(boot_fdt, address, size);
++		if (ret)
++			return ret;
++	}
++
++	if (source < 0 || target < 0 ||
++	    fdt_address_cells(stock, source) != fdt_address_cells(boot_fdt, target) ||
++	    fdt_size_cells(stock, source) != fdt_size_cells(boot_fdt, target))
++		return -FDT_ERR_BADNCELLS;
++
++	fdt_for_each_subnode(node, stock, source) {
++		char name[48];
++		int len, child;
++		const void *reg = fdt_getprop(stock, node, "reg", &len);
++		bool no_map = fdt_getprop(stock, node, "no-map", NULL);
++
++		if (!reg || !len || already_reserved(target, reg, len, no_map))
++			continue;
++		snprintf(name, sizeof(name), "negroni-abl-reserved-%x", node);
++		child = fdt_add_subnode(boot_fdt, target, name);
++		if (child < 0)
++			return child;
++		ret = fdt_setprop(boot_fdt, child, "reg", reg, len);
++		if (!ret && no_map)
++			ret = fdt_setprop_empty(boot_fdt, child, "no-map");
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++int __init negroni_abl_fdt(const void *stock, void **result)
++{
++	static const char * const handoff[] __initconst = {
++		"linux,initrd-start", "linux,initrd-end", "linux,usable-memory-range",
++	};
++	int from, to, ret, i;
++
++	ret = stock ? fdt_check_header(stock) : -FDT_ERR_BADMAGIC;
++	if (!ret)
++		ret = fdt_open_into(negroni_mainline_dtb, boot_fdt, sizeof(boot_fdt));
++	if (!ret)
++		ret = copy_memory(stock);
++	if (!ret)
++		ret = copy_reservations(stock);
++	if (ret)
++		return ret;
++
++	from = fdt_path_offset(stock, "/chosen");
++	to = fdt_path_offset(boot_fdt, "/chosen");
++	if (to == -FDT_ERR_NOTFOUND)
++		to = fdt_add_subnode(boot_fdt, 0, "chosen");
++	if (from < 0 || to < 0)
++		return -FDT_ERR_NOTFOUND;
++
++	for (i = 0; i < ARRAY_SIZE(handoff); i++) {
++		ret = copy_property(stock, from, to, handoff[i]);
++		if (ret)
++			return ret;
++	}
++	ret = fdt_pack(boot_fdt);
++	if (!ret)
++		*result = boot_fdt;
++	return ret;
++}
+-- 
+Armbian
+
