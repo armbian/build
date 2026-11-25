@@ -33,6 +33,9 @@ function post_family_config__turing-rk1_default_serial_console_by_branch() {
 function post_family_tweaks__turing-rk1_default_serial_console_by_branch() {
 	display_alert "$BOARD" "Modify bootscript serial console for $BOARD / $BRANCH" "info"
 
+	# ROOTFS_TYPE=nfs uses a separate template nfs-boot.cmd.template
+	[[ "${ROOTFS_TYPE}" == nfs ]] && return 0
+
 	local boot_cmd="$SDCARD/boot/boot.cmd"
 
 	case $BRANCH in
