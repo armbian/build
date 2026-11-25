@@ -1,0 +1,731 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: https://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# Keep the dotfiles of $HOME in the armbian-dotfiles repository of a git account.
+# The clone is ~/.armbian-dotfiles. The repository has the same paths as $HOME.
+#
+# "sync" copies the settings of $HOME into the clone and commits them. Then it gets
+# the changes of other systems, copies them into $HOME, and pushes.
+# Settings: the known files in INCLUDE, and the paths in .armbian-dotfiles-include
+# in the repository ("add" writes it). Two guards: paths in EXCLUDE never go in,
+# and a file with a token (TOKENS) stops the commit.
+# Thunderbird: the account settings go into .thunderbird-accounts.js, without
+# passwords. A new system gets the accounts, and Thunderbird asks for the passwords.
+#
+# armbian-firstlogin runs "init" with PRESET_DOTFILES_URL. The user service
+# armbian-dotfiles.service runs "sync" at login and at logout or shutdown.
+# --dry-run: the git steps run on a temporary copy of the clone. Nothing changes.
+
+REPO="$HOME/.armbian-dotfiles"
+# The clone in $HOME. In a dry run, REPO is a temporary copy of it.
+CLONE=$REPO
+LOG="$HOME/.armbian-dotfiles.log"
+# Files that the repository replaced or deleted, with their paths.
+BACKUP="$HOME/.armbian-dotfiles-backup"
+IGNORE=.armbian-dotfiles-ignore
+INCLUDE_FILE=.armbian-dotfiles-include
+TB_FILE=.thunderbird-accounts.js
+# Thunderbird settings of accounts, identities and servers. No paths of this system, no times.
+TB_KEYS='^user_pref\("mail\.(accountmanager\.(accounts|defaultaccount|localfoldersserver)|account\.account[0-9]+\.(identities|server)|identity\.id[0-9]+\.|server\.server[0-9]+\.|smtpservers?"|smtpserver\.smtp[0-9]+\.|smtp\.defaultserver|outgoingservers?"|outgoingserver\.)'
+TB_SKIP='\.(directory|sig_file|sig_file-rel|clientid|serverIDResponse)"|[Tt]ime"|password'
+# Files larger than this stay out: they are data, not settings.
+MAX_SIZE=1m
+
+# Known settings, as paths in $HOME. A directory includes its files.
+INCLUDE=(
+	.bashrc .bash_profile .bash_aliases .bash_logout .profile .inputrc .dircolors
+	.zshrc .zprofile .zshenv .zlogin .p10k.zsh
+	.gitconfig .gitignore_global .config/git
+	.vimrc .gvimrc .nanorc .editorconfig .selected_editor .config/nvim .config/micro
+	.tmux.conf .screenrc .config/tmux .wgetrc .curlrc
+	.Xresources .xinitrc .xprofile
+	.config/fish .config/starship.toml .config/htop .config/btop .config/fastfetch .config/neofetch
+	.config/mc .config/ranger .config/lf .config/mpv .config/fontconfig
+	.config/kitty .config/alacritty .config/foot .config/wezterm .config/ghostty
+	.config/hypr .config/waybar .config/mako .config/rofi .config/wofi .config/walker .config/omarchy
+	.config/i3 .config/sway .config/dunst .config/picom
+	.config/xfce4 .config/gtk-3.0 .config/gtk-4.0 .config/user-dirs.dirs .config/mimeapps.list
+	.config/Code/User/settings.json .config/Code/User/keybindings.json .config/Code/User/snippets
+	# Skills of AI coding agents
+	.agents
+)
+
+# Settings of one system only: displays and monitors.
+MACHINE=(displays.xml monitors.xml /.config/hypr/monitors.conf /.config/xfce4/desktop)
+
+# A file with one of these does not go into the repository.
+TOKENS='gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20}|AKIA[0-9A-Z]{16}|xox[abposr]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{40,}|AIza[0-9A-Za-z_-]{35}|"(access|refresh)_?[Tt]oken" *: *"[^"]{16,}"'
+
+# Never in the repository: rsync patterns. "/x": x in $HOME only. "x": x at any depth.
+EXCLUDE=(
+	# This tool
+	/.armbian-dotfiles /.armbian-dotfiles.log /.armbian-dotfiles-backup /.git /.gitignore
+	# Keys, tokens and passwords
+	/.ssh /.gnupg /.password-store /.pki /.netrc /.git-credentials /.Xauthority /.ICEauthority
+	/.docker/config.json /.kube /.aws /.azure /.config/gcloud /.config/gh /.config/hub
+	/.config/rclone/rclone.conf /.npmrc /.pypirc /.cargo/credentials /.cargo/credentials.toml
+	/.local/share/keyrings /.config/pulse/cookie /.config/git/credentials
+	'*.pem' '*.key' '*.p12' '*.pfx' 'id_rsa*' 'id_dsa*' 'id_ecdsa*' 'id_ed25519*'
+	# Browsers and mail: cookies, sessions and saved passwords
+	/.mozilla /.thunderbird /.config/chromium /.config/google-chrome /.config/BraveSoftware
+	/.config/vivaldi /.config/microsoft-edge /.config/opera
+	Cookies Cookies-journal 'Local Storage' 'Session Storage' IndexedDB 'Service Worker'
+	# History
+	'.*_history' .lesshst .viminfo .wget-hsts /.local/share/recently-used.xbel
+	# Caches and other data
+	/.cache /.local/state /.local/share/Trash /.local/share/flatpak /.var /.npm /.rustup
+	/.cargo/registry /.cargo/git /.gradle /.m2 /.vscode-server /.vscode/extensions /.dbus
+	Cache GPUCache 'Code Cache' CachedData
+	/.xsession-errors '/.xsession-errors.*' /.sudo_as_admin_successful /.activate_psd
+)
+
+export GIT_TERMINAL_PROMPT=0
+DRY=
+QUIET=
+
+die() {
+	echo "armbian-dotfiles: $*" >&2
+	exit 1
+}
+say() { [[ -n $QUIET ]] || echo "$@"; }
+g() { git -C "$REPO" "$@"; }
+tilde() { echo "${1/#"$HOME"/\~}"; }
+
+need_repo() {
+	[[ -d $CLONE/.git ]] || die "$CLONE is not a git repository. Run: armbian-dotfiles init (or create)"
+}
+
+# Dry run: work on a temporary copy of the clone.
+dry_copy() {
+	[[ -n $DRY && -d $CLONE/.git ]] || return 0
+	TMP=$(mktemp -d) || die "mktemp failed"
+	trap 'rm -rf "$TMP"' EXIT
+	cp -a "$CLONE" "$TMP/repo" || die "Cannot copy $CLONE"
+	REPO="$TMP/repo"
+}
+
+# HOST and RPATH (user/repo.git) of the origin remote.
+remote_parts() {
+	local url
+	url=$(g remote get-url origin 2> /dev/null) || return 1
+	case $url in
+		https://*) url=${url#https://} HOST=${url%%/*} RPATH=${url#*/} ;;
+		ssh://*) url=${url#ssh://} url=${url#*@} HOST=${url%%/*} RPATH=${url#*/} ;;
+		*@*:*) url=${url#*@} HOST=${url%%:*} RPATH=${url#*:} ;;
+		*) return 1 ;;
+	esac
+}
+
+# A path of the repository that goes into $HOME: it starts with a dot.
+is_dotfile() {
+	[[ $1 == .* && $1 != "$IGNORE" && $1 != "$INCLUDE_FILE" && $1 != "$TB_FILE" && $1 != .git/* && $1 != .gitignore ]]
+}
+
+# A git status letter as a word.
+word() {
+	case $1 in
+		M* | T*) echo "changed" ;;
+		A*) echo "new    " ;;
+		D*) echo "deleted" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+# Lines of a list file in the repository, without comments and empty lines.
+list_file() {
+	local p
+	[[ -f $REPO/$1 ]] || return 0
+	while IFS= read -r p; do
+		p=${p%%#*}
+		p=${p%"${p##*[![:space:]]}"}
+		p=${p#\~/}
+		[[ -n $p ]] && echo "$p"
+	done < "$REPO/$1"
+}
+
+# rsync filter: the files of $HOME that go into the repository.
+filter_file() {
+	local p a
+	# Files of the repository only: rsync --delete must keep them.
+	echo "P /.git/"
+	echo "P /.gitignore"
+	echo "P /$IGNORE"
+	echo "P /$INCLUDE_FILE"
+	echo "P /$TB_FILE"
+	for p in "${EXCLUDE[@]}" "${MACHINE[@]}"; do
+		echo "- $p"
+	done
+	while IFS= read -r p; do
+		echo "- $p"
+	done < <(list_file "$IGNORE")
+	while IFS= read -r p; do
+		p=/${p#/}
+		p=${p%/}
+		# The directories above it: rsync must go into them.
+		a=${p%/*}
+		while [[ -n $a ]]; do
+			echo "+ $a/"
+			a=${a%/*}
+		done
+		echo "+ $p"
+		echo "+ $p/***"
+	done < <(printf '%s\n' "${INCLUDE[@]}"; list_file "$INCLUDE_FILE")
+	echo "- *"
+}
+
+# Links into the clone, from an older version of this tool: real files now.
+unlink_old() {
+	local p
+	while IFS= read -r p; do
+		[[ $(readlink "$HOME/$p") == "$CLONE/$p" ]] || continue
+		if [[ -n $DRY ]]; then
+			cp -P --remove-destination "$CLONE/$p" "$REPO/$p"
+		else
+			cp -P -p --remove-destination "$CLONE/$p" "$HOME/$p" || return 1
+		fi
+	done < <(git -C "$CLONE" ls-files)
+}
+
+# The folder with profiles.ini of Thunderbird: deb, snap or flatpak.
+# "new": the folder for a new profile when there is none.
+tb_root() {
+	local d
+	for d in "$HOME/.thunderbird" "$HOME/snap/thunderbird/common/.thunderbird" "$HOME/.var/app/org.mozilla.Thunderbird/.thunderbird"; do
+		[[ -f $d/profiles.ini ]] && {
+			echo "$d"
+			return
+		}
+	done
+	[[ $1 == new ]] || return 1
+	if [[ -d /snap/thunderbird ]]; then
+		echo "$HOME/snap/thunderbird/common/.thunderbird"
+	elif [[ -d /var/lib/flatpak/app/org.mozilla.Thunderbird || -d $HOME/.local/share/flatpak/app/org.mozilla.Thunderbird ]]; then
+		echo "$HOME/.var/app/org.mozilla.Thunderbird/.thunderbird"
+	else
+		echo "$HOME/.thunderbird"
+	fi
+}
+
+# The default profile of Thunderbird: the one of the installation, else Default=1.
+tb_profile() {
+	local root=$1 p
+	[[ -f $root/profiles.ini ]] || return 1
+	p=$(awk -F= '
+		/^\[/ { sec = $0; next }
+		sec ~ /^\[Install/ && $1 == "Default" && inst == "" { inst = $2 }
+		sec ~ /^\[Profile/ {
+			if ($1 == "Path") path[sec] = $2
+			if ($1 == "Default" && $2 == 1) def = sec
+			if (first == "") first = sec
+		}
+		END { if (inst != "") print inst; else { s = def != "" ? def : first; if (s != "") print path[s] } }
+	' "$root/profiles.ini")
+	[[ -n $p ]] || return 1
+	[[ $p == /* ]] && echo "$p" || echo "$root/$p"
+}
+
+# Thunderbird accounts of this system into the repository. No accounts: no change,
+# the file of another system stays.
+tb_export() {
+	local root prof out
+	root=$(tb_root) || return 0
+	prof=$(tb_profile "$root") || return 0
+	[[ -f $prof/prefs.js ]] || return 0
+	grep -qE '^user_pref\("mail\.accountmanager\.accounts", *"[^"]+"' "$prof/prefs.js" || return 0
+	out=$(grep -E "$TB_KEYS" "$prof/prefs.js" | grep -vE "$TB_SKIP" | LC_ALL=C sort)
+	{
+		echo "// Thunderbird accounts, from armbian-dotfiles. No passwords: Thunderbird asks for them."
+		echo "$out"
+	} > "$REPO/$TB_FILE"
+}
+
+# Thunderbird uses a default profile only when this installation used it last.
+# compatibility.ini of the profile tells it. Else Thunderbird makes a new profile,
+# and the next sync puts the accounts there.
+tb_compat() {
+	local d ini v b
+	for d in /usr/lib/thunderbird /usr/lib64/thunderbird /opt/thunderbird; do
+		ini="$d/application.ini"
+		[[ -f $ini ]] && break
+	done
+	[[ -f $ini ]] || return 0
+	v=$(sed -n 's/^Version=//p' "$ini" | head -n 1)
+	b=$(sed -n 's/^BuildID=//p' "$ini" | head -n 1)
+	printf '[Compatibility]\nLastVersion=%s_%s/%s\nLastOSABI=Linux_%s-gcc3\nLastPlatformDir=%s\nLastAppDir=%s\n' \
+		"$v" "$b" "$b" "$(uname -m)" "$d" "$d" > "$1/compatibility.ini"
+}
+
+# Thunderbird accounts of the repository into a profile without accounts.
+# Thunderbird must not run: it writes prefs.js at its exit.
+tb_import() {
+	local src="$REPO/$TB_FILE" root prof prefs n
+	[[ -f $src ]] || return 0
+	command -v thunderbird > /dev/null || [[ -d /snap/thunderbird ]] || return 0
+	root=$(tb_root new)
+	prof=$(tb_profile "$root")
+	prefs="$prof/prefs.js"
+	if [[ -n $prof ]] && grep -qE '^user_pref\("mail\.accountmanager\.accounts", *"[^"]+"' "$prefs" 2> /dev/null; then
+		return 0
+	fi
+	n=$(grep -cE '^user_pref\("mail\.account\.account[0-9]+\.server"' "$src")
+	if pgrep -u "$USER" -x 'thunderbird|thunderbird-bin' > /dev/null; then
+		echo "Thunderbird runs: its $n accounts come with the next sync."
+		return 0
+	fi
+	if [[ -n $DRY ]]; then
+		echo "  would write $n Thunderbird accounts into $(tilde "${prof:-$root/<new profile>}")/prefs.js"
+		return 0
+	fi
+	if [[ -z $prof ]]; then
+		# No profile yet: make the default one.
+		prof="$root/$(tr -dc a-z0-9 < /dev/urandom | head -c 8).default-release"
+		mkdir -p "$prof" || return 1
+		printf '[Profile0]\nName=default-release\nIsRelative=1\nPath=%s\nDefault=1\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' \
+			"${prof##*/}" > "$root/profiles.ini" || return 1
+		tb_compat "$prof"
+		prefs="$prof/prefs.js"
+	fi
+	grep -E '^user_pref' "$src" >> "$prefs" || return 1
+	echo "Thunderbird: $n accounts. It asks for the passwords at the first start."
+}
+
+# Copy the dotfiles of $HOME into the clone.
+snapshot() {
+	local f rc
+	[[ -n $DRY ]] || unlink_old || return 1
+	f=$(mktemp) || return 1
+	filter_file > "$f"
+	rsync -rltE --delete --prune-empty-dirs --max-size="$MAX_SIZE" --filter="merge $f" "$HOME/" "$REPO/"
+	rc=$?
+	rm -f "$f"
+	[[ -n $DRY ]] && unlink_old
+	tb_export
+	return $rc
+}
+
+# Move a file of $HOME to the same path in $BACKUP.
+backup() {
+	local p=$1 b="$BACKUP/$1"
+	[[ -e $b || -L $b ]] && b="$b.$(date +%Y%m%d-%H%M%S)"
+	if [[ -n $DRY ]]; then
+		echo "  would move ~/$p to $(tilde "$b")${2:+ ($2)}"
+	else
+		mkdir -p "${b%/*}" && mv -T "$HOME/$p" "$b" || return 1
+		echo "moved ~/$p to $(tilde "$b")${2:+ ($2)}"
+	fi
+}
+
+# Copy a file of the repository to $HOME. "keep": a different file in $HOME goes
+# to $BACKUP first. Else the file of $HOME is in the history of the repository.
+put() {
+	local p=$1 h="$HOME/$1" s="$REPO/$1"
+	if [[ -e $h || -L $h ]]; then
+		[[ ! -L $h && ! -L $s ]] && cmp -s "$h" "$s" && return 0
+		if [[ -d $h && ! -L $h ]]; then
+			echo "  kept ~/$p: it is a directory in $HOME"
+			return 0
+		fi
+		if [[ $2 == keep ]]; then
+			backup "$p" || return 1
+		fi
+	fi
+	if [[ -n $DRY ]]; then
+		echo "  would write ~/$p"
+	else
+		mkdir -p "${h%/*}" && cp -P -p --remove-destination "$s" "$h" || return 1
+	fi
+}
+
+# Copy the repository into $HOME. $1: "all" (init), else the commit before a pull.
+apply() {
+	local st p
+	while IFS=$'\t' read -r st p; do
+		is_dotfile "$p" || continue
+		case $st in
+			D*) if [[ -e $HOME/$p || -L $HOME/$p ]]; then backup "$p" "deleted in the repository" || return 1; fi ;;
+			*) put "$p" "$([[ $1 == all ]] && echo keep)" || return 1 ;;
+		esac
+	done < <(
+		if [[ $1 == all ]]; then
+			g ls-files | sed 's/^/A\t/'
+		else
+			g diff --name-status --no-renames "$1" HEAD
+		fi
+	)
+}
+
+# Without a git identity: the real name and user@host, for this clone only.
+identity() {
+	[[ -n $(g config user.email) ]] && return 0
+	local name
+	name=$(getent passwd "$USER" | cut -d: -f5 | cut -d, -f1)
+	g config user.name "${name:-$USER}"
+	g config user.email "$USER@$(hostname)"
+}
+
+# git with the network. QUIET (the user service): no prompts, short timeouts.
+net() {
+	if [[ -n $QUIET ]]; then
+		GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10" timeout 30 git -C "$REPO" "$@" 2> /dev/null
+	else
+		g "$@"
+	fi
+}
+
+# Commit the dotfiles of $HOME. Dry run: list them.
+commit() {
+	local st p
+	snapshot || die "rsync failed"
+	g add -A || return 1
+	# Guard: a file with a token stops the commit.
+	local found
+	found=$(g diff --cached --name-only --diff-filter=AM -z | xargs -0 -r git -C "$REPO" grep --cached -lIE "$TOKENS" --)
+	if [[ -n $found ]]; then
+		g reset -q
+		echo "These files look like they have a token or a key:" >&2
+		sed 's/^/  ~\//' <<< "$found" >&2
+		die "Nothing committed. Remove the token, or add the file to $CLONE/$IGNORE."
+	fi
+	if g diff --cached --quiet; then
+		[[ -n $DRY ]] && echo "Nothing new for the repository."
+		return 0
+	fi
+	if [[ -n $DRY ]]; then
+		echo "Would go to the repository ($(g remote get-url origin)):"
+		g diff --cached --name-status | while IFS=$'\t' read -r st p; do echo "  $(word "$st")  $p"; done
+	fi
+	identity
+	g commit -q -m "Update from $(hostname)"
+}
+
+# Commit, get the changes of other systems, and copy them into $HOME.
+# Exit code 2: no connection. 3: a conflict, the local commit stays.
+update() {
+	need_repo
+	commit || return 1
+	identity
+	net fetch -q origin || return 2
+	# An empty repository has no branch yet.
+	g rev-parse -q --verify '@{u}' > /dev/null || return 0
+	local before
+	before=$(g rev-parse HEAD)
+	if ! g rebase -q '@{u}' > /dev/null 2>&1; then
+		g rebase --abort 2> /dev/null
+		return 3
+	fi
+	if [[ -n $(g diff --name-only "$before" HEAD) ]]; then
+		[[ -n $DRY ]] && echo "Would change in $HOME (from other systems):"
+		apply "$before" || return 1
+	fi
+	tb_import
+	return 0
+}
+
+update_or_die() {
+	update
+	case $? in
+		0) ;;
+		2) die "Cannot reach the repository: $(g remote get-url origin)" ;;
+		3) die "This system and the repository changed the same lines. Fix it in $CLONE with git." ;;
+		*) die "Update failed" ;;
+	esac
+}
+
+cmd_pull() {
+	update_or_die
+	[[ -n $DRY ]] || say "Up to date."
+}
+
+cmd_push() {
+	local files
+	update_or_die
+	if g rev-parse -q --verify '@{u}' > /dev/null; then
+		files=$(g diff --name-only '@{u}' HEAD)
+	else
+		files=$(g ls-files)
+	fi
+	if [[ -z $files ]]; then
+		say "Nothing to push."
+		return 0
+	fi
+	if [[ -n $DRY ]]; then
+		net push -q --dry-run origin HEAD || die "Push would fail. To get push access, run: armbian-dotfiles auth"
+		echo "The push would work."
+		return 0
+	fi
+	net push -q -u origin HEAD || die "Push failed. To get push access, run: armbian-dotfiles auth"
+	say "Pushed. Files changed: $(wc -l <<< "$files")"
+}
+
+# A path in $HOME that EXCLUDE keeps out: the path, or a directory above it.
+is_secret() {
+	local e
+	for e in "${EXCLUDE[@]}"; do
+		[[ $e == /* ]] || continue
+		[[ /$1 == "$e" || /$1 == "$e"/* ]] && return 0
+	done
+	return 1
+}
+
+# Add paths to the include list of the repository.
+cmd_add() {
+	need_repo
+	[[ $# -gt 0 ]] || die "Usage: armbian-dotfiles add <path>..."
+	local f rel
+	for f; do
+		f=$(realpath -s -- "$f" 2> /dev/null) || die "Cannot find $f"
+		[[ $f == "$HOME"/* ]] || die "$f is not in $HOME"
+		rel=${f#"$HOME"/}
+		[[ $rel == .armbian-dotfiles* ]] && die "$f is managed by armbian-dotfiles"
+		is_secret "$rel" && die "$f can hold keys, tokens or passwords. It never goes into the repository."
+		[[ -e $f ]] || die "$f does not exist"
+		if list_file "$INCLUDE_FILE" | grep -qxF "$rel"; then
+			echo "$f is in the list already."
+			continue
+		fi
+		if [[ -n $DRY ]]; then
+			echo "would add ~/$rel to $INCLUDE_FILE"
+		fi
+		echo "$rel" >> "$REPO/$INCLUDE_FILE"
+	done
+	commit || return 1
+	[[ -n $DRY ]] || echo "Added. The next sync pushes it."
+}
+
+# What the next sync puts into the repository. No network.
+cmd_status() {
+	need_repo
+	echo "Repository: $(g remote get-url origin)"
+	DRY=1 dry_copy
+	DRY=1 commit
+	remote_parts || return 0
+	if [[ $HOST == github.com ]] && command -v gh > /dev/null && gh auth status --hostname github.com > /dev/null 2>&1; then
+		echo "Push: signed in to github.com with gh"
+	elif [[ $(g remote get-url origin) != https://* ]]; then
+		echo "Push: SSH key"
+	else
+		echo "Push: not signed in. Run: armbian-dotfiles auth"
+	fi
+}
+
+# The URL of the repository. Default: GitHub, with the login name.
+# "<user>" and "<host>/<user>" give https://<host>/<user>/armbian-dotfiles.git.
+repo_url() {
+	local a=${1:-$USER}
+	if [[ $a == *.git ]]; then
+		echo "$a"
+		return
+	fi
+	a=${a#*://}
+	a=${a%/}
+	case $a in
+		*/*) echo "https://$a/armbian-dotfiles.git" ;;
+		*) echo "https://github.com/$a/armbian-dotfiles.git" ;;
+	esac
+}
+
+# Clone, and copy the repository into $HOME. Exit code 3: the clone exists already.
+cmd_init() {
+	local url
+	url=$(repo_url "$1")
+	if [[ -n $DRY ]]; then
+		[[ -e $CLONE ]] && echo "$CLONE exists: init would skip. The steps without it:"
+		TMP=$(mktemp -d) || die "mktemp failed"
+		trap 'rm -rf "$TMP"' EXIT
+		REPO="$TMP/repo"
+	else
+		# armbian-firstlogin: the log only. In a terminal: the screen too.
+		if [[ -t 1 ]]; then
+			exec > >(tee -a "$LOG") 2>&1
+		else
+			exec >> "$LOG" 2>&1
+		fi
+		echo "$(date) | init from $url"
+		if [[ -e $REPO ]]; then
+			echo "$REPO exists, skipped"
+			exit 3
+		fi
+	fi
+	echo "Repository: $url"
+	timeout 120 git clone -q "$url" "$REPO" 2> /dev/null ||
+		die "Cannot clone $url. Is it a public repository? To make it on GitHub, run: armbian-dotfiles create"
+	[[ -n $DRY ]] && echo "Would write to $HOME:"
+	apply all || exit 1
+	tb_import || exit 1
+	[[ -n $DRY ]] || echo "Done. The next sync adds the other dotfiles of this system."
+}
+
+# The GitHub CLI: installed on demand, signed in, and the credential helper of git.
+gh_ready() {
+	if ! command -v gh > /dev/null; then
+		echo "Installing the GitHub CLI (gh)"
+		sudo apt-get install -y gh || { sudo apt-get update && sudo apt-get install -y gh; } || die "Cannot install gh"
+	fi
+	gh auth status --hostname github.com > /dev/null 2>&1 ||
+		gh auth login --hostname github.com --git-protocol https --web || die "Sign-in failed"
+	gh auth setup-git --hostname github.com || die "gh auth setup-git failed"
+}
+
+# Make the repository on GitHub with gh, then init. Other servers: show the page
+# that makes a repository.
+cmd_create() {
+	local host=${1:-github.com} login
+	host=${host#*://}
+	host=${host%%/*}
+	[[ -e $CLONE ]] && die "$CLONE exists already."
+	if [[ $host != github.com ]]; then
+		echo "Make a public repository with the name armbian-dotfiles on $host:"
+		case $host in
+			gitlab.com) echo "  https://$host/projects/new" ;;
+			codeberg.org) echo "  https://$host/repo/create" ;;
+			*) echo "  GitLab: https://$host/projects/new    Gitea, Forgejo: https://$host/repo/create" ;;
+		esac
+		echo "Then run: armbian-dotfiles init $host/<user>"
+		return 0
+	fi
+	if [[ -n $DRY ]]; then
+		command -v gh > /dev/null || echo "would install gh: sudo apt-get install gh"
+		if command -v gh > /dev/null && gh auth status --hostname github.com > /dev/null 2>&1; then
+			login=$(gh api user --jq .login 2> /dev/null)
+			echo "gh is signed in to github.com as $login"
+		else
+			echo "would sign in: gh auth login --hostname github.com --git-protocol https --web"
+		fi
+		if [[ -n $login ]] && gh repo view "$login/armbian-dotfiles" > /dev/null 2>&1; then
+			echo "github.com/$login/armbian-dotfiles exists: create would use it"
+		else
+			echo "would make the public repository github.com/${login:-<login>}/armbian-dotfiles"
+		fi
+		echo "would run: armbian-dotfiles init https://github.com/${login:-<login>}/armbian-dotfiles.git"
+		return 0
+	fi
+	[[ -t 0 ]] || die "create needs a terminal"
+	gh_ready
+	login=$(gh api user --jq .login) || die "Cannot read the GitHub login"
+	if gh repo view "$login/armbian-dotfiles" > /dev/null 2>&1; then
+		echo "github.com/$login/armbian-dotfiles exists. It is used."
+	else
+		# Public: the first-run setup of a new system reads it without a sign-in.
+		gh repo create "$login/armbian-dotfiles" --public --description "Dotfiles for Armbian (armbian-dotfiles)" ||
+			die "Cannot make the repository"
+	fi
+	cmd_init "https://github.com/$login/armbian-dotfiles.git"
+}
+
+# Push access. GitHub: the GitHub CLI, installed on demand. Other servers: an SSH key.
+cmd_auth() {
+	need_repo
+	remote_parts || die "Unknown remote: $(g remote get-url origin)"
+	if [[ -n $DRY ]]; then
+		if [[ $HOST == github.com ]]; then
+			command -v gh > /dev/null || echo "would install gh: sudo apt-get install gh"
+			if command -v gh > /dev/null && gh auth status --hostname github.com > /dev/null 2>&1; then
+				echo "gh is signed in to github.com already"
+			else
+				echo "would sign in: gh auth login --hostname github.com --git-protocol https --web"
+			fi
+			echo "would run: gh auth setup-git --hostname github.com"
+			echo "would set the remote to https://github.com/$RPATH"
+		else
+			[[ -f $HOME/.ssh/id_ed25519 ]] || echo "would make an SSH key: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519"
+			echo "would show ~/.ssh/id_ed25519.pub, to add to the account on ${HOST%%:*}"
+			echo "would set the remote to git@${HOST%%:*}:$RPATH"
+		fi
+		echo "would test: git push --dry-run"
+		return 0
+	fi
+	[[ -t 0 ]] || die "auth needs a terminal"
+	export GIT_TERMINAL_PROMPT=1
+	if [[ $HOST == github.com ]]; then
+		gh_ready
+		g remote set-url origin "https://github.com/$RPATH"
+	else
+		local key="$HOME/.ssh/id_ed25519" host=${HOST%%:*}
+		if [[ ! -f $key ]]; then
+			mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+			ssh-keygen -t ed25519 -C "$USER@$(hostname) armbian-dotfiles" -f "$key" || die "ssh-keygen failed"
+		fi
+		echo
+		echo "Add this public key to your account on $host:"
+		echo
+		cat "$key.pub"
+		echo
+		case $host in
+			gitlab.com) echo "  https://$host/-/user_settings/ssh_keys" ;;
+			codeberg.org) echo "  https://$host/user/settings/keys" ;;
+			*) echo "  GitLab: https://$HOST/-/user_settings/ssh_keys    Gitea, Forgejo: https://$HOST/user/settings/keys" ;;
+		esac
+		[[ $HOST == *:* ]] && echo "The server uses port ${HOST#*:} for HTTPS. SSH uses port 22: change the remote if the server uses another port."
+		read -r -p "Press Enter when the key is added. " _
+		g remote set-url origin "git@$host:$RPATH"
+		export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new"
+	fi
+	if g push -q --dry-run origin HEAD; then
+		echo "Push works."
+	else
+		die "Push does not work yet."
+	fi
+}
+
+usage() {
+	cat <<- EOF
+		Usage: armbian-dotfiles [--dry-run] <command>
+
+		  sync          Save the dotfiles of this system, get the changes of other
+		                systems, and push (the user service runs it)
+		  status        Show what the next sync puts into the repository
+		  add <path>    Add a file or directory of \$HOME to the settings
+		  pull          Save and get, without a push
+		  auth          Get push access: gh for GitHub, else an SSH key
+		  create [<host>]
+		                Make the repository (GitHub, with gh), then init
+		  init [<user> | <host>/<user> | <url>]
+		                Clone, and copy the repository into \$HOME. Default:
+		                https://github.com/$USER/armbian-dotfiles.git
+
+		  --dry-run, -n Show what the command would do. Nothing changes.
+
+		Settings: known files (shell, git, editors, terminals, desktops), and the
+		paths in $CLONE/$INCLUDE_FILE. Files with keys, tokens,
+		passwords, cookies or history never go in, and files larger than $MAX_SIZE.
+		More exclusions: one rsync pattern per line in $CLONE/$IGNORE.
+		Replaced files go to $BACKUP.
+	EOF
+}
+
+if [[ $1 == --dry-run || $1 == -n ]]; then
+	DRY=1
+	shift
+	echo "Dry run: nothing changes."
+	[[ $1 == init || $1 == create ]] || dry_copy
+fi
+
+case $1 in
+	init) cmd_init "$2" ;;
+	create) cmd_create "$2" ;;
+	status) cmd_status ;;
+	pull) cmd_pull ;;
+	push) cmd_push ;;
+	add) shift && cmd_add "$@" ;;
+	auth) cmd_auth ;;
+	sync)
+		# No repository: nothing to do. A failed push waits for the next sync.
+		[[ -d $CLONE/.git ]] || exit 0
+		if [[ -n $DRY ]]; then
+			cmd_push
+			exit
+		fi
+		QUIET=1
+		(cmd_push) >> "$LOG" 2>&1 || echo "$(date) | sync: changes stay local until the next sync" >> "$LOG"
+		exit 0
+		;;
+	*)
+		usage
+		[[ $1 == -h || $1 == --help ]]
+		;;
+esac

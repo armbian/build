@@ -756,11 +756,13 @@ add_user() {
 				mkdir -p /home/"$RealUserName"/.ssh/ || return 1
 				chown "$RealUserName:$RealUserName" /home/"$RealUserName"/.ssh/ || return 1
 				chmod 700 /home/"$RealUserName"/.ssh/ || return 1
-				if curl --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
+				# --fail: an error page must not go into authorized_keys. A download
+				# error must not stop the setup: the account works without the keys.
+				if curl -fsSL --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
 					atomic_write "${_f}.tmp" "${_f}" 600 "$RealUserName:$RealUserName" || return 1
 				else
 					rm -f "${_f}.tmp"
-					return 1
+					echo -e "\e[0;31mWarning:\x1B[0m cannot download the SSH keys from ${PRESET_USER_KEY}. The account has no SSH keys."
 				fi
 			fi
 
@@ -817,6 +819,42 @@ add_user() {
 		[[ "$REPEATS" -eq 0 ]] && exit 0
 	done
 
+}
+
+# Clone the dotfiles repository of a git account and apply it, as the user
+# (armbian-dotfiles init).
+# PRESET_DOTFILES_URL: a public https:// repository that ends in .git. The graphical
+# first-run wizard sets it to https://<host>/<user>/armbian-dotfiles.git, and
+# PRESET_USER_KEY to https://<host>/<user>.keys.
+# Best effort: an error prints a warning, and the setup continues.
+apply_dotfiles() {
+	local url="${PRESET_DOTFILES_URL:-}" user="${RealUserName:-}"
+	[[ -n "$url" && -n "$user" ]] || return 0
+	if [[ ! "$url" =~ ^https://[^[:space:]]+\.git$ ]]; then
+		echo "Warning: PRESET_DOTFILES_URL is not an https:// URL that ends in .git, dotfiles skipped"
+		return 0
+	fi
+	if ! command -v git > /dev/null 2>&1; then
+		echo "Warning: git is not installed, dotfiles skipped"
+		return 0
+	fi
+	if [[ ! -x /usr/bin/armbian-dotfiles ]]; then
+		echo "Warning: armbian-dotfiles is not installed, dotfiles skipped"
+		return 0
+	fi
+	echo "Applying dotfiles from ${url}"
+
+	# No terminal: git must not ask for a password, and a sudo call fails.
+	local rc=0
+	(cd / && timeout 900 runuser -u "$user" -- env -i HOME="/home/$user" USER="$user" LOGNAME="$user" \
+		PATH=/usr/local/bin:/usr/bin:/bin GIT_TERMINAL_PROMPT=0 SUDO_ASKPASS=/bin/false \
+		/usr/bin/armbian-dotfiles init "$url" < /dev/null) || rc=$?
+	case $rc in
+		0) echo "Dotfiles applied" ;;
+		3) echo "Warning: ~/.armbian-dotfiles exists, dotfiles skipped" ;;
+		*) echo "Dotfiles failed, see ~/.armbian-dotfiles.log" ;;
+	esac
+	return 0
 }
 
 set_user_icon() {
@@ -1162,6 +1200,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# remove the marker; subsequent failures (DM startup, etc.) should not
 	# force a full firstlogin rerun.
 	FIRSTLOGIN_SUCCESS=1
+	apply_dotfiles
 
 	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
 	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
