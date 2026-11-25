@@ -20,9 +20,13 @@ level interrupt never drops.
   but still latch.
 - Guard against any other cause: read root, correctable and
   uncorrectable status and DEVSTA first; if none shows an error, return
-  IRQ_NONE (rate-limited warning). After a burst of 64 such interrupts
-  (a gap of more than 1 s resets the count), disable the line, dump the
-  registers once, and re-enable it 2 s later, up to 5 times.
+  IRQ_NONE (rate-limited warning). Each AER line keeps its own count:
+  after a burst of 64 such interrupts on a line (a gap of more than 1 s
+  resets it), disable that line, dump the registers once, and re-enable
+  it 2 s later, up to 5 times per line.
+- On remove and in sky1_pcie_disable_irq(), disable the AER lines
+  first (waiting for running handlers), then cancel the pending
+  re-enables, so none can run afterwards.
 - Rate-limit the remaining AER logging and print it after dropping the
   lock; the per-interrupt dev_sts prints become dev_dbg.
 - Log the local/AER IRQ numbers at probe.
@@ -38,12 +42,12 @@ config-7.3.defconfig.
 
 Signed-off-by: jbuck2005 <59450931+jbuck2005@users.noreply.github.com>
 ---
- drivers/pci/controller/cadence/pci-sky1-cix.c | 230 +++++++++++++++++-
- drivers/pci/controller/cadence/pci-sky1-cix.h |   7 +
- 2 files changed, 228 insertions(+), 9 deletions(-)
+ drivers/pci/controller/cadence/pci-sky1-cix.c | 294 +++++++++++++++++-
+ drivers/pci/controller/cadence/pci-sky1-cix.h |  11 +
+ 2 files changed, 293 insertions(+), 12 deletions(-)
 
 diff --git a/drivers/pci/controller/cadence/pci-sky1-cix.c b/drivers/pci/controller/cadence/pci-sky1-cix.c
-index cb54ee99e..5d92bf197 100644
+index cb54ee99e..b6c9aded8 100644
 --- a/drivers/pci/controller/cadence/pci-sky1-cix.c
 +++ b/drivers/pci/controller/cadence/pci-sky1-cix.c
 @@ -11,6 +11,7 @@
@@ -72,7 +76,7 @@ index cb54ee99e..5d92bf197 100644
  	if (uncorr_val)
  		dev_err(dev, "EP's PCI_ERR_UNCOR_STATUS: 0x%x\n", uncorr_val);
  	if (corr_val)
-@@ -626,12 +627,148 @@ static void sky1_pcie_handle_ep_aer_irq(struct sky1_pcie *pcie)
+@@ -626,12 +627,193 @@ static void sky1_pcie_handle_ep_aer_irq(struct sky1_pcie *pcie)
  			       uncorr_val);
  }
  
@@ -191,24 +195,69 @@ index cb54ee99e..5d92bf197 100644
 +#define SKY1_AER_REARM_DELAY_MS		2000
 +#define SKY1_AER_REARM_MAX		5
 +
++static struct sky1_aer_guard *sky1_pcie_aer_guard(struct sky1_pcie *pcie, int irq)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(pcie->aer_guard); i++)
++		if (pcie->aer_guard[i].irq == irq)
++			return &pcie->aer_guard[i];
++	return NULL;
++}
++
 +static void sky1_pcie_aer_rearm_fn(struct work_struct *work)
 +{
-+	struct sky1_pcie *pcie = container_of(to_delayed_work(work),
-+					      struct sky1_pcie, aer_rearm_work);
++	struct sky1_aer_guard *g = container_of(to_delayed_work(work),
++						struct sky1_aer_guard, rearm_work);
++	struct sky1_pcie *pcie = g->pcie;
 +	unsigned long flags;
-+	int irq;
++	bool rearm;
 +
 +	spin_lock_irqsave(&pcie->aer_lock, flags);
-+	irq = pcie->aer_off_irq;
-+	pcie->aer_off_irq = 0;
-+	pcie->aer_spurious = 0;
++	rearm = g->rearm_pending;
++	g->rearm_pending = false;
++	if (rearm) {
++		g->off = false;
++		g->spurious = 0;
++	}
 +	spin_unlock_irqrestore(&pcie->aer_lock, flags);
-+	if (!irq)
++	if (!rearm)
 +		return;
-+	dev_info(pcie->dev, "AER irq %d (%s): re-enabled (%u/%u)\n", irq,
-+		 sky1_pcie_aer_irq_name(pcie, irq), pcie->aer_rearms,
++	dev_info(pcie->dev, "AER irq %d (%s): re-enabled (%u/%u)\n", g->irq,
++		 sky1_pcie_aer_irq_name(pcie, g->irq), g->rearms,
 +		 SKY1_AER_REARM_MAX);
-+	enable_irq(irq);
++	enable_irq(g->irq);
++}
++
++/*
++ * Stop the AER lines and any pending re-enable. disable_irq() waits for a
++ * running handler, so no handler can queue rearm_work after the cancel. A line
++ * the guard had switched off "for a while" is disabled twice at this point;
++ * drop the guard's count so a later enable_irq() really enables it.
++ */
++static void sky1_pcie_aer_stop(struct sky1_pcie *pcie)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(pcie->aer_guard); i++)
++		disable_irq(pcie->aer_guard[i].irq);
++	for (i = 0; i < ARRAY_SIZE(pcie->aer_guard); i++) {
++		struct sky1_aer_guard *g = &pcie->aer_guard[i];
++		unsigned long flags;
++		bool pending;
++
++		cancel_delayed_work_sync(&g->rearm_work);
++		spin_lock_irqsave(&pcie->aer_lock, flags);
++		pending = g->rearm_pending;
++		g->rearm_pending = false;
++		if (pending) {
++			g->off = false;
++			g->spurious = 0;
++		}
++		spin_unlock_irqrestore(&pcie->aer_lock, flags);
++		if (pending)
++			enable_irq(g->irq);
++	}
 +}
 +
  static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
@@ -222,7 +271,7 @@ index cb54ee99e..5d92bf197 100644
  	unsigned long flags;
  	irqreturn_t ret;
  #define _AER_ERR_STATUS_MASK                             \
-@@ -643,17 +780,78 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
+@@ -643,17 +825,88 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
  	aer_offset =
  		sky1_cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
  	if (!aer_offset) {
@@ -245,15 +294,22 @@ index cb54ee99e..5d92bf197 100644
 +	if (!sta && !corr && !uncorr &&
 +	    !(devsta & (PCI_EXP_DEVSTA_CED | PCI_EXP_DEVSTA_NFED |
 +			PCI_EXP_DEVSTA_FED))) {
++		struct sky1_aer_guard *g = sky1_pcie_aer_guard(pcie, irq);
++		bool cut = false, rearm = false;
 +		unsigned int n;
 +		u32 local;
 +
 +		/* A latched local (non-AER-capability) error is a source we can clear. */
 +		local = sky1_pcie_clear_local_aer(pcie, sky1_pcie_aer_irq_name(pcie, irq));
 +		if (local & SKY1_LOCAL_AER_BITS) {
-+			pcie->aer_spurious = 0;
++			if (g)
++				g->spurious = 0;
 +			spin_unlock_irqrestore(&pcie->aer_lock, flags);
 +			return IRQ_HANDLED;
++		}
++		if (!g) {
++			spin_unlock_irqrestore(&pcie->aer_lock, flags);
++			return local ? IRQ_HANDLED : IRQ_NONE;
 +		}
 +
 +		/*
@@ -261,42 +317,45 @@ index cb54ee99e..5d92bf197 100644
 +		 * the LTSSM indication: both count towards the guard below, so a
 +		 * link that keeps changing state cannot hold the CPU either.
 +		 */
-+		if (time_after(jiffies, pcie->aer_last + HZ))
-+			pcie->aer_spurious = 0;	/* only bursts count */
-+		pcie->aer_last = jiffies;
-+		n = ++pcie->aer_spurious;
-+
++		if (time_after(jiffies, g->last + HZ))
++			g->spurious = 0;	/* only bursts count */
++		g->last = jiffies;
++		n = ++g->spurious;
++		if (n >= SKY1_AER_SPURIOUS_LIMIT && !g->off) {
++			cut = true;
++			g->off = true;
++			rearm = g->rearms < SKY1_AER_REARM_MAX;
++			if (rearm) {
++				g->rearms++;
++				g->rearm_pending = true;
++			}
++		}
 +		spin_unlock_irqrestore(&pcie->aer_lock, flags);
++
 +		if (!local)
 +			dev_warn_ratelimited(pcie->dev,
 +				"spurious AER irq %d (%s), no error status (%u in a row)\n",
 +				irq, sky1_pcie_aer_irq_name(pcie, irq), n);
-+		if (n == SKY1_AER_SPURIOUS_LIMIT) {
-+			bool rearm;
-+
-+			spin_lock_irqsave(&pcie->aer_lock, flags);
-+			rearm = !pcie->aer_off_irq &&
-+				pcie->aer_rearms < SKY1_AER_REARM_MAX;
-+			if (rearm) {
-+				pcie->aer_off_irq = irq;
-+				pcie->aer_rearms++;
-+			}
-+			spin_unlock_irqrestore(&pcie->aer_lock, flags);
-+
++		if (cut) {
 +			dev_err(pcie->dev,
 +				"AER irq %d (%s): %u interrupts with no error status, disabling it%s\n",
 +				irq, sky1_pcie_aer_irq_name(pcie, irq), n,
 +				rearm ? " for a while" : " for good");
-+			if (pcie->aer_rearms == 1 && rearm)
++			if (g->rearms == 1 && rearm)
 +				sky1_pcie_aer_dump(pcie, irq);
 +			disable_irq_nosync(irq);
 +			if (rearm)
-+				schedule_delayed_work(&pcie->aer_rearm_work,
++				schedule_delayed_work(&g->rearm_work,
 +					msecs_to_jiffies(SKY1_AER_REARM_DELAY_MS));
 +		}
 +		return local ? IRQ_HANDLED : IRQ_NONE;
 +	}
-+	pcie->aer_spurious = 0;
++	{
++		struct sky1_aer_guard *g = sky1_pcie_aer_guard(pcie, irq);
++
++		if (g)
++			g->spurious = 0;
++	}
 +
  	/* Clear root error status */
  	writel(sta, (reg_base + aer_offset + PCI_ERR_ROOT_STATUS));
@@ -306,7 +365,7 @@ index cb54ee99e..5d92bf197 100644
  	if (!(sta & _AER_ERR_STATUS_MASK))
  		/* local AER error flow */
  		sky1_pcie_handle_rp_aer_irq(pcie);
-@@ -663,8 +861,10 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
+@@ -663,14 +916,17 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
  
  	ret = IRQ_HANDLED;
  
@@ -318,25 +377,38 @@ index cb54ee99e..5d92bf197 100644
  	return ret;
  }
  
-@@ -684,6 +884,7 @@ static int sky1_pcie_request_irq(struct sky1_pcie *pcie)
+ static int sky1_pcie_request_irq(struct sky1_pcie *pcie)
+ {
+ 	int ret = -1;
++	int i;
+ 
+ 	INIT_WORK(&pcie->pme_work, sky1_pcie_pme_work_fn);
+ 	mutex_init(&pcie->pme_mutex);
+@@ -684,6 +940,13 @@ static int sky1_pcie_request_irq(struct sky1_pcie *pcie)
  	}
  
  	spin_lock_init(&pcie->aer_lock);
-+	INIT_DELAYED_WORK(&pcie->aer_rearm_work, sky1_pcie_aer_rearm_fn);
++	pcie->aer_guard[0].irq = pcie->aer_c_irq;
++	pcie->aer_guard[1].irq = pcie->aer_f_irq;
++	pcie->aer_guard[2].irq = pcie->aer_nf_irq;
++	for (i = 0; i < ARRAY_SIZE(pcie->aer_guard); i++) {
++		pcie->aer_guard[i].pcie = pcie;
++		INIT_DELAYED_WORK(&pcie->aer_guard[i].rearm_work, sky1_pcie_aer_rearm_fn);
++	}
  	ret = devm_request_threaded_irq(pcie->dev, pcie->aer_c_irq, NULL,
  					sky1_pcie_aer_irq_handler, IRQF_ONESHOT,
  					"pcie-aer-c", pcie);
-@@ -704,6 +905,9 @@ static int sky1_pcie_request_irq(struct sky1_pcie *pcie)
+@@ -704,14 +967,16 @@ static int sky1_pcie_request_irq(struct sky1_pcie *pcie)
  
  static void sky1_pcie_disable_irq(struct sky1_pcie *pcie)
  {
-+	/* A pending re-enable would undo this. */
-+	cancel_delayed_work_sync(&pcie->aer_rearm_work);
-+	pcie->aer_off_irq = 0;
++	/* AER lines first, then their pending re-enables (see sky1_pcie_aer_stop()). */
++	sky1_pcie_aer_stop(pcie);
  	disable_irq(pcie->local_irq);
- 	disable_irq(pcie->aer_c_irq);
- 	disable_irq(pcie->aer_f_irq);
-@@ -712,6 +916,9 @@ static void sky1_pcie_disable_irq(struct sky1_pcie *pcie)
+-	disable_irq(pcie->aer_c_irq);
+-	disable_irq(pcie->aer_f_irq);
+-	disable_irq(pcie->aer_nf_irq);
+ }
  
  static void sky1_pcie_enable_irq(struct sky1_pcie *pcie, bool en)
  {
@@ -346,7 +418,7 @@ index cb54ee99e..5d92bf197 100644
  	/* local (some error status) */
  	sky1_pcie_enable_local_irq(pcie, en);
  	sky1_pcie_enable_indicatbit_int(pcie, en);
-@@ -1549,6 +1756,10 @@ static int sky1_pcie_parse_aer_irq(struct sky1_pcie *pcie)
+@@ -1549,6 +1814,10 @@ static int sky1_pcie_parse_aer_irq(struct sky1_pcie *pcie)
  	/* AER uncorrectable non fatal*/
  	pcie->aer_nf_irq = platform_get_irq_byname(pdev, "aer_nf");
  
@@ -357,29 +429,36 @@ index cb54ee99e..5d92bf197 100644
  	return 0;
  }
  
-@@ -2549,6 +2760,7 @@ static int sky1_pcie_remove(struct platform_device *pdev)
+@@ -2549,6 +2818,7 @@ static int sky1_pcie_remove(struct platform_device *pdev)
  	struct sky1_pcie *pcie = platform_get_drvdata(pdev);
  	struct device *dev = &pdev->dev;
  
-+	cancel_delayed_work_sync(&pcie->aer_rearm_work);
++	sky1_pcie_aer_stop(pcie);
  	sky1_pcie_enable_irq(pcie, false);
  	pci_ecam_free(pcie->cfg);
  	pm_runtime_put(dev);
 diff --git a/drivers/pci/controller/cadence/pci-sky1-cix.h b/drivers/pci/controller/cadence/pci-sky1-cix.h
-index 24c5ff763..32d07c1e8 100644
+index 24c5ff763..6b81b074f 100644
 --- a/drivers/pci/controller/cadence/pci-sky1-cix.h
 +++ b/drivers/pci/controller/cadence/pci-sky1-cix.h
-@@ -156,6 +156,13 @@ struct sky1_pcie {
+@@ -156,6 +156,17 @@ struct sky1_pcie {
  	struct mutex pme_mutex;
  	struct sky1_aer_stats aer_stats;
  	bool aer_uncor_dump;
-+	/* consecutive AER interrupts that found no error status */
-+	unsigned int aer_spurious;
-+	unsigned long aer_last;		/* jiffies of the last one */
-+	/* AER line switched off by the spurious-interrupt guard, re-enabled later */
-+	int aer_off_irq;
-+	unsigned int aer_rearms;
-+	struct delayed_work aer_rearm_work;
++	/* spurious-interrupt guard, one per AER line (aer_c, aer_f, aer_nf) */
++	struct sky1_aer_guard {
++		struct sky1_pcie *pcie;
++		int irq;
++		unsigned int spurious;	/* interrupts in a row with no error status */
++		unsigned long last;	/* jiffies of the last one */
++		unsigned int rearms;	/* times the line was switched back on */
++		bool off;		/* switched off by the guard */
++		bool rearm_pending;	/* rearm_work will switch it back on */
++		struct delayed_work rearm_work;
++	} aer_guard[3];
  
  	struct phy *pcie_phy;
  	struct workqueue_struct *wk;
+-- 
+2.53.0
+
