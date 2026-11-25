@@ -9,8 +9,23 @@
 # First login as root?
 if [ -w /root/ -a -f /root/.not_logged_in_yet ]; then
 	# The graphical wizard (armbian-firstrun-gui) runs on the screen: do not start a second setup.
+	# A login on SSH, a serial console or another text console can take the setup over, for
+	# example when no one is at the screen. The lock of armbian-firstlogin stops this while
+	# the wizard applies its answers.
 	if systemctl -q is-active armbian-firstrun-gui.service 2> /dev/null; then
-		echo "The first-run setup runs on the screen. Log in again when it is complete."
+		echo "The first-run setup runs on the screen."
+		printf "Stop it and continue the setup here? [y/N] "
+		read -r reply
+		case "$reply" in
+			[yY]*)
+				if flock -n /run/armbian-firstlogin.lock systemctl stop armbian-firstrun-gui.service; then
+					bash /usr/lib/armbian/armbian-firstlogin
+				else
+					echo "The setup on the screen applies its answers. Log in again when it is complete."
+				fi
+				;;
+			*) echo "Log in again when it is complete." ;;
+		esac
 	else
 		bash /usr/lib/armbian/armbian-firstlogin
 	fi
