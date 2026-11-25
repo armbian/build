@@ -819,6 +819,62 @@ add_user() {
 
 }
 
+# Keyboard layout from PRESET_KEYBOARD_LAYOUT and PRESET_KEYBOARD_VARIANT (xkb names).
+# armbian-firstrun-gui sets them. The console and X11 read /etc/default/keyboard.
+set_keyboard() {
+	[[ -n "${PRESET_KEYBOARD_LAYOUT}" ]] || return 0
+	local _f="/etc/default/keyboard"
+	{
+		[[ -f "${_f}" ]] && grep -v -E '^(XKBLAYOUT|XKBVARIANT)=' "${_f}"
+		[[ -f "${_f}" ]] || printf 'XKBMODEL="pc105"\nXKBOPTIONS=""\nBACKSPACE="guess"\n'
+		echo "XKBLAYOUT=\"${PRESET_KEYBOARD_LAYOUT}\""
+		echo "XKBVARIANT=\"${PRESET_KEYBOARD_VARIANT}\""
+	} > "${_f}.tmp" && atomic_write "${_f}.tmp" "${_f}" 644 || return 1
+	echo -e "Keyboard: \x1B[92m${PRESET_KEYBOARD_LAYOUT}${PRESET_KEYBOARD_VARIANT:+ (${PRESET_KEYBOARD_VARIANT})}\x1B[0m"
+	# Console keymap now. Without console-setup it applies after the next boot.
+	# A failure does not stop the first login: the file above applies at the next boot.
+	if command -v setupcon > /dev/null; then
+		setupcon --save -k --force < /dev/null > /dev/null 2>&1 ||
+			echo "Warning: setupcon failed. The console keymap applies after the next boot."
+	fi
+	# X takes the layout from the udev properties of the input devices (keyboard(5)).
+	# The display manager starts later in this run: refresh the properties first.
+	if command -v udevadm > /dev/null; then
+		udevadm trigger --subsystem-match=input --action=change > /dev/null 2>&1 &&
+			udevadm settle --timeout=10 > /dev/null 2>&1
+	fi
+	return 0
+}
+
+# Ask the keyboard layout on a local console only. SSH and serial terminals
+# use the layout of the client computer, so the answer has no effect there.
+# Without setupcon the layout applies after the next boot: the passwords
+# would then be typed with another layout than the next login.
+ask_keyboard() {
+	[[ -z "${PRESET_KEYBOARD_LAYOUT}" && "${preset_unattended}" != 1 ]] || return 0
+	[[ "$(tty)" =~ ^/dev/tty[0-9]+$ ]] || return 0
+	command -v setupcon > /dev/null || return 0
+	local rules=/usr/share/X11/xkb/rules/base.lst current layout variant
+	[[ -r "${rules}" ]] || return 0
+	current=$(. /etc/default/keyboard 2> /dev/null; echo "${XKBLAYOUT:-us}")
+	while :; do
+		read -r -p "Keyboard layout and variant, ? for a list [${current}]: " layout variant
+		[[ -n "${layout}" ]] || return 0
+		if [[ "${layout}" == "?" ]]; then
+			awk '/^! layout/{f=1; next} /^!/{f=0} f && NF {print $1}' "${rules}" | column | more
+			continue
+		fi
+		awk -v l="${layout}" -v v="${variant}" '
+			/^! layout/{s="l"; next} /^! variant/{s="v"; next} /^!/{s=""}
+			s=="l" && $1==l {lok=1}
+			s=="v" && $1==v && $2==l":" {vok=1}
+			END {exit !(lok && (v=="" || vok))}' "${rules}" && break
+		echo "Unknown layout or variant: ${layout} ${variant}"
+	done
+	PRESET_KEYBOARD_LAYOUT="${layout}"
+	PRESET_KEYBOARD_VARIANT="${variant}"
+}
+
 set_user_icon() {
     local U="$1"
     local ICON_SRC="/usr/share/armbian/armbian-user-icon.png"
@@ -876,6 +932,16 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	if [[ ! -f /root/.not_logged_in_yet ]]; then
 		[[ -z "${SSH_CONNECTION}" ]] && kill -HUP "$PPID"
 		exit 0
+	fi
+
+	# The graphical wizard can ask on the screen while a setup starts here, for
+	# example on a serial console that logged in before the wizard started. This
+	# setup holds the lock, so the wizard does not apply answers now: stop it.
+	# Not in the run of the wizard itself, which is in the cgroup of its service.
+	if ! grep -q 'armbian-firstrun-gui\.service' /proc/self/cgroup 2> /dev/null &&
+		systemctl -q is-active armbian-firstrun-gui.service 2> /dev/null; then
+		echo -e "\nThe setup on the screen stops. The setup continues here."
+		systemctl stop armbian-firstrun-gui.service
 	fi
 
 	. /root/.not_logged_in_yet
@@ -1020,6 +1086,16 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		echo -e "Or continue with CLI setup below...\n"
 	fi
 
+	# A password typed here must use the layout of the next console login:
+	# set the keymap first. With preset passwords (the graphical wizard), it
+	# comes after the locales, where the wizard expects the "Keyboard:" line.
+	keyboard_done=0
+	if [[ -z "$PRESET_ROOT_PASSWORD" || -z "$PRESET_USER_PASSWORD" ]]; then
+		ask_keyboard
+		set_keyboard || exit 1
+		keyboard_done=1
+	fi
+
 	[[ -z "$PRESET_ROOT_PASSWORD" ]] && echo "" # empty line
 
 	# extra Enter presses would be read as an empty password
@@ -1124,6 +1200,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# ask user to select automated locales or not
 	trap '' 2
 	set_timezone_and_locales || exit 1
+	[[ "${keyboard_done}" == 1 ]] || set_keyboard || exit 1
 	trap - INT
 
 	if [[ ${USER_SHELL} == zsh ]]; then
