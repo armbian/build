@@ -485,6 +485,18 @@ function post_family_config__cleanup_ask_kernel_patch() {
 	return 0
 }
 
+# Print the installed linux-image package version in the image. A .deb Depends on linux-image
+# must use this (Armbian's version string), not the module directory name ${kernel_ver} — the
+# two are different namespaces, so a constraint against ${kernel_ver} always holds.
+# chroot_sdcard_with_stdout execs its args directly (no shell): pass them separately, and
+# single-quote the dpkg-query format so ${Version} reaches dpkg-query literally.
+function ask_installed_kernel_deb_version() {
+	local ver
+	ver=$(chroot_sdcard_with_stdout dpkg-query -W -f='${Version}' "linux-image-${BRANCH}-${LINUXFAMILY}")
+	[[ -n "${ver}" ]] || exit_with_error "Could not read the installed linux-image version" "linux-image-${BRANCH}-${LINUXFAMILY}"
+	echo "${ver}"
+}
+
 # Build and install the ASK userspace.
 #
 # ASK is flowtable-native (since 1.1.0): the whole userspace is one libc-only daemon,
@@ -594,8 +606,11 @@ ASKSVC
 
 	# Version: kernel version + build date — allows userspace bugfix rebuilds without a kernel
 	# change. Depends uses >= on linux-image (not =): ask-flowtable shells out to nft/ip and does
-	# not link the kernel modules, so a kernel point-release needs no ASK userspace rebuild.
+	# not link the kernel modules, so a kernel point-release needs no ASK userspace rebuild. The
+	# floor is the linux-image this was built with, which carries the flowtable-capable modules.
 	local ask_version="${kernel_ver}+$(date +%Y%m%d)"
+	local kernel_deb_ver
+	kernel_deb_ver=$(ask_installed_kernel_deb_version)
 
 	cat > "${pkgdir}/DEBIAN/control" << EOF
 Package: ${pkgname}
@@ -604,7 +619,7 @@ Architecture: arm64
 Section: net
 Priority: optional
 Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
-Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), nftables, iproute2
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_deb_ver}), nftables, iproute2
 Description: NXP ASK hardware flow-offload userspace for Mono Gateway DK
  The ask-flowtable daemon maintains the nftables flowtable that drives NXP ASK
  CDX/FMan hardware offload on the LS1046A Gateway DK. The CDX and ask_flowtable
@@ -758,11 +773,8 @@ function pre_customize_image__002_build_wifi() {
 	# matching WiFi rebuild instead of leaving stale .ko that silently stop loading. Userspace
 	# is Recommends (installed by default, removable on a headless unit). The package version
 	# tracks the module dir + build date so a driver-only bugfix can ship without a kernel bump.
-	# chroot_sdcard_with_stdout execs its args directly (no shell): pass them separately, and
-	# single-quote the dpkg-query format so ${Version} reaches dpkg-query literally.
 	local kernel_deb_ver
-	kernel_deb_ver=$(chroot_sdcard_with_stdout dpkg-query -W -f='${Version}' "linux-image-${BRANCH}-${LINUXFAMILY}")
-	[[ -n "${kernel_deb_ver}" ]] || exit_with_error "Could not read installed linux-image version for gateway-dk-wifi dependency"
+	kernel_deb_ver=$(ask_installed_kernel_deb_version)
 	local wifi_version="${kernel_ver}+$(date +%Y%m%d)"
 	cat > "${pkgdir}/DEBIAN/control" << EOF
 Package: ${pkgname}
