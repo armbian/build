@@ -672,8 +672,13 @@ systemctl stop ask-flowtable.service 2>/dev/null || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/prerm"
 
+	# An upgrade that fails after prerm can leave the restart marker behind; clear it on removal
+	# so a later fresh install in the same boot only enables the service, as installs do.
 	cat > "${pkgdir}/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    rm -f /run/gateway-dk-ask.restart
+fi
 systemctl daemon-reload || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postrm"
