@@ -599,6 +599,10 @@ function docker_cli_prepare_launch() {
 	# DOCKER_PRIVILEGED=no switches to a narrow capability set.
 	if [[ "${DOCKER_PRIVILEGED:-yes}" == "yes" ]]; then
 		DOCKER_ARGS+=("--privileged")
+		# Host kernel modules, so modprobe in the container can load a filesystem module (btrfs, f2fs, xfs).
+		if [[ -d "/lib/modules/$(uname -r)" ]]; then
+			DOCKER_ARGS+=("--mount" "type=bind,source=/lib/modules,target=/lib/modules,readonly")
+		fi
 	else
 		DOCKER_ARGS+=(
 			"--device=/dev/loop-control:/dev/loop-control"
