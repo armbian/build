@@ -143,6 +143,14 @@ function pre_umount_final_image__800_build_image_output_iso() {
 			# The installed image's UUID entries are intentionally omitted.
 		LIVEFSTAB
 	fi
+	# A crypt image's crypttab names the installed LUKS root. The live system
+	# waits 90s for that device. Empty crypttab in the squashfs only.
+	declare crypttab_bak=""
+	if [[ -f "${MOUNT}/etc/crypttab" ]]; then
+		crypttab_bak="$(mktemp)"
+		cp -a "${MOUNT}/etc/crypttab" "${crypttab_bak}"
+		echo "# Live ISO: no encrypted volumes." > "${MOUNT}/etc/crypttab"
+	fi
 
 	# Mask GRUB boot-success bookkeeping services in the live squashfs only: on a
 	# read-only live medium they have no writable grubenv to record into, so they
@@ -186,6 +194,10 @@ function pre_umount_final_image__800_build_image_output_iso() {
 	if [[ -n "${fstab_bak}" ]]; then
 		cp -a "${fstab_bak}" "${MOUNT}/etc/fstab"
 		rm -f "${fstab_bak}"
+	fi
+	if [[ -n "${crypttab_bak}" ]]; then
+		cp -a "${crypttab_bak}" "${MOUNT}/etc/crypttab"
+		rm -f "${crypttab_bak}"
 	fi
 	# undo the live-only service/generator masks so the installed .img is unaffected
 	for svc in "${live_mask[@]}"; do
