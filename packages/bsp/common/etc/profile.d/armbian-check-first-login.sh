@@ -32,10 +32,13 @@ if [ -w /root/ -a -f /root/.not_logged_in_yet ]; then
 			else
 				# A console login (root autologin at first boot) must not stay open after
 				# the setup. If the wizard stops without a result, continue the setup here.
+				# Ctrl-C must not leave a root shell open.
 				echo "This console logs out when the setup is complete."
+				trap '' INT
 				while [ -f /root/.not_logged_in_yet ] && systemctl -q is-active armbian-firstrun-gui.service; do
 					sleep 1
 				done
+				trap - INT
 				if [ -f /root/.not_logged_in_yet ]; then
 					bash /usr/lib/armbian/armbian-firstlogin
 				else
