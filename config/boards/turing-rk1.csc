@@ -33,15 +33,24 @@ function post_family_config__turing-rk1_default_serial_console_by_branch() {
 function post_family_tweaks__turing-rk1_default_serial_console_by_branch() {
 	display_alert "$BOARD" "Modify bootscript serial console for $BOARD / $BRANCH" "info"
 
+	local boot_cmd="$SDCARD/boot/boot.cmd"
+
 	case $BRANCH in
 		vendor*)
+			if ! grep -qxF 'setenv serialcon "ttyS2"' "${boot_cmd}" ||
+				! grep -qF 'console=${serialcon},1500000' "${boot_cmd}"; then
+				exit_with_error "turing-rk1: vendor boot.cmd console template changed; update the sed in turing-rk1.csc"
+			fi
 			sed -i \
 				-e 's/setenv serialcon "ttyS2"/setenv serialcon "ttyS9"/' \
 				-e 's/console=${serialcon},1500000/console=${serialcon},115200/' \
-				"$SDCARD/boot/boot.cmd"
+				"${boot_cmd}"
 			;;
 		*)
-			sed -i 's/console=ttyS2,1500000/console=ttyS0,115200/g' $SDCARD/boot/boot.cmd
+			if ! grep -qF 'console=ttyS2,1500000' "${boot_cmd}"; then
+				exit_with_error "turing-rk1: boot.cmd console template changed; update the sed in turing-rk1.csc"
+			fi
+			sed -i 's/console=ttyS2,1500000/console=ttyS0,115200/g' "${boot_cmd}"
 			;;
 	esac
 
