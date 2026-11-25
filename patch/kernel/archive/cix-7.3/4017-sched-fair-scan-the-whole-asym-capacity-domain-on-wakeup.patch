@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jbuck2005 <59450931+jbuck2005@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 13:19:35 +0000
+Subject: sched/fair: scan the whole asym capacity domain on wakeup
+
+On CIX Sky1 (8x A720 + 4x A520) multi-threaded work runs 12-19% slower
+on 7.3 than on 6.18: llama.cpp (Qwen2.5 1.5B Q4, 8 threads)
+does 109/29.5 tok/s (pp512/tg128) against 123.5/36.5 on 6.18, and
+waking threads land on the A520 cores (capacity 279) while A720 cores
+sit idle.
+
+Since commit 61ea17a63719 ("sched/fair: Add SIS_UTIL support to
+select_idle_capacity()") the wakeup scan over the asymmetric-capacity
+domain stops after nr_idle_scan CPUs, about 6 of 12 with 8 busy
+threads. Busy threads fit no CPU (util above every capacity margin),
+so the scan returns the highest-capacity idle CPU it has seen, and
+counted from cpu0/1 or cpu10/11 that is a little core. The idle big
+cores beyond cpu2-5 are never looked at.
+
+Scan the whole domain again, as 7.1 and earlier did. SIS_UTIL still limits
+select_idle_cpu(). With this, as-booted speed matches pinning to the
+big cores (121.7/35.7 tok/s), the same as booting with NO_SIS_UTIL.
+
+This is a workaround until mainline decides on a fix; the regression
+has been reported upstream as a reply to the original patch.
+
+Signed-off-by: jbuck2005 <59450931+jbuck2005@users.noreply.github.com>
+---
+ kernel/sched/fair.c | 26 +++++++-------------------
+ 1 file changed, 7 insertions(+), 19 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 327d5f8f4..e92231e70 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -9049,7 +9049,6 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
+ 	int fits, best_fits = ASYM_IDLE_THREAD_MISFIT;
+ 	int cpu, best_cpu = -1;
+ 	struct cpumask *cpus;
+-	int nr = INT_MAX;
+ 
+ 	cpus = this_cpu_cpumask_var_ptr(select_rq_mask);
+ 	cpumask_and(cpus, sched_domain_span(sd), p->cpus_ptr);
+@@ -9058,28 +9057,17 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
+ 	util_min = uclamp_eff_value(p, UCLAMP_MIN);
+ 	util_max = uclamp_eff_value(p, UCLAMP_MAX);
+ 
+-	if (sched_feat(SIS_UTIL) && sd->shared) {
+-		/*
+-		 * Same nr_idle_scan hint as select_idle_cpu(), nr only limits
+-		 * the scan when not preferring an idle core.
+-		 */
+-		nr = READ_ONCE(sd->shared->nr_idle_scan) + 1;
+-		/* overloaded domain is unlikely to have idle cpu/core */
+-		if (nr == 1)
+-			return -1;
+-	}
+-
++	/*
++	 * Scan the whole domain, as 6.18 did. Do not cut the scan short with
++	 * the SIS_UTIL nr_idle_scan hint: on a busy system the hint drops to a
++	 * few CPUs, the scan then stops at whatever idle CPU it met first, and
++	 * a task that fits no CPU (util above every capacity margin) lands on
++	 * an idle little core while an idle big core is never looked at.
++	 */
+ 	for_each_cpu_wrap(cpu, cpus, target) {
+ 		bool preferred_core = !has_idle_core || is_core_idle(cpu);
+ 		unsigned long cpu_cap = capacity_of(cpu);
+ 
+-		/*
+-		 * Stop when the nr_idle_scan is exhausted (mirrors
+-		 * select_idle_cpu() logic).
+-		 */
+-		if (!has_idle_core && --nr <= 0)
+-			return best_cpu;
+-
+ 		if (!choose_idle_cpu(cpu, p))
+ 			continue;
+ 
