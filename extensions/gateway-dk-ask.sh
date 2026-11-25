@@ -317,7 +317,8 @@ function ask_synthesize_kernel_overlay_patches() {
 	while IFS= read -r f; do
 		listed=0
 		for p in "${ASK_SDK_PATHS[@]}"; do [[ "${f}" == "${p}" || "${f}" == "${p}/"* ]] && listed=1 && break; done
-		[[ "${listed}" == 1 || ( "${f}" == "${fsl_dts_dir}/"* && " ${ASK_SDK_DTSI[*]} " == *" ${f##*/} "* ) ]] ||
+		for p in "${ASK_SDK_DTSI[@]}"; do [[ "${f}" == "${fsl_dts_dir}/${p}" ]] && listed=1 && break; done
+		[[ "${listed}" == 1 ]] ||
 			exit_with_error "ASK sdk/linux holds a file outside the SDK paths this overlay installs" "${f}"
 	done < <(cd "${sdk_src}" && find . \( -type f -o -type l \) | sed 's|^\./||')
 
