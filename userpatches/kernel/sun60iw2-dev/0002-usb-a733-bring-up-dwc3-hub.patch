@@ -1,15 +1,32 @@
 From: Juan Sanchez <juanesf91@gmail.com>
 Subject: [PATCH] usb: a733: bring up the DWC3 USB2 hub path
 
-Write 0x00030010 to SERDES_USB3_BGR and 0x80000000 to CCU USB2_MF
-before DWC3 starts. Keep U2P0 calibration in sun4i-usb-phy.
-Keep xHCI root port power enabled for the always-on VBUS switch.
+On the Allwinner A733 (Cubie A7A), the FE1.1S hub and AIC8800 Wi-Fi 6
+module sit behind the DWC3 controller and its U2P0 PHY. Three fixes are
+required to bring up the link at 480 Mbps (high-speed) from cold boot:
+
+  1. Set SERDES_USB3_BGR (0x06c00008) to 0x00130010 and CCU USB2_MF
+     (0x02003354) to 0x80000000 before DWC3 probes. Bit 20 of
+     SERDES_USB3_BGR (USB3P1_ONLY_PIPE_CLK_SEL) routes the PIPE clock
+     from the CCU when the USB3 combo PHY is inactive; clearing bit 20
+     (0x00030010) stalls DCTL.CSFTRST and xHCI HCRST after a cold boot.
+  2. Pulse DWC3_GUSB2PHYCFG_PHYSOFTRST (50 ms assert/deassert) after
+     CSFTRST in dwc3_core_soft_reset() for A733 host mode to align the
+     60 MHz UTMI clock phase. Without this pulse, the FE1.1S hub falls
+     back to 12 Mbps (full-speed) and the AIC8800 fails enumeration.
+  3. Keep U2P0 calibration in phy-sun4i-usb.c (no duplicate driver) and
+     write 0 to U2P0_ISCR (0x06b00000) instead of calling
+     sun4i_usb_phy_passby(phy, 1), which sets EHCI/OHCI PMU bits on the
+     DWC3 wrapper register. Expose SRAM 0x168 in sunxi_sram.c.
+
+Also add snps,keep-roothub-ports-powered so dwc3_host_init() preserves
+PORTSC.PP for the always-on hub VBUS switch.
 
 Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
 Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
 ---
 diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
-index 2bb25c19ef12..15332edac734 100644
+index 2bb25c19ef12..20655191467c 100644
 --- a/drivers/phy/allwinner/phy-sun4i-usb.c
 +++ b/drivers/phy/allwinner/phy-sun4i-usb.c
 @@ -20,6 +20,7 @@
@@ -106,8 +123,8 @@ index 2bb25c19ef12..15332edac734 100644
 +		if (ret)
 +			goto err_reset;
 +
++		writel(0, phy->pmu);
 +		writel(U2P0_TUNE_VALUE, phy->pmu + U2P0_TUNE_REG);
-+		sun4i_usb_phy_passby(phy, 1);
 +
 +		return 0;
 +
@@ -247,10 +264,33 @@ index 5a21e04d78cb..8efa9b87a02c 100644
  	return false;
  }
 diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
-index fd5c2cd36c59..2af1165581c5 100644
+index fd5c2cd36c59..86551c984565 100644
 --- a/drivers/usb/dwc3/core.c
 +++ b/drivers/usb/dwc3/core.c
-@@ -1873,6 +1873,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
+@@ -369,6 +369,22 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 	if (DWC3_VER_IS_WITHIN(DWC31, ANY, 180A))
+ 		msleep(50);
+ 
++	/*
++	 * On Allwinner A733 host mode, pulse PHYSOFTRST after CSFTRST to
++	 * phase-align the 60 MHz UTMI clock for high-speed operation.
++	 */
++	if (dwc->dr_mode == USB_DR_MODE_HOST && dwc->dev->parent &&
++	    of_device_is_compatible(dwc->dev->parent->of_node,
++				    "allwinner,sun60i-a733-dwc3")) {
++		reg = dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0));
++		reg |= DWC3_GUSB2PHYCFG_PHYSOFTRST;
++		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
++		msleep(50);
++		reg &= ~DWC3_GUSB2PHYCFG_PHYSOFTRST;
++		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
++		msleep(50);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1873,6 +1889,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
  
  	dwc->dis_split_quirk = device_property_read_bool(dev,
  				"snps,dis-split-quirk");
@@ -272,7 +312,7 @@ index 608daeb7ef10..a0aaba28fa83 100644
  	unsigned		tx_de_emphasis_quirk:1;
  	unsigned		tx_de_emphasis:2;
 diff --git a/drivers/usb/dwc3/dwc3-of-simple.c b/drivers/usb/dwc3/dwc3-of-simple.c
-index c1a490b99738..7555e699649a 100644
+index c1a490b99738..9e0dc2dc8e77 100644
 --- a/drivers/usb/dwc3/dwc3-of-simple.c
 +++ b/drivers/usb/dwc3/dwc3-of-simple.c
 @@ -17,10 +17,12 @@
@@ -288,7 +328,7 @@ index c1a490b99738..7555e699649a 100644
  
  struct dwc3_of_simple {
  	struct device		*dev;
-@@ -30,6 +32,38 @@ struct dwc3_of_simple {
+@@ -30,6 +32,39 @@ struct dwc3_of_simple {
  	bool			need_reset;
  };
  
@@ -311,9 +351,10 @@ index c1a490b99738..7555e699649a 100644
 +	sd_before = readl(serdes + 0x08);
 +	mf_before = readl(ccu + 0x1354);
 +
-+	/* SERDES: USB3 hclk/aclk on, U2P0 reset deasserted, lane bits cleared.
++	/* SERDES: USB3 hclk/aclk on, U2P0 reset deasserted, PIPE from CCU
++	 * (BIT(20)=1), UTMI from U2P0 (BIT(21)=0).
 +	 * CCU: USB2_MF gate on, mux back to the 24 MHz crystal. */
-+	writel(0x00030010, serdes + 0x08);
++	writel(0x00130010, serdes + 0x08);
 +	writel(0x80000000, ccu + 0x1354);
 +
 +	dev_info(dev, "A733 DWC3: early init SERDES %08x->%08x USB2_MF %08x->%08x\n",
@@ -327,7 +368,7 @@ index c1a490b99738..7555e699649a 100644
  static int dwc3_of_simple_probe(struct platform_device *pdev)
  {
  	struct dwc3_of_simple	*simple;
-@@ -72,6 +106,27 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
+@@ -72,6 +107,27 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
  	if (ret)
  		goto err_clk_put_all;
  
