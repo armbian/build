@@ -1,32 +1,63 @@
 From: Juan Sanchez <juanesf91@gmail.com>
 Subject: [PATCH] usb: a733: bring up the DWC3 USB2 hub path
 
-On the Allwinner A733 (Cubie A7A), the FE1.1S hub and AIC8800 Wi-Fi 6
-module sit behind the DWC3 controller and its U2P0 PHY. Three fixes are
-required to bring up the link at 480 Mbps (high-speed) from cold boot:
+Bring up the DWC3 USB 2.0 host path (FE1.1S hub and AIC8800) at
+480 Mbps from cold boot using clean kernel abstractions:
 
-  1. Set SERDES_USB3_BGR (0x06c00008) to 0x00130010 and CCU USB2_MF
-     (0x02003354) to 0x80000000 before DWC3 probes. Bit 20 of
-     SERDES_USB3_BGR (USB3P1_ONLY_PIPE_CLK_SEL) routes the PIPE clock
-     from the CCU when the USB3 combo PHY is inactive; clearing bit 20
-     (0x00030010) stalls DCTL.CSFTRST and xHCI HCRST after a cold boot.
-  2. Pulse DWC3_GUSB2PHYCFG_PHYSOFTRST (50 ms assert/deassert) after
-     CSFTRST in dwc3_core_soft_reset() for A733 host mode to align the
-     60 MHz UTMI clock phase. Without this pulse, the FE1.1S hub falls
-     back to 12 Mbps (full-speed) and the AIC8800 fails enumeration.
-  3. Keep U2P0 calibration in phy-sun4i-usb.c (no duplicate driver) and
-     write 0 to U2P0_ISCR (0x06b00000) instead of calling
-     sun4i_usb_phy_passby(phy, 1), which sets EHCI/OHCI PMU bits on the
-     DWC3 wrapper register. Expose SRAM 0x168 in sunxi_sram.c.
-
-Also add snps,keep-roothub-ports-powered so dwc3_host_init() preserves
-PORTSC.PP for the always-on hub VBUS switch.
+  1. Expose bit 21 of SERDES_USB3_BGR (USB3P1_USB2P0_UTMI_CLK_SEL) as
+     the usb3-utmi mux clock in ccu-sun60i-a733-serdes.c so DT
+     assigned-clock-parents configures both PIPE (bit 20) and UTMI
+     (bit 21) without raw MMIO writes in dwc3-of-simple.c.
+  2. Add the snps,phy-soft-reset-after-csftrst boolean quirk in DWC3 to
+     pulse GUSB2PHYCFG.PHYSOFTRST (1-2 ms) after CSFTRST in host mode
+     and phase-align the 60 MHz UTMI clock.
+  3. Parameterize skip_u2p0_passby in struct sun4i_usb_phy_cfg so A733
+     clears U2P0_ISCR (0x06b00000) instead of calling
+     sun4i_usb_phy_passby(), leaving all other SoCs unchanged.
+  4. Expose SRAM 0x168 in sunxi_sram.c, enable VBUS in dwc3-of-simple.c,
+     and support snps,keep-roothub-ports-powered in dwc3 host init.
 
 Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
 Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
 ---
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+index dd516c0badc2..d5b5c8eb13ac 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+@@ -52,11 +52,20 @@ static const struct clk_parent_data usb3_pipe_parents[] = {
+ static SUNXI_CCU_MUX_DATA(usb3_pipe_clk, "usb3-pipe", usb3_pipe_parents,
+ 			  SERDES_USB3_BGR_REG, 20, 1, CLK_SET_RATE_NO_REPARENT);
+ 
++static const struct clk_parent_data usb3_utmi_parents[] = {
++	{ .fw_name = "u2-utmi" },
++	{ .fw_name = "utmi" },
++};
++
++static SUNXI_CCU_MUX_DATA(usb3_utmi_clk, "usb3-utmi", usb3_utmi_parents,
++			  SERDES_USB3_BGR_REG, 21, 1, CLK_SET_RATE_NO_REPARENT);
++
+ static struct ccu_common *sun60i_a733_serdes_ccu_clks[] = {
+ 	&usb3_hclk_clk.common,
+ 	&usb3_aclk_clk.common,
+ 	&usb3_pipe_clk.common,
+ 	&pcie_clk.common,
++	&usb3_utmi_clk.common,
+ };
+ 
+ static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
+@@ -65,8 +74,9 @@ static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
+ 		[CLK_SERDES_USB3_ACLK]	= &usb3_aclk_clk.common.hw,
+ 		[CLK_SERDES_USB3_PIPE]	= &usb3_pipe_clk.common.hw,
+ 		[CLK_SERDES_PCIE]	= &pcie_clk.common.hw,
++		[CLK_SERDES_USB3_UTMI]	= &usb3_utmi_clk.common.hw,
+ 	},
+-	.num = CLK_SERDES_PCIE + 1,
++	.num = CLK_SERDES_USB3_UTMI + 1,
+ };
+ 
+ static struct ccu_reset_map sun60i_a733_serdes_ccu_resets[] = {
 diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
-index 2bb25c19ef12..20655191467c 100644
+index 2bb25c19ef12..9ee9ad470866 100644
 --- a/drivers/phy/allwinner/phy-sun4i-usb.c
 +++ b/drivers/phy/allwinner/phy-sun4i-usb.c
 @@ -20,6 +20,7 @@
@@ -62,15 +93,16 @@ index 2bb25c19ef12..20655191467c 100644
  /* A83T specific control bits for PHY2 HSIC */
  #define SUNXI_EHCI_HS_FORCE		BIT(20)
  #define SUNXI_HSIC_CONNECT_DET		BIT(17)
-@@ -106,6 +118,7 @@ struct sun4i_usb_phy_cfg {
+@@ -106,6 +118,8 @@ struct sun4i_usb_phy_cfg {
  	bool needs_phy2_siddq;
  	bool siddq_in_base;
  	bool poll_vbusen;
 +	bool has_u2p0_calibration;
++	bool skip_u2p0_passby;
  	int missing_phys;
  };
  
-@@ -115,6 +128,8 @@ struct sun4i_usb_phy_data {
+@@ -115,6 +129,8 @@ struct sun4i_usb_phy_data {
  	enum usb_dr_mode dr_mode;
  	spinlock_t reg_lock; /* guard access to phyctl reg */
  	int num_phys;
@@ -79,7 +111,7 @@ index 2bb25c19ef12..20655191467c 100644
  	struct sun4i_usb_phy {
  		struct phy *phy;
  		void __iomem *pmu;
-@@ -260,6 +275,64 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+@@ -260,6 +276,67 @@ static int sun4i_usb_phy_init(struct phy *_phy)
  	int ret;
  	u32 val;
  
@@ -123,7 +155,10 @@ index 2bb25c19ef12..20655191467c 100644
 +		if (ret)
 +			goto err_reset;
 +
-+		writel(0, phy->pmu);
++		if (data->cfg->skip_u2p0_passby)
++			writel(0, phy->pmu);
++		else
++			sun4i_usb_phy_passby(phy, 1);
 +		writel(U2P0_TUNE_VALUE, phy->pmu + U2P0_TUNE_REG);
 +
 +		return 0;
@@ -144,7 +179,7 @@ index 2bb25c19ef12..20655191467c 100644
  	ret = clk_prepare_enable(phy->clk);
  	if (ret)
  		return ret;
-@@ -369,6 +442,23 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
+@@ -369,6 +446,23 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
  {
  	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
  	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
@@ -168,7 +203,7 @@ index 2bb25c19ef12..20655191467c 100644
  
  	if (phy->index == 0) {
  		if (data->cfg->siddq_in_base) {
-@@ -739,6 +829,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -739,6 +833,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  	if (IS_ERR(data->base))
  		return PTR_ERR(data->base);
  
@@ -183,7 +218,7 @@ index 2bb25c19ef12..20655191467c 100644
  	data->id_det_gpio = devm_gpiod_get_optional(dev, "usb0_id_det",
  						    GPIOD_IN);
  	if (IS_ERR(data->id_det_gpio)) {
-@@ -787,7 +885,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -787,7 +889,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  			continue;
  
  		snprintf(name, sizeof(name), "usb%d_reset", i);
@@ -201,7 +236,7 @@ index 2bb25c19ef12..20655191467c 100644
  		if (IS_ERR(phy->reset)) {
  			if (PTR_ERR(phy->reset) == -ENOENT)
  				break;
-@@ -987,6 +1094,15 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
+@@ -987,6 +1098,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
  	.siddq_in_base = true,
  };
  
@@ -212,12 +247,13 @@ index 2bb25c19ef12..20655191467c 100644
 +	.phy0_dual_route = true,
 +	.siddq_in_base = true,
 +	.has_u2p0_calibration = true,
++	.skip_u2p0_passby = true,
 +};
 +
  static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
  	.disc_thresh = 3,
  	.phyctl_offset = REG_PHYCTL_A33,
-@@ -1024,6 +1140,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
+@@ -1024,6 +1145,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
  	{ .compatible = "allwinner,sun8i-h3-usb-phy", .data = &sun8i_h3_cfg },
  	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = &sun8i_r40_cfg },
  	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = &sun8i_v3s_cfg },
@@ -264,63 +300,56 @@ index 5a21e04d78cb..8efa9b87a02c 100644
  	return false;
  }
 diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
-index fd5c2cd36c59..86551c984565 100644
+index fd5c2cd36c59..c5660ae1cffb 100644
 --- a/drivers/usb/dwc3/core.c
 +++ b/drivers/usb/dwc3/core.c
-@@ -369,6 +369,22 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+@@ -369,6 +369,17 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
  	if (DWC3_VER_IS_WITHIN(DWC31, ANY, 180A))
  		msleep(50);
  
-+	/*
-+	 * On Allwinner A733 host mode, pulse PHYSOFTRST after CSFTRST to
-+	 * phase-align the 60 MHz UTMI clock for high-speed operation.
-+	 */
-+	if (dwc->dr_mode == USB_DR_MODE_HOST && dwc->dev->parent &&
-+	    of_device_is_compatible(dwc->dev->parent->of_node,
-+				    "allwinner,sun60i-a733-dwc3")) {
++	if (dwc->dr_mode == USB_DR_MODE_HOST &&
++	    dwc->phy_soft_reset_after_csftrst) {
 +		reg = dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0));
 +		reg |= DWC3_GUSB2PHYCFG_PHYSOFTRST;
 +		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
-+		msleep(50);
++		usleep_range(1000, 2000);
 +		reg &= ~DWC3_GUSB2PHYCFG_PHYSOFTRST;
 +		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
-+		msleep(50);
++		usleep_range(1000, 2000);
 +	}
 +
  	return 0;
  }
  
-@@ -1873,6 +1889,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
+@@ -1873,6 +1884,10 @@ static void dwc3_get_properties(struct dwc3 *dwc)
  
  	dwc->dis_split_quirk = device_property_read_bool(dev,
  				"snps,dis-split-quirk");
 +	dwc->keep_roothub_ports_powered = device_property_read_bool(dev,
 +				"snps,keep-roothub-ports-powered");
++	dwc->phy_soft_reset_after_csftrst = device_property_read_bool(dev,
++				"snps,phy-soft-reset-after-csftrst");
  
  	dwc->lpm_nyet_threshold = lpm_nyet_threshold;
  	dwc->tx_de_emphasis = tx_de_emphasis;
 diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
-index 608daeb7ef10..a0aaba28fa83 100644
+index 608daeb7ef10..69e8f2ad5fde 100644
 --- a/drivers/usb/dwc3/core.h
 +++ b/drivers/usb/dwc3/core.h
-@@ -1407,6 +1407,7 @@ struct dwc3 {
+@@ -1407,6 +1407,8 @@ struct dwc3 {
  	unsigned		parkmode_disable_ss_quirk:1;
  	unsigned		parkmode_disable_hs_quirk:1;
  	unsigned		gfladj_refclk_lpm_sel:1;
 +	unsigned		keep_roothub_ports_powered:1;
++	unsigned		phy_soft_reset_after_csftrst:1;
  
  	unsigned		tx_de_emphasis_quirk:1;
  	unsigned		tx_de_emphasis:2;
 diff --git a/drivers/usb/dwc3/dwc3-of-simple.c b/drivers/usb/dwc3/dwc3-of-simple.c
-index c1a490b99738..9e0dc2dc8e77 100644
+index c1a490b99738..7d4219e073eb 100644
 --- a/drivers/usb/dwc3/dwc3-of-simple.c
 +++ b/drivers/usb/dwc3/dwc3-of-simple.c
-@@ -17,10 +17,12 @@
- #include <linux/platform_device.h>
- #include <linux/dma-mapping.h>
- #include <linux/clk.h>
-+#include <linux/io.h>
- #include <linux/of.h>
+@@ -21,6 +21,7 @@
  #include <linux/of_platform.h>
  #include <linux/pm_runtime.h>
  #include <linux/reset.h>
@@ -328,47 +357,7 @@ index c1a490b99738..9e0dc2dc8e77 100644
  
  struct dwc3_of_simple {
  	struct device		*dev;
-@@ -30,6 +32,39 @@ struct dwc3_of_simple {
- 	bool			need_reset;
- };
- 
-+/* U-Boot leaves the A733 SERDES and USB2_MF in a state the DWC3 cannot use:
-+ * extra lane bits are set in SERDES_USB3_BGR and USB2_MF runs from the 300 MHz
-+ * PLL. The BSP uses exactly the two values below; both are needed before the
-+ * core issues HCRST, otherwise the FE1.1S hub behind U2P0 never enumerates. */
-+static void a733_dwc3_early_init(struct device *dev)
-+{
-+	void __iomem *serdes, *ccu;
-+	u32 sd_before, mf_before;
-+
-+	serdes = ioremap(0x06c00000, 0x10);
-+	ccu = ioremap(0x02002000, 0x1400);
-+	if (!serdes || !ccu) {
-+		dev_warn(dev, "A733 DWC3: failed to map early-init registers\n");
-+		goto out;
-+	}
-+
-+	sd_before = readl(serdes + 0x08);
-+	mf_before = readl(ccu + 0x1354);
-+
-+	/* SERDES: USB3 hclk/aclk on, U2P0 reset deasserted, PIPE from CCU
-+	 * (BIT(20)=1), UTMI from U2P0 (BIT(21)=0).
-+	 * CCU: USB2_MF gate on, mux back to the 24 MHz crystal. */
-+	writel(0x00130010, serdes + 0x08);
-+	writel(0x80000000, ccu + 0x1354);
-+
-+	dev_info(dev, "A733 DWC3: early init SERDES %08x->%08x USB2_MF %08x->%08x\n",
-+		 sd_before, readl(serdes + 0x08), mf_before,
-+		 readl(ccu + 0x1354));
-+out:
-+	iounmap(ccu);
-+	iounmap(serdes);
-+}
-+
- static int dwc3_of_simple_probe(struct platform_device *pdev)
- {
- 	struct dwc3_of_simple	*simple;
-@@ -72,6 +107,27 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
+@@ -72,6 +73,26 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
  	if (ret)
  		goto err_clk_put_all;
  
@@ -383,7 +372,6 @@ index c1a490b99738..9e0dc2dc8e77 100644
 +	/* The A733 glue is host-only; dr_mode lives on the child dwc3 node,
 +	 * so do not gate this on usb_get_dr_mode(dev) (it would be UNKNOWN). */
 +	if (of_device_is_compatible(np, "allwinner,sun60i-a733-dwc3")) {
-+		a733_dwc3_early_init(dev);
 +		ret = devm_regulator_get_enable_optional(dev, "vbus");
 +		if (ret && ret != -ENODEV) {
 +			dev_err(dev, "failed to enable VBUS: %d\n", ret);
