@@ -294,7 +294,7 @@ function do_main_configuration() {
 	# GHCR_MIRROR / GIT_ORAS_TARBALLS_SHALLOW_BASE_REF for redirecting that.
 	case $UBOOT_MIRROR in
 		gitee)
-			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/trusted-list/u-boot.git'
 			;;
 		denx) # official upstream; source.denx.de redirects there
 			declare -g -r MAINLINE_UBOOT_SOURCE='https://git.u-boot-project.org/u-boot/u-boot.git'
