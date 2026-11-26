@@ -1,0 +1,319 @@
+From: Juan Sanchez <juanesf91@gmail.com>
+Subject: [PATCH] phy: sun60i-a733-combophy: add USB 3.1 mode for combophy0
+
+Add USB 3.1 host initialization for the first Cadence combo PHY
+(combophy0 at 0x06c01000 / 0x06c80000) using the vendor register
+tables and reset sequence:
+
+  - Match "allwinner,sun60i-a733-usb3-phy" in sun60i_combophy_of_match.
+  - Clear USB3P1_ONLY_PIPE_CLK_SEL (bit 20 of SERDES_USB3_BGR) so
+    DWC3 uses the combo PHY PIPE clock.
+  - Map the shared 0x06c06000 pipe region with devm_ioremap() so
+    combophy0 and combophy1 (PCIe) do not collide on request_mem_region.
+
+Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
+Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
+---
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+index fbbfbb9e052c..3edfbc5c4d93 100644
+--- a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
++++ b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+@@ -35,9 +35,37 @@
+ #define PIPE_TXDATA_MAP_CTRL		0xc44
+ #define   PIPE_TXDATA_MAP_PCIE		0x1
+ 
+-/* SerDes subsystem debug control register */
++/* USB3 wrapper registers for combo PHY0 */
++#define LINK_CTRL2			0x008
++#define   PHY0_IDDQ_EN_SEL		BIT(1)
++#define   PHY0_IDDQ_EN_SOFT		BIT(0)
++#define LINK_CTRL3			0x00c
++#define   PHY0_PMA_XCVR_POWER_STATE_REQ_MASK GENMASK(9, 4)
++#define   PHY0_PMA_XCVR_POWER_STATE_REQ_A0 BIT(4)
++#define   PHY0_PMA_XCVR_PLLCLK_EN_LN	BIT(0)
++#define   PHY0_DP_LINK_RESET_N_SOFT	BIT(8)
++#define   PHY0_PIPE_LINK_RESET_N_SOFT	BIT(4)
++#define   PHY0_PMA_CMN_PLL1_REFCLK_SEL	BIT(24)
++#define   PHY0_PMA_CMN_PLL0_REFCLK_SEL	BIT(20)
++#define   PHY0_PMA_CMN_REFCLK_DIG_SEL	BIT(0)
++#define   PHY0_TYPEC_CONN_DIR		BIT(12)
++
++/* SerDes subsystem registers */
++#define SERDES_USB3_BGR_REG		0x08
++#define   USB3P1_ONLY_PIPE_CLK_SEL	BIT(20)
+ #define SERDES_DBG_CTL			0x0f0
+ #define   COMBO1_AUTOGATING_DISABLE	BIT(29)
++#define DP_RAWS_TXDW_CONV_CTRL		0x004
++#define   DP_PHY_CFG_DATA_EN		BIT(0)
++#define   DP_PHY_CFG_LN_EN_MASK		GENMASK(7, 4)
++#define   DP_PHY_CFG_LN_RSTN_MASK	GENMASK(11, 8)
++#define USB3P1_PIPE_CLK_MAP_CTRL	0x100
++#define USB3P1_PIPE_RXD_MAP_CTRL	0x104
++
++enum sun60i_combophy_mode {
++	SUN60I_COMBOPHY_PCIE = 0,
++	SUN60I_COMBOPHY_USB3,
++};
+ 
+ struct sun60i_combophy {
+ 	struct device *dev;
+@@ -47,6 +75,7 @@ struct sun60i_combophy {
+ 	struct regmap *serdes;
+ 	struct clk *cfg_clk;
+ 	struct clk *ref_clk;
++	enum sun60i_combophy_mode mode;
+ };
+ 
+ struct sun60i_combophy_reg {
+@@ -186,6 +215,201 @@ static int sun60i_combophy_pcie_exit(struct phy *phy)
+ 	return 0;
+ }
+ 
++
++static const struct sun60i_combophy_reg sun60i_combophy_usb3_regs[] = {
++	{ 0x0022 << 1, 0x001a }, { 0x002a << 1, 0x0034 }, { 0x002c << 1, 0x00da },
++	{ 0x0032 << 1, 0x0034 }, { 0x0034 << 1, 0x00da }, { 0x0064 << 1, 0x0082 },
++	{ 0x0065 << 1, 0x0082 }, { 0x0074 << 1, 0x001a }, { 0x0104 << 1, 0x0020 },
++	{ 0x0105 << 1, 0x0007 }, { 0x010c << 1, 0x0020 }, { 0x010d << 1, 0x0007 },
++	{ 0x0114 << 1, 0x030c }, { 0x0115 << 1, 0x0007 }, { 0x0124 << 1, 0x0007 },
++	{ 0x0125 << 1, 0x0003 }, { 0x0126 << 1, 0x000f }, { 0x0128 << 1, 0x0132 },
++	{ 0x8044 << 1, 0x001a }, { 0x8244 << 1, 0x001a }, { 0x8444 << 1, 0x001a },
++	{ 0x8644 << 1, 0x001a }, { 0x8045 << 1, 0x0082 }, { 0x8245 << 1, 0x0082 },
++	{ 0x8445 << 1, 0x0082 }, { 0x8645 << 1, 0x0082 }, { 0x804c << 1, 0x001a },
++	{ 0x824c << 1, 0x001a }, { 0x844c << 1, 0x001a }, { 0x864c << 1, 0x001a },
++	{ 0x804d << 1, 0x0082 }, { 0x824d << 1, 0x0082 }, { 0x844d << 1, 0x0082 },
++	{ 0x864d << 1, 0x0082 }, { 0x4123 << 1, 0x0a28 }, { 0x4323 << 1, 0x0a28 },
++	{ 0x4523 << 1, 0x0a28 }, { 0x4723 << 1, 0x0a28 }, { 0x01a1 << 1, 0x8600 },
++	{ 0x01c1 << 1, 0x0601 },
++	{ 0x44e5 << 1, 0x0012 }, { 0x46e5 << 1, 0x0012 }, { 0x40e6 << 1, 0x0000 },
++	{ 0x42e6 << 1, 0x0000 }, { 0x40e7 << 1, 0x0001 }, { 0x42e7 << 1, 0x0001 },
++	{ 0x40e5 << 1, 0x0012 }, { 0x42e5 << 1, 0x0012 }, { 0x40e5 << 1, 0x0041 },
++	{ 0x42e5 << 1, 0x0041 }, { 0x44e6 << 1, 0x0001 }, { 0x46e6 << 1, 0x0001 },
++	{ 0x44e7 << 1, 0x0000 }, { 0x46e7 << 1, 0x0000 }, { 0x44e5 << 1, 0x0019 },
++	{ 0x46e5 << 1, 0x0019 },
++	{ 0x0094 << 1, 0x0004 }, { 0x00d4 << 1, 0x0004 }, { 0x01a4 << 1, 0x0509 },
++	{ 0x01c4 << 1, 0x0509 }, { 0x01a5 << 1, 0x0f00 }, { 0x01c5 << 1, 0x0f00 },
++	{ 0x01a6 << 1, 0x0f08 }, { 0x01c6 << 1, 0x0f08 }, { 0x0090 << 1, 0x0180 },
++	{ 0x00d0 << 1, 0x019f }, { 0x0091 << 1, 0x9d8a }, { 0x00d1 << 1, 0x6276 },
++	{ 0x0092 << 1, 0x0002 }, { 0x00d2 << 1, 0x0002 }, { 0x0093 << 1, 0x0102 },
++	{ 0x00d3 << 1, 0x0116 }, { 0x01a0 << 1, 0x0002 }, { 0x01c0 << 1, 0x0002 },
++	{ 0x0098 << 1, 0x0001 }, { 0x00d8 << 1, 0x0001 }, { 0x0099 << 1, 0x045f },
++	{ 0x00d9 << 1, 0x04c4 }, { 0x009a << 1, 0x006b }, { 0x00da << 1, 0x006a },
++	{ 0x009b << 1, 0x0004 }, { 0x00db << 1, 0x0004 }, { 0x0084 << 1, 0x0104 },
++	{ 0x00c4 << 1, 0x0104 }, { 0x0085 << 1, 0x0005 }, { 0x00c5 << 1, 0x0005 },
++	{ 0x0086 << 1, 0x0337 }, { 0x00c6 << 1, 0x0337 }, { 0x0088 << 1, 0x0335 },
++	{ 0x00c8 << 1, 0x0335 }, { 0x0082 << 1, 0x0003 }, { 0x00c2 << 1, 0x0003 },
++	{ 0x009c << 1, 0x00cf }, { 0x00dc << 1, 0x00cf }, { 0x009e << 1, 0x00ce },
++	{ 0x00de << 1, 0x00ce }, { 0x009f << 1, 0x0005 }, { 0x00df << 1, 0x0005 },
++};
++
++static const struct sun60i_combophy_reg sun60i_combophy_usb3_lane_regs[] = {
++	{ 0xc010 << 1, 0x5100 }, { 0xc011 << 1, 0x0100 }, { 0xc011 << 1, 0x010f },
++	{ 0xc018 << 1, 0x0a0a }, { 0xc01a << 1, 0x1008 }, { 0xc01b << 1, 0x0010 },
++	{ 0x0041 << 1, 0x8200 }, { 0x0047 << 1, 0x8200 },
++	{ 0x4700 << 1, 0x00ff }, { 0x4701 << 1, 0x04af }, { 0x4702 << 1, 0x04ae },
++	{ 0x4703 << 1, 0x04ae }, { 0x8400 << 1, 0x091d }, { 0x8401 << 1, 0x091d },
++	{ 0x8402 << 1, 0x0900 }, { 0x8403 << 1, 0x0000 }, { 0x4640 << 1, 0x2a84 },
++	{ 0x464d << 1, 0x0011 }, { 0x8490 << 1, 0x000c }, { 0x8508 << 1, 0x0009 },
++	{ 0x8549 << 1, 0x0c02 }, { 0x8577 << 1, 0x06f6 }, { 0x8578 << 1, 0x4606 },
++	{ 0x44eb << 1, 0x0006 }, { 0x8571 << 1, 0x0519 }, { 0x8572 << 1, 0x0519 },
++	{ 0x85e8 << 1, 0x1002 }, { 0x85e5 << 1, 0x0b98 }, { 0x85e2 << 1, 0x0c01 },
++	{ 0x85e3 << 1, 0x0000 }, { 0x85f5 << 1, 0x0000 }, { 0x85f4 << 1, 0x0311 },
++	{ 0x85ff << 1, 0x0000 }, { 0x87ff << 1, 0x0000 }, { 0x8480 << 1, 0x010a },
++	{ 0x8482 << 1, 0x0003 }, { 0x46ea << 1, 0x00ff }, { 0x44ea << 1, 0x00ff },
++	{ 0x4100 << 1, 0x02ff }, { 0x4101 << 1, 0x06af }, { 0x4102 << 1, 0x06ae },
++	{ 0x4103 << 1, 0x06ae }, { 0x8200 << 1, 0x0d1d }, { 0x8201 << 1, 0x0d1d },
++	{ 0x8202 << 1, 0x0d00 }, { 0x8203 << 1, 0x0500 }, { 0x4040 << 1, 0x2a82 },
++	{ 0x404d << 1, 0x0014 }, { 0x8290 << 1, 0x0013 }, { 0x8308 << 1, 0x0000 },
++	{ 0x8349 << 1, 0x0c02 }, { 0x8377 << 1, 0x0330 }, { 0x8378 << 1, 0x0300 },
++	{ 0x42eb << 1, 0x0003 }, { 0x8371 << 1, 0x0019 }, { 0x8372 << 1, 0x0019 },
++	{ 0x83e8 << 1, 0x1004 }, { 0x83e5 << 1, 0x00f9 }, { 0x83e2 << 1, 0x0c01 },
++	{ 0x83e3 << 1, 0x0002 }, { 0x83f5 << 1, 0x0000 }, { 0x83f4 << 1, 0x0031 },
++	{ 0x83ff << 1, 0x0001 }, { 0x81ff << 1, 0x0002 }, { 0x8280 << 1, 0x018c },
++	{ 0x8282 << 1, 0x0003 }, { 0x40ea << 1, 0x000f }, { 0x42ea << 1, 0x00f0 },
++	{ 0xe003 << 1, 0x0001 }, { 0x0103 << 1, 0x007f }, { 0x010b << 1, 0x007f },
++};
++
++static int sun60i_combophy_usb3_init(struct phy *phy)
++{
++	struct sun60i_combophy *cphy = phy_get_drvdata(phy);
++	u32 val;
++	int ret;
++
++	ret = clk_set_rate(cphy->cfg_clk, 100000000);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(cphy->cfg_clk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(cphy->ref_clk);
++	if (ret)
++		goto err_disable_cfg;
++
++	regmap_clear_bits(cphy->serdes, SERDES_USB3_BGR_REG,
++			  USB3P1_ONLY_PIPE_CLK_SEL);
++
++	val = readl(cphy->top + LINK_CTRL2);
++	val &= ~(PHY0_IDDQ_EN_SEL | PHY0_IDDQ_EN_SOFT);
++	writel(val, cphy->top + LINK_CTRL2);
++
++	val = readl(cphy->top + LINK_CTRL1);
++	val |= PHY0_PMA_CMN_PLL1_REFCLK_SEL | PHY0_PMA_CMN_PLL0_REFCLK_SEL |
++	       PHY0_PMA_CMN_REFCLK_DIG_SEL;
++	writel(val, cphy->top + LINK_CTRL1);
++
++	val = readl(cphy->pipe + USB3P1_PIPE_CLK_MAP_CTRL);
++	val &= ~GENMASK(3, 0);
++	writel(val, cphy->pipe + USB3P1_PIPE_CLK_MAP_CTRL);
++
++	val = readl(cphy->pipe + USB3P1_PIPE_RXD_MAP_CTRL);
++	val &= ~GENMASK(3, 0);
++	writel(val, cphy->pipe + USB3P1_PIPE_RXD_MAP_CTRL);
++
++	sun60i_combophy_write_table(cphy, sun60i_combophy_usb3_regs,
++				    ARRAY_SIZE(sun60i_combophy_usb3_regs));
++
++	val = readl(cphy->top + LINK_CTRL0);
++	val &= ~PHY0_TYPEC_CONN_DIR;
++	writel(val, cphy->top + LINK_CTRL0);
++
++	sun60i_combophy_write_table(cphy, sun60i_combophy_usb3_lane_regs,
++				    ARRAY_SIZE(sun60i_combophy_usb3_lane_regs));
++
++	val = readl(cphy->top + LINK_CTRL0);
++	val &= ~LINK_RESET_N;
++	writel(val, cphy->top + LINK_CTRL0);
++	mdelay(1);
++	val |= LINK_RESET_N;
++	writel(val, cphy->top + LINK_CTRL0);
++
++	val = readl(cphy->pipe + DP_RAWS_TXDW_CONV_CTRL);
++	val |= DP_PHY_CFG_DATA_EN | DP_PHY_CFG_LN_EN_MASK |
++	       DP_PHY_CFG_LN_RSTN_MASK;
++	writel(val, cphy->pipe + DP_RAWS_TXDW_CONV_CTRL);
++
++	mdelay(1);
++
++	val = readl(cphy->top + LINK_CTRL0);
++	val |= PHY0_PIPE_LINK_RESET_N_SOFT;
++	writel(val, cphy->top + LINK_CTRL0);
++
++	val = readl(cphy->top + LINK_CTRL3);
++	val |= PHY0_PMA_XCVR_PLLCLK_EN_LN;
++	writel(val, cphy->top + LINK_CTRL3);
++	ret = readl_poll_timeout(cphy->top + LINK_CTRL3, val,
++				 val & PHY0_PMA_XCVR_PLLCLK_EN_LN, 1, 1000);
++	if (ret)
++		dev_warn(cphy->dev, "PLLCLK_EN timeout\n");
++
++	val = readl(cphy->top + LINK_CTRL3);
++	val &= ~PHY0_PMA_XCVR_POWER_STATE_REQ_MASK;
++	val |= PHY0_PMA_XCVR_POWER_STATE_REQ_A0;
++	writel(val, cphy->top + LINK_CTRL3);
++
++	val = readl(cphy->top + LINK_CTRL0);
++	val |= PHY0_DP_LINK_RESET_N_SOFT;
++	writel(val, cphy->top + LINK_CTRL0);
++
++	if (!(readl(cphy->top + LINK_STATUS0) & LINK_PMA_CMN_READY)) {
++		mdelay(10);
++		writew(readw(cphy->phy + (0xc008 << 1)) & ~GENMASK(11, 8),
++		       cphy->phy + (0xc008 << 1));
++		ret = readl_poll_timeout(cphy->top + LINK_STATUS0, val,
++					 val & LINK_PMA_CMN_READY, 5, 10000);
++		if (ret) {
++			dev_err(cphy->dev, "USB3 PHY did not become ready\n");
++			goto err_disable_ref;
++		}
++	}
++
++	return 0;
++
++err_disable_ref:
++	clk_disable_unprepare(cphy->ref_clk);
++err_disable_cfg:
++	clk_disable_unprepare(cphy->cfg_clk);
++	return ret;
++}
++
++static int sun60i_combophy_usb3_exit(struct phy *phy)
++{
++	struct sun60i_combophy *cphy = phy_get_drvdata(phy);
++	u32 val;
++
++	val = readl(cphy->top + LINK_CTRL0);
++	val &= ~(LINK_RESET_N | PHY0_PIPE_LINK_RESET_N_SOFT |
++		 PHY0_DP_LINK_RESET_N_SOFT);
++	writel(val, cphy->top + LINK_CTRL0);
++
++	val = readl(cphy->top + LINK_CTRL2);
++	val |= PHY0_IDDQ_EN_SEL | PHY0_IDDQ_EN_SOFT;
++	writel(val, cphy->top + LINK_CTRL2);
++
++	clk_disable_unprepare(cphy->ref_clk);
++	clk_disable_unprepare(cphy->cfg_clk);
++
++	return 0;
++}
++
++static const struct phy_ops sun60i_combophy_usb3_ops = {
++	.init		= sun60i_combophy_usb3_init,
++	.exit		= sun60i_combophy_usb3_exit,
++	.owner		= THIS_MODULE,
++};
++
+ static const struct phy_ops sun60i_combophy_pcie_ops = {
+ 	.init		= sun60i_combophy_pcie_init,
+ 	.exit		= sun60i_combophy_pcie_exit,
+@@ -213,9 +437,16 @@ static int sun60i_combophy_probe(struct platform_device *pdev)
+ 	if (IS_ERR(cphy->phy))
+ 		return PTR_ERR(cphy->phy);
+ 
+-	cphy->pipe = devm_platform_ioremap_resource_byname(pdev, "pipe");
+-	if (IS_ERR(cphy->pipe))
+-		return PTR_ERR(cphy->pipe);
++	{
++		struct resource *res;
++
++		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pipe");
++		if (!res)
++			return -EINVAL;
++		cphy->pipe = devm_ioremap(dev, res->start, resource_size(res));
++		if (!cphy->pipe)
++			return -ENOMEM;
++	}
+ 
+ 	cphy->serdes = syscon_regmap_lookup_by_phandle(dev->of_node,
+ 						       "allwinner,serdes");
+@@ -231,7 +462,12 @@ static int sun60i_combophy_probe(struct platform_device *pdev)
+ 	if (IS_ERR(cphy->ref_clk))
+ 		return PTR_ERR(cphy->ref_clk);
+ 
+-	phy = devm_phy_create(dev, NULL, &sun60i_combophy_pcie_ops);
++	cphy->mode = (uintptr_t)of_device_get_match_data(dev);
++
++	phy = devm_phy_create(dev, NULL,
++			      cphy->mode == SUN60I_COMBOPHY_USB3 ?
++			      &sun60i_combophy_usb3_ops :
++			      &sun60i_combophy_pcie_ops);
+ 	if (IS_ERR(phy))
+ 		return PTR_ERR(phy);
+ 
+@@ -243,7 +479,14 @@ static int sun60i_combophy_probe(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id sun60i_combophy_of_match[] = {
+-	{ .compatible = "allwinner,sun60i-a733-combophy" },
++	{
++		.compatible = "allwinner,sun60i-a733-combophy",
++		.data = (void *)SUN60I_COMBOPHY_PCIE,
++	},
++	{
++		.compatible = "allwinner,sun60i-a733-usb3-phy",
++		.data = (void *)SUN60I_COMBOPHY_USB3,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun60i_combophy_of_match);

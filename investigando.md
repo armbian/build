@@ -68,3 +68,38 @@ Se combinaron tres correcciones basadas en el **A733 User Manual V0.92** y la co
 - `1-1.1` (`0781:5567` SanDisk) y `1-1.2` (`abcd:1234` UDisk) enumeran a **`480M`**.
 - `1-1.4` (`a69c:8d81` AIC8800D80): `aic_btusb` y `aic8800_fdrv` cargan a **`480M`**.
 - Interfaz `wlan0` (`18:ce:df:6d:a6:77`) presente y operativa.
+
+## USB 3.x en el puerto azul (`combophy0`) — Kernel `#35`
+
+### Causa del fallback a `480M`
+El DTS solo enlazaba `usb2-phy` (`usbphy 2`) en `dwc3` y dejaba `combophy0` sin nodo.
+Sin PHY SuperSpeed, xHCI registraba `Bus 002` a `10000M` pero el lector
+`8564:4000` (Transcend UHS-II) caía en `Bus 003` (`ehci-platform`) a `480M`.
+Además, `SERDES_USB3_BGR` bit 20 (`USB3P1_ONLY_PIPE_CLK_SEL`) seguía en `1`
+desde el arranque en frío, por lo que el controlador tomaba PIPE del CCU
+(`CLK_USB2_U2_PIPE`) en vez del combo PHY.
+
+### Solución aplicada
+1. `0005-phy-sun60i-a733-combophy-add-usb3-support.patch`: modo USB3 para
+   `phy-sun60i-a733-combophy.c` con las tablas de registros y la secuencia de
+   reset del BSP. Compatible `allwinner,sun60i-a733-usb3-phy`, limpia el bit
+   `USB3P1_ONLY_PIPE_CLK_SEL` mediante `allwinner,serdes`, y mapea la región
+   `pipe` (`0x06c06000`) con `devm_ioremap()` para no colisionar con
+   `combophy1` (PCIe).
+2. `0006-arm64-dts-allwinner-a733-enable-usb3-combophy0.patch`: nodo
+   `combophy0` (`0x06c01000` / `0x06c80000` / `0x06c06000`), `maximum-speed =
+   "super-speed-plus"`, quirks U1/U2/U3, `status = "okay"` en la placa y
+   `CLK_SERDES_USB3_PIPE` eliminado de `assigned-clocks`.
+
+### Resultado en hardware real (`#35`, `7.3.0-rc1-dev-sun60iw2-dev`)
+- `Bus 002` (`xhci-hcd/1p`, `10000M`): lector `8564:4000` a **`5000M`**.
+- `Bus 001` (`xhci-hcd/1p`, `480M`): hub `1a40:0101` y AIC8800 `a69c:8d81`
+  a **`480M`**, sin regresión.
+- `dmesg`: `Host supports USB 3.1 Enhanced SuperSpeed`,
+  `usb 2-1: new SuperSpeed USB device number 2`.
+
+### Pendiente
+- Parche obsoleto `0004-usb-dwc3-use-gctl-reset-on-a733.patch` sin seguimiento
+  en git: Armbian lo aplicaría en una compilación nueva y su `return 0;`
+  anticipado deja sin efecto el quirk `snps,phy-soft-reset-after-csftrst`
+  validado en `#35`. Eliminar antes de regenerar la imagen completa.
