@@ -1,0 +1,334 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pufan Jin <cyan2254650260@gmail.com>
+Date: Wed, 11 Nov 2026 03:30:27 +0800
+Subject: arm64: dts: rockchip: add USB-C PD support to LubanCat 4
+
+The EmbedFire LubanCat 4 has a Type-C port on the front panel backed by
+a Fairchild FUSB302 Type-C controller connected to I2C1 (at 0x22).
+VBUS 5V power is supplied through a fixed regulator enabled by
+GPIO1_C1 (active high), current-limited to 2A by an LPW5209 switch.
+
+Add the FUSB302 node, the fixed VBUS regulator, and the USB-C connector
+with dual-role power (source 5V/2A, sink 5V/1A) and dual-role data.
+Wire the HighSpeed data endpoint to usb_host0_xhci and the SuperSpeed
+data endpoint to usbdp_phy0.  Set usb_host0_xhci to OTG mode with
+usb-role-switch enabled, and add orientation-switch on usbdp_phy0.
+
+DisplayPort alternate mode support is added in a subsequent patch.
+
+Tested on LubanCat 4 hardware:
+- fusb302 and tcpm probe cleanly;
+- USB host mode verified with USB 2.0 and USB 3.0 peripherals;
+- USB 2.0 devices enumerate and transfer data in both orientations;
+- USB 3.0 devices enumerate at SuperSpeed (5Gbps) in normal orientation;
+  reverse-orientation SuperSpeed is subject to the known upstream
+  phy-rockchip-usbdp driver reinit limitation;
+- USB device mode verified via ConfigFS CDC ACM serial gadget connected
+  to a host PC with successful high-speed enumeration and bidirectional
+  data communication;
+- VBUS switch (LPW5209) enables in source mode and remains disabled in
+  sink mode with reverse current blocked.
+
+Signed-off-by: Pufan Jin <cyan2254650260@gmail.com>
+Link: https://patch.msgid.link/20261110193028.512456-2-cyan2254650260@gmail.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts | 115 +++++++++-
+ 1 file changed, 114 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts b/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
+@@ -8,9 +8,11 @@
+ /dts-v1/;
+ 
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ #include <dt-bindings/leds/common.h>
+ #include <dt-bindings/pinctrl/rockchip.h>
+ #include <dt-bindings/soc/rockchip,vop2.h>
++#include <dt-bindings/usb/pd.h>
+ #include "rk3588s.dtsi"
+ 
+ / {
+@@ -116,6 +118,18 @@ vcc5v0_usb30_host: regulator-vcc5v0-usb30-host {
+ 		vin-supply = <&vcc5v0_sys>;
+ 	};
+ 
++	vbus5v0_typec: regulator-vbus5v0-typec {
++		compatible = "regulator-fixed";
++		regulator-name = "vbus5v0_typec";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		enable-active-high;
++		gpio = <&gpio1 RK_PC1 GPIO_ACTIVE_HIGH>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&typec_vbus_en>;
++		vin-supply = <&vcc5v0_sys>;
++	};
++
+ 	fan: pwm-fan {
+ 		compatible = "pwm-fan";
+ 		cooling-levels = <0 100 150 200 255>;
+@@ -286,6 +300,51 @@ regulator-state-mem {
+ 			regulator-off-in-suspend;
+ 		};
+ 	};
++
++	usbc0: usb-typec@22 {
++		compatible = "fcs,fusb302";
++		reg = <0x22>;
++		interrupt-parent = <&gpio0>;
++		interrupts = <RK_PC6 IRQ_TYPE_LEVEL_LOW>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&fusb302_int>;
++		vbus-supply = <&vbus5v0_typec>;
++		status = "okay";
++
++		usb_con: connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			data-role = "dual";
++			power-role = "dual";
++			try-power-role = "source";
++			op-sink-microwatt = <1000000>;
++			sink-pdos =
++				<PDO_FIXED(5000, 1000, PDO_FIXED_USB_COMM)>;
++			source-pdos =
++				<PDO_FIXED(5000, 2000, PDO_FIXED_USB_COMM)>;
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					usbc0_hs: endpoint {
++						remote-endpoint = <&usb_host0_xhci_hs>;
++					};
++				};
++
++				port@1 {
++					reg = <1>;
++
++					usbc0_ss: endpoint {
++						remote-endpoint = <&usbdp_phy0_ss_out>;
++					};
++				};
++			};
++		};
++	};
+ };
+ 
+ &mdio1 {
+@@ -346,6 +405,16 @@ usb30_host_pwr_en: usb30-host-pwr-en {
+ 			rockchip,pins = <1 RK_PC4 RK_FUNC_GPIO &pcfg_pull_none>;
+ 		};
+ 	};
++
++	usb-typec {
++		fusb302_int: fusb302-int {
++			rockchip,pins = <0 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>;
++		};
++
++		typec_vbus_en: typec-vbus-en {
++			rockchip,pins = <1 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
++		};
++	};
+ };
+ 
+ &pwm0 {
+@@ -748,8 +817,30 @@ &usb_host0_ohci {
+ };
+ 
+ &usb_host0_xhci {
+-	dr_mode = "host";
++	dr_mode = "otg";
++	usb-role-switch;
+ 	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++
++			usb_host0_xhci_hs: endpoint {
++				remote-endpoint = <&usbc0_hs>;
++			};
++		};
++
++		port@1 {
++			reg = <1>;
++
++			usb_host0_xhci_ss: endpoint {
++				remote-endpoint = <&usbdp_phy0_ss_in>;
++			};
++		};
++	};
+ };
+ 
+ &usb_host1_ehci {
+@@ -765,7 +856,29 @@ &usb_host2_xhci {
+ };
+ 
+ &usbdp_phy0 {
++	orientation-switch;
+ 	status = "okay";
++
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@0 {
++			reg = <0>;
++
++			usbdp_phy0_ss_out: endpoint {
++				remote-endpoint = <&usbc0_ss>;
++			};
++		};
++
++		port@1 {
++			reg = <1>;
++
++			usbdp_phy0_ss_in: endpoint {
++				remote-endpoint = <&usb_host0_xhci_ss>;
++			};
++		};
++	};
+ };
+ 
+ &vop {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pufan Jin <cyan2254650260@gmail.com>
+Date: Wed, 11 Nov 2026 03:30:28 +0800
+Subject: arm64: dts: rockchip: add USB-C DP altmode support to LubanCat 4
+
+The Type-C port on the EmbedFire LubanCat 4 supports DisplayPort
+alternate mode through the RK3588 usbdp combo PHY (usbdp_phy0).
+The sideband use (SBU1/SBU2) AUX signals are routed through two DC
+switches controlled by GPIO4_B3 and GPIO4_B4.
+
+Add the DisplayPort alternate mode entry (SVID 0xff01) to the USB-C
+connector and connect connector port@2 (SBU) to usbdp_phy0 port@3.
+Configure usbdp_phy0 with mode-switch and sbu{1,2}-dc-gpios.  Enable
+dp0 and connect dp0_out to usbdp_phy0 port@2, with dp0_in fed from
+VOP2 VP1.
+
+Tested driver stack registration on LubanCat 4 hardware:
+- dw_dp bounds successfully to display-subsystem;
+- DRM DP connector card2-DP-1 is registered and reports disconnected;
+- typec_displayport registers the DisplayPort altmode driver;
+- usbdp_phy0 registers the phy-switch and phy-mux.
+Physical DisplayPort link training and monitor video output are pending
+verification with a physical USB-C to DP sink/cable.
+
+Signed-off-by: Pufan Jin <cyan2254650260@gmail.com>
+Link: https://patch.msgid.link/20261110193028.512456-3-cyan2254650260@gmail.com
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts | 57 ++++++++++
+ 1 file changed, 57 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts b/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4.dts
+@@ -323,6 +323,13 @@ usb_con: connector {
+ 			source-pdos =
+ 				<PDO_FIXED(5000, 2000, PDO_FIXED_USB_COMM)>;
+ 
++			altmodes {
++				displayport {
++					svid = /bits/ 16 <0xff01>;
++					vdo = <0xffffffff>;
++				};
++			};
++
+ 			ports {
+ 				#address-cells = <1>;
+ 				#size-cells = <0>;
+@@ -342,6 +349,14 @@ usbc0_ss: endpoint {
+ 						remote-endpoint = <&usbdp_phy0_ss_out>;
+ 					};
+ 				};
++
++				port@2 {
++					reg = <2>;
++
++					usbc0_sbu: endpoint {
++						remote-endpoint = <&usbdp_phy0_dp_out>;
++					};
++				};
+ 			};
+ 		};
+ 	};
+@@ -857,6 +872,9 @@ &usb_host2_xhci {
+ 
+ &usbdp_phy0 {
+ 	orientation-switch;
++	mode-switch;
++	sbu1-dc-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_HIGH>;
++	sbu2-dc-gpios = <&gpio4 RK_PB4 GPIO_ACTIVE_HIGH>;
+ 	status = "okay";
+ 
+ 	ports {
+@@ -878,6 +896,22 @@ usbdp_phy0_ss_in: endpoint {
+ 				remote-endpoint = <&usb_host0_xhci_ss>;
+ 			};
+ 		};
++
++		port@2 {
++			reg = <2>;
++
++			usbdp_phy0_dp_in: endpoint {
++				remote-endpoint = <&dp0_out_con>;
++			};
++		};
++
++		port@3 {
++			reg = <3>;
++
++			usbdp_phy0_dp_out: endpoint {
++				remote-endpoint = <&usbc0_sbu>;
++			};
++		};
+ 	};
+ };
+ 
+@@ -895,3 +929,26 @@ vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
+ 		remote-endpoint = <&hdmi0_in_vp0>;
+ 	};
+ };
++
++&dp0 {
++	status = "okay";
++};
++
++&dp0_in {
++	dp0_in_vp1: endpoint {
++		remote-endpoint = <&vp1_out_dp0>;
++	};
++};
++
++&dp0_out {
++	dp0_out_con: endpoint {
++		remote-endpoint = <&usbdp_phy0_dp_in>;
++	};
++};
++
++&vp1 {
++	vp1_out_dp0: endpoint@a {
++		reg = <ROCKCHIP_VOP2_EP_DP0>;
++		remote-endpoint = <&dp0_in_vp1>;
++	};
++};
+-- 
+Armbian
+
