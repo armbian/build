@@ -429,13 +429,13 @@ index 6ecc4bee989..0f9b6c4a4ae 100644
 -	[CLK_USB0_EHCI]		= GATE(0x138c, BIT(4)),
 -	[CLK_USB1_EHCI]		= GATE(0x138c, BIT(5)),
 -	[CLK_USB]		= GATE(0x138c, BIT(8)),
-+	[CLK_USB0_OHCI]		= GATE(0x2300, BIT(31)),
-+	[CLK_USB1_OHCI]		= GATE(0x2308, BIT(31)),
-+	[CLK_USB]		= GATE(0x2304, BIT(0)),
-+	[CLK_USB0_EHCI]		= GATE(0x2304, BIT(4)),
-+	[CLK_USB0_DEVICE]	= GATE(0x2304, BIT(8)),
-+	[CLK_USB1]		= GATE(0x230c, BIT(0)),
-+	[CLK_USB1_EHCI]		= GATE(0x230c, BIT(4)),
++	[CLK_USB0_OHCI]		= GATE(0x1300, BIT(31)),
++	[CLK_USB1_OHCI]		= GATE(0x1308, BIT(31)),
++	[CLK_USB]		= GATE(0x1304, BIT(0)),
++	[CLK_USB0_EHCI]		= GATE(0x1304, BIT(4)),
++	[CLK_USB0_DEVICE]	= GATE(0x1304, BIT(8)),
++	[CLK_USB1]		= GATE(0x130c, BIT(0)),
++	[CLK_USB1_EHCI]		= GATE(0x130c, BIT(4)),
  };
  
  static struct ccu_reset a733_resets[] = {
@@ -448,13 +448,13 @@ index 6ecc4bee989..0f9b6c4a4ae 100644
 -	[RST_USB_0_EHCI]	= RESET(0x138c, BIT(20)),
 -	[RST_USB_1_EHCI]	= RESET(0x138c, BIT(21)),
 -	[RST_USB_0_DEVICE]	= RESET(0x138c, BIT(24)),
-+	[RST_USB_0_PHY_RSTN]	= RESET(0x2300, BIT(30)),
-+	[RST_USB_0_OHCI]	= RESET(0x2304, BIT(16)),
-+	[RST_USB_0_EHCI]	= RESET(0x2304, BIT(20)),
-+	[RST_USB_0_DEVICE]	= RESET(0x2304, BIT(24)),
-+	[RST_USB_1_PHY_RSTN]	= RESET(0x2308, BIT(30)),
-+	[RST_USB_1_OHCI]	= RESET(0x230c, BIT(16)),
-+	[RST_USB_1_EHCI]	= RESET(0x230c, BIT(20)),
++	[RST_USB_0_PHY_RSTN]	= RESET(0x1300, BIT(30)),
++	[RST_USB_0_OHCI]	= RESET(0x1304, BIT(16)),
++	[RST_USB_0_EHCI]	= RESET(0x1304, BIT(20)),
++	[RST_USB_0_DEVICE]	= RESET(0x1304, BIT(24)),
++	[RST_USB_1_PHY_RSTN]	= RESET(0x1308, BIT(30)),
++	[RST_USB_1_OHCI]	= RESET(0x130c, BIT(16)),
++	[RST_USB_1_EHCI]	= RESET(0x130c, BIT(20)),
  };
  
  const struct ccu_desc a733_ccu_desc = {
@@ -561,7 +561,7 @@ new file mode 100644
 index 00000000000..a0bdf04d3eb
 --- /dev/null
 +++ b/drivers/pci/pcie_dw_sunxi.c
-@@ -0,0 +1,503 @@
+@@ -0,0 +1,518 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Allwinner A733 DesignWare based PCIe host controller driver
@@ -570,6 +570,7 @@ index 00000000000..a0bdf04d3eb
 + */
 +
 +#include <clk.h>
++#include <errno.h>
 +#include <dm.h>
 +#include <generic-phy.h>
 +#include <pci.h>
@@ -811,12 +812,12 @@ index 00000000000..a0bdf04d3eb
 +	return 0;
 +}
 +
-+static void sunxi_pcie_prog_outbound_atu(struct sunxi_pcie *priv, int index, int type,
-+					 u64 cpu_addr, u64 pci_addr, u64 size)
++static int sunxi_pcie_prog_outbound_atu(struct sunxi_pcie *priv, int index, int type,
++					u64 cpu_addr, u64 pci_addr, u64 size)
 +{
 +	void __iomem *dbi = priv->dw.dbi_base;
 +	u32 val;
-+	int i;
++	int i, ret = 0;
 +
 +	dw_pcie_dbi_write_enable(&priv->dw, true);
 +
@@ -847,9 +848,15 @@ index 00000000000..a0bdf04d3eb
 +				break;
 +			udelay(10);
 +		}
++		if (!(val & PCIE_ATU_ENABLE)) {
++			ret = -ETIMEDOUT;
++			goto out;
++		}
 +	}
 +
++out:
 +	dw_pcie_dbi_write_enable(&priv->dw, false);
++	return ret;
 +}
 +
 +static void sunxi_pcie_prog_inbound_atu(struct sunxi_pcie *priv, int index, int type,
@@ -935,10 +942,12 @@ index 00000000000..a0bdf04d3eb
 +	sunxi_pcie_prog_inbound_atu(priv, 0, PCIE_ATU_TYPE_MEM, 0x40000000, 0x40000000, 0xc0000000ULL);
 +
 +	/* 2. Program Outbound MEM ATU Region 0 (0x22000000..0x2FFFFFFF) */
-+	sunxi_pcie_prog_outbound_atu(priv, 0, PCIE_ATU_TYPE_MEM,
-+				     priv->dw.mem.phys_start,
-+				     priv->dw.mem.bus_start,
-+				     priv->dw.mem.size);
++	ret = sunxi_pcie_prog_outbound_atu(priv, 0, PCIE_ATU_TYPE_MEM,
++					   priv->dw.mem.phys_start,
++					   priv->dw.mem.bus_start,
++					   priv->dw.mem.size);
++	if (ret)
++		return ret;
 +
 +	printf("sunxi_pcie: Root Complex initialized, link up (Gen%d-x%d)\n",
 +	       priv->gen, priv->num_lanes);
@@ -953,7 +962,7 @@ index 00000000000..a0bdf04d3eb
 +	struct sunxi_pcie *priv = dev_get_priv(ctlr);
 +	int rel_bus = PCI_BUS(bdf) - priv->dw.first_busno;
 +	u32 busdev, val;
-+	int type;
++	int type, ret;
 +
 +	debug("sunxi_pcie_read_config: dev=%s bdf=%02x:%02x.%d off=0x%02x rel_bus=%d\n",
 +	      bus ? bus->name : "null", PCI_BUS(bdf), PCI_DEV(bdf), PCI_FUNC(bdf), offset, rel_bus);
@@ -992,7 +1001,10 @@ index 00000000000..a0bdf04d3eb
 +
 +	busdev = (rel_bus << 24) | (PCI_DEV(bdf) << 19) | (PCI_FUNC(bdf) << 16);
 +
-+	sunxi_pcie_prog_outbound_atu(priv, 1, type, (u64)priv->dw.cfg_base, busdev, 0x1000);
++	ret = sunxi_pcie_prog_outbound_atu(priv, 1, type,
++					   (u64)priv->dw.cfg_base, busdev, 0x1000);
++	if (ret)
++		return ret;
 +
 +	val = readl(priv->dw.cfg_base + (offset & ~0x3));
 +	*valuep = pci_conv_32_to_size(val, offset, size);
@@ -1007,7 +1019,7 @@ index 00000000000..a0bdf04d3eb
 +	struct sunxi_pcie *priv = dev_get_priv(ctlr);
 +	int rel_bus = PCI_BUS(bdf) - priv->dw.first_busno;
 +	u32 busdev, old, val;
-+	int type;
++	int type, ret;
 +
 +	/* Root Complex config space (Bus 0) */
 +	if (rel_bus == 0) {
@@ -1038,7 +1050,10 @@ index 00000000000..a0bdf04d3eb
 +
 +	busdev = (rel_bus << 24) | (PCI_DEV(bdf) << 19) | (PCI_FUNC(bdf) << 16);
 +
-+	sunxi_pcie_prog_outbound_atu(priv, 1, type, (u64)priv->dw.cfg_base, busdev, 0x1000);
++	ret = sunxi_pcie_prog_outbound_atu(priv, 1, type,
++					   (u64)priv->dw.cfg_base, busdev, 0x1000);
++	if (ret)
++		return ret;
 +
 +	old = readl(priv->dw.cfg_base + (offset & ~0x3));
 +	val = pci_conv_size_to_32(old, value, offset, size);
@@ -1069,7 +1084,15 @@ diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-s
 index 3acffb40b0b..8b1ff6cb225 100644
 --- a/drivers/phy/allwinner/phy-sun4i-usb.c
 +++ b/drivers/phy/allwinner/phy-sun4i-usb.c
-@@ -113,9 +113,39 @@ static void sun4i_usb_phy_write(struct phy *phy, u32 addr, u32 data, int len)
+@@ -79,6 +79,7 @@ struct sun4i_usb_phy_cfg {
+ 	u8 phyctl_offset;
+ 	bool dedicated_clocks;
+ 	bool phy0_dual_route;
+ 	bool siddq_in_base;
++	bool a33_byte_strobe;
+ 	bool needs_phy2_siddq;
+ 	int missing_phys;
+@@ -113,9 +114,44 @@ static void sun4i_usb_phy_write(struct phy *phy, u32 addr, u32 data, int len)
  	void __iomem *phyctl = phy_data->base + phy_data->cfg->phyctl_offset;
  	int i;
  
@@ -1081,7 +1104,12 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	if (phy_data->cfg->phyctl_offset == REG_PHYCTL_A33) {
 -		/* SoCs newer than A33 need us to set phyctl to 0 explicitly */
 -		writel(0, phyctl);
-+		/* A33 needs to be written in 16-bit cycles */
++		if (!phy_data->cfg->a33_byte_strobe) {
++			/* SoCs newer than A33 need us to set phyctl to 0 explicitly */
++			writel(0, phyctl);
++			return;
++		}
++		/* A733 needs 16-bit strobed writes to program the PHY. */
 +		for (i = 0; i < len; i++) {
 +			u8 temp8;
 +
@@ -1111,7 +1139,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	}
  
  	for (i = 0; i < len; i++) {
-@@ -160,7 +190,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
+@@ -160,7 +196,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
  		return;
  
  	bits = SUNXI_AHB_ICHR8_EN | SUNXI_AHB_INCR4_BURST_EN |
@@ -1120,7 +1148,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  
  	/* A83T USB2 is HSIC */
  	if (data->cfg->hsic_index && usb_phy->id == data->cfg->hsic_index)
-@@ -170,7 +200,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
+@@ -170,7 +206,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
  	reg_value = readl(usb_phy->pmu);
  
  	if (enable)
@@ -1129,7 +1157,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	else
  		reg_value &= ~bits;
  
-@@ -292,12 +322,11 @@ static int sun4i_usb_phy_init(struct phy *phy)
+@@ -292,12 +328,11 @@ static int sun4i_usb_phy_init(struct phy *phy)
  	}
  
  	if (data->cfg->siddq_in_base) {
@@ -1147,7 +1175,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	} else {
  		if (usb_phy->id == 0)
  			sun4i_usb_phy_write(phy, PHY_RES45_CAL_EN,
-@@ -339,13 +368,9 @@ static int sun4i_usb_phy_exit(struct phy *phy)
+@@ -339,13 +374,9 @@ static int sun4i_usb_phy_exit(struct phy *phy)
  	struct sun4i_usb_phy_plat *usb_phy = &data->usb_phy[phy->id];
  	int ret;
  
@@ -1164,7 +1192,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	}
  
  	sun4i_usb_phy_passby(phy, false);
-@@ -394,7 +419,7 @@ int sun4i_usb_phy_vbus_detect(struct phy *phy)
+@@ -394,7 +425,7 @@ int sun4i_usb_phy_vbus_detect(struct phy *phy)
  {
  	struct sun4i_usb_phy_data *data = dev_get_priv(phy->dev);
  	struct sun4i_usb_phy_plat *usb_phy = &data->usb_phy[phy->id];
@@ -1173,7 +1201,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  
  	if (dm_gpio_is_valid(&usb_phy->gpio_vbus_det)) {
  		err = dm_gpio_get_value(&usb_phy->gpio_vbus_det);
-@@ -657,6 +682,16 @@ static const struct sun4i_usb_phy_cfg suniv_f1c100s_cfg = {
+@@ -657,6 +688,27 @@ static const struct sun4i_usb_phy_cfg suniv_f1c100s_cfg = {
  	.dedicated_clocks = true,
  };
  
@@ -1187,15 +1215,26 @@ index 3acffb40b0b..8b1ff6cb225 100644
 +	.siddq_in_base = true,
 +};
 +
++static const struct sun4i_usb_phy_cfg sun60i_a733_cfg = {
++	.num_phys = 2,
++	.disc_thresh = 3,
++	.phyctl_offset = REG_PHYCTL_A33,
++	.dedicated_clocks = true,
++	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
++	.phy0_dual_route = true,
++	.siddq_in_base = true,
++	.a33_byte_strobe = true,
++};
++
  static const struct udevice_id sun4i_usb_phy_ids[] = {
  	{ .compatible = "allwinner,sun4i-a10-usb-phy", .data = (ulong)&sun4i_a10_cfg },
  	{ .compatible = "allwinner,sun5i-a13-usb-phy", .data = (ulong)&sun5i_a13_cfg },
-@@ -669,6 +704,8 @@ static const struct udevice_id sun4i_usb_phy_ids[] = {
+@@ -669,6 +721,8 @@ static const struct udevice_id sun4i_usb_phy_ids[] = {
  	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = (ulong)&sun8i_r40_cfg },
  	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = (ulong)&sun8i_v3s_cfg },
  	{ .compatible = "allwinner,sun20i-d1-usb-phy", .data = (ulong)&sun20i_d1_cfg },
 +	{ .compatible = "allwinner,sun55i-a523-usb-phy", .data = (ulong)&sun55i_a523_cfg },
-+	{ .compatible = "allwinner,sun60i-a733-usb-phy", .data = (ulong)&sun55i_a523_cfg },
++	{ .compatible = "allwinner,sun60i-a733-usb-phy", .data = (ulong)&sun60i_a733_cfg },
  	{ .compatible = "allwinner,sun50i-a64-usb-phy", .data = (ulong)&sun50i_a64_cfg},
  	{ .compatible = "allwinner,sun50i-h6-usb-phy", .data = (ulong)&sun50i_h6_cfg},
  	{ .compatible = "allwinner,sun50i-h616-usb-phy", .data = (ulong)&sun50i_h616_cfg },

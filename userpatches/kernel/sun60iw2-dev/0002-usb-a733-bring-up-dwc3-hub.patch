@@ -57,7 +57,7 @@ index dd516c0badc2..d5b5c8eb13ac 100644
  
  static struct ccu_reset_map sun60i_a733_serdes_ccu_resets[] = {
 diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
-index 2bb25c19ef12..9ee9ad470866 100644
+index 2bb25c19ef12..2f8f5739285a 100644
 --- a/drivers/phy/allwinner/phy-sun4i-usb.c
 +++ b/drivers/phy/allwinner/phy-sun4i-usb.c
 @@ -20,6 +20,7 @@
@@ -102,16 +102,17 @@ index 2bb25c19ef12..9ee9ad470866 100644
  	int missing_phys;
  };
  
-@@ -115,6 +129,8 @@ struct sun4i_usb_phy_data {
+@@ -115,6 +129,9 @@ struct sun4i_usb_phy_data {
  	enum usb_dr_mode dr_mode;
  	spinlock_t reg_lock; /* guard access to phyctl reg */
  	int num_phys;
 +	struct regmap *syscon;
 +	u32 u2p0_rescal;
++	u32 u2p0_res1;
  	struct sun4i_usb_phy {
  		struct phy *phy;
  		void __iomem *pmu;
-@@ -260,6 +276,67 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+@@ -260,6 +277,89 @@ static int sun4i_usb_phy_init(struct phy *_phy)
  	int ret;
  	u32 val;
  
@@ -131,19 +132,33 @@ index 2bb25c19ef12..9ee9ad470866 100644
 +			goto err_clk;
 +
 +		/* Keep the PHY in reset while configuring it. */
-+		reset_control_assert(phy->reset);
++		ret = reset_control_assert(phy->reset);
++		if (ret)
++			goto err_clk2;
++
 +		val = readl(phy->pmu + REG_HCI_PHY_CTL);
 +		val |= PHY_CTL_SIDDQ;
 +		writel(val, phy->pmu + REG_HCI_PHY_CTL);
 +
 +		/* Select the trimmed 200 ohm reference resistor. */
-+		regmap_read(data->syscon, U2P0_RESCAL_CTRL_REG,
-+			    &data->u2p0_rescal);
-+		regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
-+				   U2P0_RESCAL_CTRL_MASK,
-+				   U2P0_RESCAL_CTRL_TRIM_SEL);
-+		regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
-+				   U2P0_RES1_TRIM_MASK, 0);
++		ret = regmap_read(data->syscon, U2P0_RESCAL_CTRL_REG,
++				  &data->u2p0_rescal);
++		if (ret)
++			goto err_siddq;
++		ret = regmap_read(data->syscon, U2P0_RES1_CTRL_REG,
++				  &data->u2p0_res1);
++		if (ret)
++			goto err_siddq;
++
++		ret = regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
++					 U2P0_RESCAL_CTRL_MASK,
++					 U2P0_RESCAL_CTRL_TRIM_SEL);
++		if (ret)
++			goto err_siddq;
++		ret = regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++					 U2P0_RES1_TRIM_MASK, 0);
++		if (ret)
++			goto err_rescal;
 +
 +		/* IDDQ off while still in reset (documented HW requirement). */
 +		val = readl(phy->pmu + REG_HCI_PHY_CTL);
@@ -168,8 +183,16 @@ index 2bb25c19ef12..9ee9ad470866 100644
 +		val &= ~(U2P0_PHYCTL_OTG_DISABLE | PHY_CTL_VBUSVLDEXT);
 +		val |= PHY_CTL_SIDDQ;
 +		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++err_rescal:
 +		regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
 +				   U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
++		regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++				   U2P0_RES1_TRIM_MASK, data->u2p0_res1);
++err_siddq:
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val &= ~PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++err_clk2:
 +		clk_disable_unprepare(phy->clk2);
 +err_clk:
 +		clk_disable_unprepare(phy->clk);
@@ -179,12 +202,14 @@ index 2bb25c19ef12..9ee9ad470866 100644
  	ret = clk_prepare_enable(phy->clk);
  	if (ret)
  		return ret;
-@@ -369,6 +446,23 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
+@@ -369,6 +469,31 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
  {
  	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
  	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++	int err, ret;
 +	u32 val;
 +
++	err = 0;
 +	if (phy->index == 2 && data->cfg->has_u2p0_calibration &&
 +	    data->syscon) {
 +		val = readl(phy->pmu + REG_HCI_PHY_CTL);
@@ -192,18 +217,24 @@ index 2bb25c19ef12..9ee9ad470866 100644
 +		val |= PHY_CTL_SIDDQ;
 +		writel(val, phy->pmu + REG_HCI_PHY_CTL);
 +
-+		reset_control_assert(phy->reset);
-+		regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
-+				   U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
++		err = reset_control_assert(phy->reset);
++		ret = regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
++					 U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
++		if (ret && !err)
++			err = ret;
++		ret = regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++					 U2P0_RES1_TRIM_MASK, data->u2p0_res1);
++		if (ret && !err)
++			err = ret;
 +		sun4i_usb_phy_passby(phy, 0);
 +		clk_disable_unprepare(phy->clk2);
 +		clk_disable_unprepare(phy->clk);
-+		return 0;
++		return err;
 +	}
  
  	if (phy->index == 0) {
  		if (data->cfg->siddq_in_base) {
-@@ -739,6 +833,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -739,6 +864,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  	if (IS_ERR(data->base))
  		return PTR_ERR(data->base);
  
@@ -218,7 +249,7 @@ index 2bb25c19ef12..9ee9ad470866 100644
  	data->id_det_gpio = devm_gpiod_get_optional(dev, "usb0_id_det",
  						    GPIOD_IN);
  	if (IS_ERR(data->id_det_gpio)) {
-@@ -787,7 +889,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -787,7 +920,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  			continue;
  
  		snprintf(name, sizeof(name), "usb%d_reset", i);
@@ -236,7 +267,7 @@ index 2bb25c19ef12..9ee9ad470866 100644
  		if (IS_ERR(phy->reset)) {
  			if (PTR_ERR(phy->reset) == -ENOENT)
  				break;
-@@ -987,6 +1098,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
+@@ -987,6 +1129,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
  	.siddq_in_base = true,
  };
  
@@ -253,7 +284,7 @@ index 2bb25c19ef12..9ee9ad470866 100644
  static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
  	.disc_thresh = 3,
  	.phyctl_offset = REG_PHYCTL_A33,
-@@ -1024,6 +1145,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
+@@ -1024,6 +1176,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
  	{ .compatible = "allwinner,sun8i-h3-usb-phy", .data = &sun8i_h3_cfg },
  	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = &sun8i_r40_cfg },
  	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = &sun8i_v3s_cfg },
