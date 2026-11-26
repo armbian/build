@@ -21,6 +21,21 @@ function check_loop_device() {
 function check_loop_device_internal() {
 	local device="${1}"
 	display_alert "Checking loop device" "${device}" "debug"
+
+	# In a container, /dev is private and can keep stale partition nodes. The kernel reuses
+	# partition minors, so a stale node can point to a partition of another image.
+	# Only loop partitions; mapped devices (LVM, LUKS) under /dev/mapper are not on the host.
+	if [[ $CONTAINER_COMPAT == yes && "${device}" =~ ^/dev/loop[0-9]+p[0-9]+$ && -b "${device}" ]]; then
+		if [[ ! -b "/tmp/${device}" ]]; then
+			display_alert "Removing stale device node" "${device}: not on host" "warn"
+			run_host_command_logged rm -f "${device}"
+			return 1
+		elif [[ "$(stat -c '%t:%T' "${device}")" != "$(stat -c '%t:%T' "/tmp/${device}")" ]]; then
+			display_alert "Removing stale device node" "${device}: $(stat -c '%t:%T' "${device}") != host $(stat -c '%t:%T' "/tmp/${device}")" "warn"
+			run_host_command_logged rm -f "${device}" || return 1
+		fi
+	fi
+
 	if [[ ! -b "${device}" ]]; then
 		if [[ $CONTAINER_COMPAT == yes && -b "/tmp/${device}" ]]; then
 			display_alert "Creating device node" "${device}"
