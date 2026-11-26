@@ -1,34 +1,54 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 5e2dbd26d623bc8eeae67411b6c5e7ae486dd4ed Mon Sep 17 00:00:00 2001
 From: Rosen Penev <rosenp@gmail.com>
-Date: Sun, 13 Sep 2026 13:50:07 -0700
-Subject: net: phy: marvell: undo WoL setup when Wake-on-LAN is disabled
+Date: Tue, 24 Nov 2026 14:07:49 -0800
+Subject: [PATCH net-next v3 1/3] net: phy: marvell: restore the LED[2] pin
+ when WoL is disabled
 
-Arming Wake-on-LAN on the 88E1318S/88E1510 configures LED[2] as the
-INTn pin, and disabling WoL leaves the pin that way.
+On the 88E1318S and 88E1510, enabling Wake-on-LAN switches the LED[2]
+pin to its INTn function so that a WoL event can drive it. Disabling
+WoL leaves the pin in that state. On a board that uses LED[2] as an
+LED, the LED then stays unusable until the PHY is reset.
 
-Save the INTn enable and polarity bits read at arming time and restore
-them once all WoL options are cleared. The pin is only touched when
-this driver forced it to the INTn function, so PHYs serving the MAC
-interrupt, strap configs, or marvell,reg-init values are left alone.
-The FORCE_INT bit is not set while disposing of the pin: it holds the
-interrupt line asserted and turns the shared PHY interrupt into a
-"nobody cared" IRQ storm when the PHY interrupt is in use.
+Save the INTn enable and polarity bits before the first arm, and put
+them back once all WoL options are cleared. Only do this when arming
+actually changed those bits. A pin that was already INTn is left alone,
+whether m88e1318_config_init() set it up for the PHY interrupt or
+straps or marvell,reg-init did.
 
-Assisted-by: LLM
+The saved bits live in the devm-allocated priv. Restore the pin from a
+new .remove callback as well. Otherwise, unbinding the driver with WoL
+enabled would lose the saved bits, and the next bind would save the
+forced INTn setting as the original one.
+
+FORCE_INT is not restored. Arming WoL already clears it, and setting it
+would hold INTn asserted. With the PHY interrupt in use, that turns into
+a "nobody cared" IRQ storm.
+
+This was found by code reading while working on commit f434191f9388
+("net: phy: marvell: keep WOL_EIE across interrupt reconfiguration"),
+not from a user report.
+
+TODO(Igor): Helios4 (Armada 388, 88E1512) test results.
+
 Signed-off-by: Rosen Penev <rosenp@gmail.com>
-[iav: rebased onto 7.3.6; f434191f9388 ("net: phy: marvell: keep WOL_EIE
- across interrupt reconfiguration") clears WOL_EIE when WoL is disabled,
- so only the LED[2] pin restore is left]
-Signed-off-by: Igor Velkov <iav@iav.lv>
 ---
- drivers/net/phy/marvell.c | 38 ++++++++++
- 1 file changed, 38 insertions(+)
+ drivers/net/phy/marvell.c | 69 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 67 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
-index 111111111111..222222222222 100644
+index 87f66dfa92dd..3dccaa547e09 100644
 --- a/drivers/net/phy/marvell.c
 +++ b/drivers/net/phy/marvell.c
-@@ -352,6 +352,8 @@ struct marvell_priv {
+@@ -150,6 +150,8 @@
+ #define MII_88E1318S_PHY_LED_TCR_FORCE_INT	BIT(15)
+ #define MII_88E1318S_PHY_LED_TCR_INTn_ENABLE	BIT(7)
+ #define MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW	BIT(11)
++#define MII_88E1318S_PHY_LED_TCR_INT_MASK	(MII_88E1318S_PHY_LED_TCR_INTn_ENABLE | \
++						 MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW)
+ 
+ /* Magic Packet MAC address registers */
+ #define MII_88E1318S_PHY_MAGIC_PACKET_WORD2		0x17
+@@ -352,6 +354,8 @@ struct marvell_priv {
  	s8 pair;
  	u8 vct_phase;
  	bool wol_enabled;
@@ -37,56 +57,119 @@ index 111111111111..222222222222 100644
  };
  
  static int marvell_read_page(struct phy_device *phydev)
-@@ -2053,6 +2055,22 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+@@ -2016,10 +2020,30 @@ static void m88e1318_get_wol(struct phy_device *phydev,
+ 		wol->wolopts |= WAKE_PHY;
+ }
+ 
++/* Restore the INTn bits of LED_TCR saved when WoL was armed. FORCE_INT
++ * stays cleared, as setting it would hold INTn asserted.
++ * Call with the MDIO bus lock held and the LED page selected.
++ */
++static int m88e1318_wol_restore_led(struct phy_device *phydev)
++{
++	struct marvell_priv *priv = phydev->priv;
++	int err;
++
++	err = __phy_modify(phydev, MII_88E1318S_PHY_LED_TCR,
++			   MII_88E1318S_PHY_LED_TCR_INT_MASK,
++			   priv->wol_led_tcr);
++	if (err < 0)
++		return err;
++
++	priv->wol_led_armed = false;
++	return 0;
++}
++
+ static int m88e1318_set_wol(struct phy_device *phydev,
+ 			    struct ethtool_wolinfo *wol)
+ {
+ 	struct marvell_priv *priv = phydev->priv;
++	u16 led_tcr = MII_88E1318S_PHY_LED_TCR_INT_MASK;
+ 	int err = 0, oldpage;
+ 
+ 	oldpage = phy_save_page(phydev);
+@@ -2053,13 +2077,29 @@ static int m88e1318_set_wol(struct phy_device *phydev,
  		if (err < 0)
  			goto error;
  
-+		/* Remember the LED[2]/INTn mux before forcing the pin to
-+		 * INTn, so it can be restored when WoL is disabled again.
-+		 * Only save it once, or a re-enable would overwrite the
-+		 * value read before WoL was first armed.
++		/* Read the INTn enable and polarity bits before the first
++		 * arm; once armed they hold the forced value.
 +		 */
 +		if (!priv->wol_led_armed) {
 +			err = __phy_read(phydev, MII_88E1318S_PHY_LED_TCR);
 +			if (err < 0)
 +				goto error;
 +
-+			priv->wol_led_tcr = err &
-+				(MII_88E1318S_PHY_LED_TCR_INTn_ENABLE |
-+				 MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW);
-+			priv->wol_led_armed = true;
++			led_tcr = err & MII_88E1318S_PHY_LED_TCR_INT_MASK;
 +		}
 +
  		/* Setup LED[2] as interrupt pin (active low) */
  		err = __phy_modify(phydev, MII_88E1318S_PHY_LED_TCR,
  				   MII_88E1318S_PHY_LED_TCR_FORCE_INT,
-@@ -2127,6 +2145,26 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+-				   MII_88E1318S_PHY_LED_TCR_INTn_ENABLE |
+-				   MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW);
++				   MII_88E1318S_PHY_LED_TCR_INT_MASK);
+ 		if (err < 0)
+ 			goto error;
++
++		/* Only remember the old bits if this actually changed them */
++		if (led_tcr != MII_88E1318S_PHY_LED_TCR_INT_MASK) {
++			priv->wol_led_tcr = led_tcr;
++			priv->wol_led_armed = true;
++		}
+ 	}
+ 
+ 	if (wol->wolopts & WAKE_MAGIC) {
+@@ -2127,10 +2167,33 @@ static int m88e1318_set_wol(struct phy_device *phydev,
  			goto error;
  	}
  
 +	if (!priv->wol_enabled && priv->wol_led_armed) {
-+		/* Restore the LED[2]/INTn pin mux only if arming WoL forced
-+		 * it to INTn, so that a mux set by straps or marvell,reg-init
-+		 * stays untouched.
-+		 */
 +		err = marvell_write_page(phydev, MII_MARVELL_LED_PAGE);
 +		if (err < 0)
 +			goto error;
 +
-+		err = __phy_modify(phydev, MII_88E1318S_PHY_LED_TCR,
-+				   MII_88E1318S_PHY_LED_TCR_FORCE_INT |
-+				   MII_88E1318S_PHY_LED_TCR_INTn_ENABLE |
-+				   MII_88E1318S_PHY_LED_TCR_INT_ACTIVE_LOW,
-+				   priv->wol_led_tcr);
-+		if (err < 0)
-+			goto error;
-+
-+		priv->wol_led_armed = false;
++		err = m88e1318_wol_restore_led(phydev);
 +	}
 +
  error:
  	return phy_restore_page(phydev, oldpage, err);
  }
+ 
++static void m88e1318_remove(struct phy_device *phydev)
++{
++	struct marvell_priv *priv = phydev->priv;
++	int oldpage, err = 0;
++
++	/* The saved LED_TCR bits are lost with priv */
++	if (!priv->wol_led_armed)
++		return;
++
++	oldpage = phy_select_page(phydev, MII_MARVELL_LED_PAGE);
++	if (oldpage >= 0)
++		err = m88e1318_wol_restore_led(phydev);
++	phy_restore_page(phydev, oldpage, err);
++}
++
+ static int marvell_get_sset_count(struct phy_device *phydev)
+ {
+ 	if (linkmode_test_bit(ETHTOOL_LINK_MODE_FIBRE_BIT,
+@@ -3867,6 +3930,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.name = "Marvell 88E1318S",
+ 		/* PHY_GBIT_FEATURES */
+ 		.probe = marvell_probe,
++		.remove = m88e1318_remove,
+ 		.config_init = m88e1318_config_init,
+ 		.config_aneg = m88e1318_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -3980,6 +4044,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.features = PHY_GBIT_FIBRE_FEATURES,
+ 		.flags = PHY_POLL_CABLE_TEST,
+ 		.probe = marvell_probe,
++		.remove = m88e1318_remove,
+ 		.config_init = m88e1510_config_init,
+ 		.config_aneg = m88e1510_config_aneg,
+ 		.read_status = marvell_read_status,
 -- 
-Armbian
+2.56.1
 
