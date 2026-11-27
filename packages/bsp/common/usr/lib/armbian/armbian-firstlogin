@@ -208,6 +208,12 @@ get_local_ip_addr() {
 	done
 }
 
+_user_ssh_session() {
+	# a post-authentication sshd process of the user: "sshd: user@pts/N" (OpenSSH < 9.8)
+	# or "sshd-session: user@pts/N"; it exists only once the user is logged in
+	pgrep -u "${RealUserName}" -f "^sshd(-session)?: ${RealUserName}@" > /dev/null 2>&1
+}
+
 read_password() {
 
 	unset password
@@ -756,11 +762,15 @@ add_user() {
 				mkdir -p /home/"$RealUserName"/.ssh/ || return 1
 				chown "$RealUserName:$RealUserName" /home/"$RealUserName"/.ssh/ || return 1
 				chmod 700 /home/"$RealUserName"/.ssh/ || return 1
-				if curl --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
+				if curl --fail --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
 					atomic_write "${_f}.tmp" "${_f}" 600 "$RealUserName:$RealUserName" || return 1
 				else
+					# 22: the server answered with an HTTP error; don't install the error page
+					# as a key and carry on. Network errors keep retrying on the next login.
+					local _rc=$?
 					rm -f "${_f}.tmp"
-					return 1
+					[[ ${_rc} -eq 22 ]] || return 1
+					echo -e "\n\e[0;31mWarning:\x1B[0m could not download PRESET_USER_KEY (HTTP error), no SSH key installed for $RealUserName"
 				fi
 			fi
 
@@ -768,9 +778,9 @@ add_user() {
 				(
 					echo "$first_input"
 					echo "$second_input"
-				) | passwd "$RealUserName" > /dev/null 2>&1
+				) | passwd "$RealUserName" > /dev/null 2>&1 || return 1
 			else
-				passwd -d "$RealUserName" > /dev/null 2>&1
+				passwd -d "$RealUserName" > /dev/null 2>&1 || return 1
 			fi
 
 			# Hardware and desktop groups: EXTRA_GROUPS in /etc/adduser.conf, the groups adduser gives
@@ -1223,9 +1233,42 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	fi
 	ssh-keygen -A > /dev/null 2>&1 && sync
 
-	# re-enable passing locale environment via ssh (atomic write)
+	# re-enable passing locale environment via ssh and, once the regular user is
+	# logged in over SSH, end the first-boot root password login set at build time
+	# by distro-agnostic.sh: root keeps key-based login. Only a live SSH session of
+	# the user counts; without one root password login is left as it is. If an
+	# earlier run switched it and stopped before sshd restarted, a run that sees no
+	# such session puts it back (atomic write)
 	_f="/etc/ssh/sshd_config"
-	if sed -E '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' "${_f}" > "${_f}.tmp"; then
+	_root_login=()
+	# Root keeps password login unless the new user is proven able to get in: a live SSH
+	# session of that user (sshd shows "user@tty" only after authentication, PAM account
+	# and session all passed), opened from where the admin really is. sshd_config, PAM,
+	# shadow or nologin rules are not predicted; the login itself is the proof.
+	if [[ -n "${RealUserName:-}" && -n "${SSH_CONNECTION:-}" ]] &&
+		sed -n '0,/^[[:blank:]]*Match[[:blank:]]/Ip' "${_f}" | grep -qE '^[[:blank:]]*PermitRootLogin[[:blank:]]+yes[[:blank:]]*$'; then
+		if ! _user_ssh_session && [[ "${preset_unattended:-0}" != 1 && -t 0 ]]; then
+			echo -e "\nRoot can still log in over SSH with a password. To turn that off, open a second SSH session"
+			echo -e "as \e[0;92m${RealUserName}\x1B[0m now and keep it open. Waiting up to 5 minutes; press Enter to skip."
+			_end=$((SECONDS + 300))
+			while ((SECONDS < _end)) && ! _user_ssh_session; do
+				read -r -t 2 _ && break
+			done
+		fi
+		if _user_ssh_session; then
+			# only the global directive (before the first Match block) is the build-time one
+			_root_login=(-e '0,/^[[:blank:]]*Match[[:blank:]]/I s/^[[:blank:]]*PermitRootLogin[[:blank:]]+yes[[:blank:]]*$/PermitRootLogin prohibit-password/')
+			# the marker records that this script made the change; without it, don't make it
+			touch /root/.firstlogin_root_ssh_switch || _root_login=()
+		else
+			echo -e "No SSH session of ${RealUserName} seen: root password login over SSH stays enabled."
+		fi
+	elif [[ -e /root/.firstlogin_root_ssh_switch ]] && ! { [[ -n "${RealUserName:-}" ]] && _user_ssh_session; }; then
+		# undo an unfinished switch of an earlier run; the marker stays until sshd restarts
+		_root_login=(-e '0,/^[[:blank:]]*Match[[:blank:]]/I s/^[[:blank:]]*PermitRootLogin[[:blank:]]+prohibit-password[[:blank:]]*$/PermitRootLogin yes/')
+	fi
+	if sed -E -e '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' \
+		"${_root_login[@]}" "${_f}" > "${_f}.tmp"; then
 		atomic_write "${_f}.tmp" "${_f}" || exit 1
 	else
 		rm -f "${_f}.tmp"
@@ -1239,6 +1282,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# remove the marker; subsequent failures (DM startup, etc.) should not
 	# force a full firstlogin rerun.
 	FIRSTLOGIN_SUCCESS=1
+	rm -f /root/.firstlogin_root_ssh_switch
 
 	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
 	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
