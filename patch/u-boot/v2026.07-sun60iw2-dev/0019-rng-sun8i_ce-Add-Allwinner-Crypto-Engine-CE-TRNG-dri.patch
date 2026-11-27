@@ -5,16 +5,18 @@ Subject: [PATCH 19/29] rng: sun8i_ce: Add Allwinner Crypto Engine (CE) TRNG
  driver
 
 Add UCLASS_RNG driver for the hardware True Random Number Generator (TRNG)
-in the Allwinner Crypto Engine.
+in the Allwinner Crypto Engine. Limit the driver to H616. A733 and A523 use
+CE v5, whose task descriptor and control sequence differ from the Linux
+H616 layout that this driver implements.
 
 Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
 Assisted-by: Antigravity <antigravity@google.com>
 ---
  drivers/rng/Kconfig                           |   7 +
  drivers/rng/Makefile                          |   1 +
- drivers/rng/sun8i_ce_rng.c                    | 183 ++++++++++++++++++
- .../src/arm64/allwinner/sun60i-a733.dtsi      |  12 ++
- 4 files changed, 203 insertions(+)
+ drivers/rng/sun8i_ce_rng.c                    | 172 +++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  10 ++
+ 4 files changed, 190 insertions(+)
  create mode 100644 drivers/rng/sun8i_ce_rng.c
 
 diff --git a/drivers/rng/Kconfig b/drivers/rng/Kconfig
@@ -30,7 +32,7 @@ index 19b2b707677..b62fd02ab9c 100644
 +	depends on DM_RNG && ARCH_SUNXI
 +	help
 +	  Enable support for True Random Number Generator (TRNG) in the
-+	  Allwinner Crypto Engine (CE) on H616, A523, A733 and newer SoCs.
++	  Allwinner Crypto Engine (CE) on H616.
 +
  endif
 diff --git a/drivers/rng/Makefile b/drivers/rng/Makefile
@@ -47,7 +49,7 @@ new file mode 100644
 index 00000000000..3d8d0269853
 --- /dev/null
 +++ b/drivers/rng/sun8i_ce_rng.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,172 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (C) 2026 Antigravity
@@ -59,6 +61,7 @@ index 00000000000..3d8d0269853
 +#include <linux/types.h>
 +#include <clk.h>
 +#include <dm.h>
++#include <dm/device_compat.h>
 +#include <rng.h>
 +#include <reset.h>
 +#include <asm/cache.h>
@@ -77,9 +80,8 @@ index 00000000000..3d8d0269853
 +#define CE_ALG_TRNG_V2		0x1c
 +#define CE_COMM_INT		BIT(31)
 +
-+struct sun8i_ce_rng_data {
-+	bool needs_word_addresses;
-+};
++#define CE_RNG_FLOW		3
++#define CE_ESR_FLOW_SHIFT(flow)	((flow) * 8)
 +
 +#define CE_MAX_SG 8
 +
@@ -108,7 +110,6 @@ index 00000000000..3d8d0269853
 +	struct clk bus_clk;
 +	struct clk mod_clk;
 +	struct reset_ctl reset;
-+	bool needs_word_addresses;
 +	struct ce_task task;
 +};
 +
@@ -121,16 +122,13 @@ index 00000000000..3d8d0269853
 +	while (len > 0) {
 +		size_t chunk = min_t(size_t, len, 32);
 +		ulong start;
-+		u32 task_addr = (u32)(uintptr_t)&priv->task;
-+		u32 buf_addr = (u32)(uintptr_t)rng_buf;
-+
-+		if (priv->needs_word_addresses) {
-+			task_addr /= 4;
-+			buf_addr /= 4;
-+		}
++		u32 esr;
++		/* H616 CE encodes DMA addresses in words. */
++		u32 task_addr = (u32)(uintptr_t)&priv->task / 4;
++		u32 buf_addr = (u32)(uintptr_t)rng_buf / 4;
 +
 +		memset(&priv->task, 0, sizeof(priv->task));
-+		priv->task.t_id = 3; /* Flow 3 */
++		priv->task.t_id = CE_RNG_FLOW;
 +		priv->task.t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
 +		priv->task.t_dlen = 32; /* 32 bytes */
 +		priv->task.t_dst[0].addr = buf_addr;
@@ -142,8 +140,8 @@ index 00000000000..3d8d0269853
 +		invalidate_dcache_range((uintptr_t)rng_buf,
 +					(uintptr_t)rng_buf + 64);
 +
-+		/* Clear Flow 3 interrupt status */
-+		writel(BIT(3), priv->base + CE_ISR);
++		/* Clear TRNG flow interrupt status */
++		writel(BIT(CE_RNG_FLOW), priv->base + CE_ISR);
 +
 +		/* Set task descriptor queue address */
 +		writel(task_addr, priv->base + CE_TDQ);
@@ -153,7 +151,7 @@ index 00000000000..3d8d0269853
 +
 +		/* Poll for completion */
 +		start = get_timer(0);
-+		while (!(readl(priv->base + CE_ISR) & BIT(3))) {
++		while (!(readl(priv->base + CE_ISR) & BIT(CE_RNG_FLOW))) {
 +			if (get_timer(start) > 50) { /* 50ms timeout */
 +				writel(0, priv->base + CE_TLR);
 +				return -ETIMEDOUT;
@@ -162,7 +160,15 @@ index 00000000000..3d8d0269853
 +		}
 +
 +		/* Clear interrupt */
-+		writel(BIT(3), priv->base + CE_ISR);
++		writel(BIT(CE_RNG_FLOW), priv->base + CE_ISR);
++
++		/* Reject a failed task before using its output. */
++		esr = readl(priv->base + CE_ESR) >> CE_ESR_FLOW_SHIFT(CE_RNG_FLOW);
++		esr &= 0xff;
++		if (esr) {
++			dev_err(dev, "CE error status: 0x%x\n", esr);
++			return -EIO;
++		}
 +
 +		invalidate_dcache_range((uintptr_t)rng_buf,
 +					(uintptr_t)rng_buf + 64);
@@ -178,11 +184,7 @@ index 00000000000..3d8d0269853
 +static int sun8i_ce_rng_probe(struct udevice *dev)
 +{
 +	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
-+	const struct sun8i_ce_rng_data *data = (void *)dev_get_driver_data(dev);
 +	int ret;
-+
-+	if (data)
-+		priv->needs_word_addresses = data->needs_word_addresses;
 +
 +	priv->base = dev_read_addr_ptr(dev);
 +	if (!priv->base)
@@ -207,19 +209,8 @@ index 00000000000..3d8d0269853
 +	.read = sun8i_ce_rng_read,
 +};
 +
-+static const struct sun8i_ce_rng_data sun8i_ce_rng_a733_data = { };
-+static const struct sun8i_ce_rng_data sun8i_ce_rng_a523_data = { };
-+static const struct sun8i_ce_rng_data sun8i_ce_rng_h616_data = {
-+	.needs_word_addresses = true,
-+};
-+
 +static const struct udevice_id sun8i_ce_rng_ids[] = {
-+	{ .compatible = "allwinner,sun60i-a733-crypto",
-+	  .data = (ulong)&sun8i_ce_rng_a733_data },
-+	{ .compatible = "allwinner,sun55i-a523-crypto",
-+	  .data = (ulong)&sun8i_ce_rng_a523_data },
-+	{ .compatible = "allwinner,sun50i-h616-crypto",
-+	  .data = (ulong)&sun8i_ce_rng_h616_data },
++	{ .compatible = "allwinner,sun50i-h616-crypto" },
 +	{ }
 +};
 +
@@ -235,14 +226,12 @@ diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/sr
 index 18360f945d5..891c2842c50 100644
 --- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
 +++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
-@@ -423,5 +423,17 @@
+@@ -423,5 +423,15 @@
  			status = "disabled";
  		};
  
 +		ce: crypto@4603000 {
-+			compatible = "allwinner,sun60i-a733-crypto",
-+				     "allwinner,sun55i-a523-crypto",
-+				     "allwinner,sun50i-h616-crypto";
++			compatible = "allwinner,sun60i-a733-crypto";
 +			reg = <0x04603000 0x1000>;
 +			interrupts = <GIC_SPI 168 IRQ_TYPE_LEVEL_HIGH>;
 +			clocks = <&ccu CLK_BUS_CE>, <&ccu CLK_CE>;
