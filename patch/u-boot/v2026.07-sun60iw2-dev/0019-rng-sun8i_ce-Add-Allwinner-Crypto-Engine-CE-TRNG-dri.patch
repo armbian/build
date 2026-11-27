@@ -5,18 +5,17 @@ Subject: [PATCH 19/29] rng: sun8i_ce: Add Allwinner Crypto Engine (CE) TRNG
  driver
 
 Add UCLASS_RNG driver for the hardware True Random Number Generator (TRNG)
-in the Allwinner Crypto Engine. Limit the driver to H616. A733 and A523 use
-CE v5, whose task descriptor and control sequence differ from the Linux
-H616 layout that this driver implements.
+in the Allwinner Crypto Engine. Use the CE v5 protocol on A523 and A733.
+Keep the Linux H616 layout and control sequence on H616.
 
 Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
 Assisted-by: Antigravity <antigravity@google.com>
 ---
  drivers/rng/Kconfig                           |   7 +
  drivers/rng/Makefile                          |   1 +
- drivers/rng/sun8i_ce_rng.c                    | 172 +++++++++++++++
- .../src/arm64/allwinner/sun60i-a733.dtsi      |  10 ++
- 4 files changed, 190 insertions(+)
+ drivers/rng/sun8i_ce_rng.c                    | 344 ++++++++++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  11 ++
+ 4 files changed, 363 insertions(+)
  create mode 100644 drivers/rng/sun8i_ce_rng.c
 
 diff --git a/drivers/rng/Kconfig b/drivers/rng/Kconfig
@@ -32,7 +31,7 @@ index 19b2b707677..b62fd02ab9c 100644
 +	depends on DM_RNG && ARCH_SUNXI
 +	help
 +	  Enable support for True Random Number Generator (TRNG) in the
-+	  Allwinner Crypto Engine (CE) on H616.
++	  Allwinner Crypto Engine (CE) on H616, A523 and A733. CE v5 is used on A523 and A733.
 +
  endif
 diff --git a/drivers/rng/Makefile b/drivers/rng/Makefile
@@ -49,7 +48,7 @@ new file mode 100644
 index 00000000000..3d8d0269853
 --- /dev/null
 +++ b/drivers/rng/sun8i_ce_rng.c
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,344 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (C) 2026 Antigravity
@@ -62,6 +61,8 @@ index 00000000000..3d8d0269853
 +#include <clk.h>
 +#include <dm.h>
 +#include <dm/device_compat.h>
++#include <linux/bitops.h>
++#include <linux/build_bug.h>
 +#include <rng.h>
 +#include <reset.h>
 +#include <asm/cache.h>
@@ -69,12 +70,12 @@ index 00000000000..3d8d0269853
 +#include <linux/delay.h>
 +#include <time.h>
 +
++/* Legacy CE registers and descriptor, used on H616. */
 +#define CE_TDQ			0x00
 +#define CE_CTR			0x04
 +#define CE_ICR			0x08
 +#define CE_ISR			0x0c
 +#define CE_TLR			0x10
-+#define CE_TSR			0x14
 +#define CE_ESR			0x18
 +
 +#define CE_ALG_TRNG_V2		0x1c
@@ -105,17 +106,81 @@ index 00000000000..3d8d0269853
 +	u32 reserved[3];
 +} __packed __aligned(64);
 +
++/* CE v5 registers and descriptor, used on A523 and A733. */
++#define CE_REG_TSK1		0x04
++#define CE_REG_ERR		0x18
++#define CE_REG_LPC		0xd0
++
++#define CE_V5_RNG_FLOW		2
++#define CE_V5_ISR_FLOW_MASK(flow) (GENMASK(1, 0) << ((flow) * 2))
++#define CE_V5_ICR_FLOW_EN(flow)	BIT(flow)
++#define CE_V5_ERR_FLOW_MASK(flow) (GENMASK(7, 0) << ((flow) * 8))
++#define CE_V5_TLR_HASH_RBG_START BIT(10)
++
++#define CE_V5_COMM_LPKG		BIT(12)
++#define CE_V5_COMM_IE		BIT(16)
++#define CE_V5_CMD_HASH_SHA256	3
++#define CE_V5_CMD_RNG_TRNG	2
++#define CE_V5_CMD_RNG_SHIFT	8
++
++#define CE_V5_CHUNK_BYTES	32
++#define CE_V5_TIMEOUT_MS	100
++
++struct ce_v5_sg {
++	u8 src_addr[5];
++	u8 dst_addr[5];
++	u8 pad[2];
++	u32 src_len;
++	u32 dst_len;
++} __packed;
++
++struct ce_v5_task {
++	u32 comm_ctl;
++	u32 main_cmd;
++	u8 data_len[5];
++	u8 key_addr[5];
++	u8 iv_addr[5];
++	u8 pad;
++	struct ce_v5_sg sg[CE_MAX_SG];
++	u8 next_sg_addr[5];
++	u8 next_task_addr[5];
++	u8 pad2[2];
++	u32 reserved[3];
++} __packed;
++
++static_assert(sizeof(struct ce_v5_sg) == 20);
++static_assert(sizeof(struct ce_v5_task) == 208);
++
++struct sun8i_ce_rng_data {
++	bool ce_v5;
++	bool has_lpc;
++};
++
 +struct sun8i_ce_rng_priv {
 +	void __iomem *base;
 +	struct clk bus_clk;
 +	struct clk mod_clk;
 +	struct reset_ctl reset;
-+	struct ce_task task;
++	const struct sun8i_ce_rng_data *data;
++	union {
++		struct ce_task legacy;
++		struct ce_v5_task v5;
++	} task;
 +};
 +
-+static int sun8i_ce_rng_read(struct udevice *dev, void *data, size_t len)
++static void ce_v5_set_addr40(u8 dst[5], u64 addr)
 +{
-+	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
++	dst[0] = addr & 0xff;
++	dst[1] = (addr >> 8) & 0xff;
++	dst[2] = (addr >> 16) & 0xff;
++	dst[3] = (addr >> 24) & 0xff;
++	dst[4] = (addr >> 32) & 0xff;
++}
++
++static int sun8i_ce_rng_read_h616(struct udevice *dev,
++				  struct sun8i_ce_rng_priv *priv,
++				  void *data, size_t len)
++{
 +	u8 *dst = data;
 +	static u8 rng_buf[64] __aligned(64);
 +
@@ -124,19 +189,20 @@ index 00000000000..3d8d0269853
 +		ulong start;
 +		u32 esr;
 +		/* H616 CE encodes DMA addresses in words. */
-+		u32 task_addr = (u32)(uintptr_t)&priv->task / 4;
++		u32 task_addr = (u32)(uintptr_t)&priv->task.legacy / 4;
 +		u32 buf_addr = (u32)(uintptr_t)rng_buf / 4;
 +
-+		memset(&priv->task, 0, sizeof(priv->task));
-+		priv->task.t_id = CE_RNG_FLOW;
-+		priv->task.t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
-+		priv->task.t_dlen = 32; /* 32 bytes */
-+		priv->task.t_dst[0].addr = buf_addr;
-+		priv->task.t_dst[0].len = 32 / 4; /* word count */
++		memset(&priv->task.legacy, 0, sizeof(priv->task.legacy));
++		priv->task.legacy.t_id = CE_RNG_FLOW;
++		priv->task.legacy.t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
++		priv->task.legacy.t_dlen = 32; /* 32 bytes */
++		priv->task.legacy.t_dst[0].addr = buf_addr;
++		priv->task.legacy.t_dst[0].len = 32 / 4; /* word count */
 +
 +		/* Flush cache */
-+		flush_dcache_range((uintptr_t)&priv->task,
-+				   (uintptr_t)&priv->task + sizeof(priv->task));
++		flush_dcache_range((uintptr_t)&priv->task.legacy,
++				   (uintptr_t)&priv->task.legacy +
++				   sizeof(priv->task.legacy));
 +		invalidate_dcache_range((uintptr_t)rng_buf,
 +					(uintptr_t)rng_buf + 64);
 +
@@ -181,10 +247,95 @@ index 00000000000..3d8d0269853
 +	return 0;
 +}
 +
++static int sun8i_ce_rng_read_v5(struct udevice *dev,
++				struct sun8i_ce_rng_priv *priv,
++				void *data, size_t len)
++{
++	u8 *dst = data;
++	static u8 rng_buf[64] __aligned(64);
++	u32 isr_mask = CE_V5_ISR_FLOW_MASK(CE_V5_RNG_FLOW);
++	u32 icr_en = CE_V5_ICR_FLOW_EN(CE_V5_RNG_FLOW);
++
++	while (len > 0) {
++		size_t chunk = min_t(size_t, len, CE_V5_CHUNK_BYTES);
++		struct ce_v5_task *task = &priv->task.v5;
++		u64 task_addr = (u64)(uintptr_t)task;
++		u64 buf_addr = (u64)(uintptr_t)rng_buf;
++		u32 esr;
++		ulong start;
++
++		memset(task, 0, sizeof(*task));
++		task->comm_ctl = CE_V5_RNG_FLOW | CE_V5_COMM_LPKG |
++				 CE_V5_COMM_IE;
++		task->main_cmd = CE_V5_CMD_HASH_SHA256 |
++				 (CE_V5_CMD_RNG_TRNG << CE_V5_CMD_RNG_SHIFT);
++		ce_v5_set_addr40(task->sg[0].dst_addr, buf_addr);
++		task->sg[0].dst_len = CE_V5_CHUNK_BYTES;
++
++		flush_dcache_range((uintptr_t)task,
++				   (uintptr_t)&priv->task +
++				   sizeof(priv->task));
++		flush_dcache_range((uintptr_t)rng_buf,
++				   (uintptr_t)rng_buf + 64);
++
++		writel(isr_mask, priv->base + CE_ISR);
++		writel(readl(priv->base + CE_ICR) | icr_en, priv->base + CE_ICR);
++		writel((u32)task_addr, priv->base + CE_TDQ);
++		writel((u32)(task_addr >> 32), priv->base + CE_REG_TSK1);
++		writel(CE_V5_TLR_HASH_RBG_START, priv->base + CE_TLR);
++
++		start = get_timer(0);
++		while (!(readl(priv->base + CE_ISR) & isr_mask)) {
++			if (get_timer(start) > CE_V5_TIMEOUT_MS) {
++				writel(readl(priv->base + CE_ICR) & ~icr_en,
++				       priv->base + CE_ICR);
++				writel(0, priv->base + CE_TLR);
++				writel(0, priv->base + CE_TDQ);
++				writel(0, priv->base + CE_REG_TSK1);
++				return -ETIMEDOUT;
++			}
++			udelay(10);
++		}
++
++		writel(readl(priv->base + CE_ICR) & ~icr_en,
++		       priv->base + CE_ICR);
++
++		esr = readl(priv->base + CE_REG_ERR) &
++		      CE_V5_ERR_FLOW_MASK(CE_V5_RNG_FLOW);
++		if (esr) {
++			dev_err(dev, "CE v5 error status: 0x%x\n", esr);
++			return -EIO;
++		}
++
++		invalidate_dcache_range((uintptr_t)rng_buf,
++					(uintptr_t)rng_buf + 64);
++
++		memcpy(dst, rng_buf, chunk);
++		dst += chunk;
++		len -= chunk;
++	}
++
++	return 0;
++}
++
++static int sun8i_ce_rng_read(struct udevice *dev, void *data, size_t len)
++{
++	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
++
++	if (priv->data->ce_v5)
++		return sun8i_ce_rng_read_v5(dev, priv, data, len);
++
++	return sun8i_ce_rng_read_h616(dev, priv, data, len);
++}
++
 +static int sun8i_ce_rng_probe(struct udevice *dev)
 +{
 +	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
 +	int ret;
++
++	priv->data = (void *)dev_get_driver_data(dev);
++	if (!priv->data)
++		return -EINVAL;
 +
 +	priv->base = dev_read_addr_ptr(dev);
 +	if (!priv->base)
@@ -202,6 +353,10 @@ index 00000000000..3d8d0269853
 +	if (!ret)
 +		reset_deassert(&priv->reset);
 +
++	if (priv->data->has_lpc)
++		writel(readl(priv->base + CE_REG_LPC) | BIT(1),
++		       priv->base + CE_REG_LPC);
++
 +	return 0;
 +}
 +
@@ -209,8 +364,24 @@ index 00000000000..3d8d0269853
 +	.read = sun8i_ce_rng_read,
 +};
 +
++static const struct sun8i_ce_rng_data sun8i_ce_rng_a733_data = {
++	.ce_v5 = true,
++	.has_lpc = true,
++};
++
++static const struct sun8i_ce_rng_data sun8i_ce_rng_a523_data = {
++	.ce_v5 = true,
++};
++
++static const struct sun8i_ce_rng_data sun8i_ce_rng_h616_data = { };
++
 +static const struct udevice_id sun8i_ce_rng_ids[] = {
-+	{ .compatible = "allwinner,sun50i-h616-crypto" },
++	{ .compatible = "allwinner,sun60i-a733-crypto",
++	  .data = (ulong)&sun8i_ce_rng_a733_data },
++	{ .compatible = "allwinner,sun55i-a523-crypto",
++	  .data = (ulong)&sun8i_ce_rng_a523_data },
++	{ .compatible = "allwinner,sun50i-h616-crypto",
++	  .data = (ulong)&sun8i_ce_rng_h616_data },
 +	{ }
 +};
 +
@@ -226,12 +397,13 @@ diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/sr
 index 18360f945d5..891c2842c50 100644
 --- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
 +++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
-@@ -423,5 +423,15 @@
+@@ -423,5 +423,16 @@
  			status = "disabled";
  		};
  
 +		ce: crypto@4603000 {
-+			compatible = "allwinner,sun60i-a733-crypto";
++			compatible = "allwinner,sun60i-a733-crypto",
++				     "allwinner,sun55i-a523-crypto";
 +			reg = <0x04603000 0x1000>;
 +			interrupts = <GIC_SPI 168 IRQ_TYPE_LEVEL_HIGH>;
 +			clocks = <&ccu CLK_BUS_CE>, <&ccu CLK_CE>;
