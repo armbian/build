@@ -12,9 +12,9 @@ Assisted-by: Antigravity <antigravity@google.com>
 ---
  drivers/rng/Kconfig                           |   7 +
  drivers/rng/Makefile                          |   1 +
- drivers/rng/sun8i_ce_rng.c                    | 155 ++++++++++++++++++
+ drivers/rng/sun8i_ce_rng.c                    | 183 ++++++++++++++++++
  .../src/arm64/allwinner/sun60i-a733.dtsi      |  12 ++
- 4 files changed, 175 insertions(+)
+ 4 files changed, 203 insertions(+)
  create mode 100644 drivers/rng/sun8i_ce_rng.c
 
 diff --git a/drivers/rng/Kconfig b/drivers/rng/Kconfig
@@ -47,7 +47,7 @@ new file mode 100644
 index 00000000000..3d8d0269853
 --- /dev/null
 +++ b/drivers/rng/sun8i_ce_rng.c
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,183 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (C) 2026 Antigravity
@@ -77,6 +77,17 @@ index 00000000000..3d8d0269853
 +#define CE_ALG_TRNG_V2		0x1c
 +#define CE_COMM_INT		BIT(31)
 +
++struct sun8i_ce_rng_data {
++	bool needs_word_addresses;
++};
++
++#define CE_MAX_SG 8
++
++struct ce_sg {
++	u32 addr;
++	u32 len;
++} __packed;
++
 +struct ce_task {
 +	u32 t_id;
 +	u32 t_common_ctl;
@@ -86,10 +97,8 @@ index 00000000000..3d8d0269853
 +	u32 t_iv;
 +	u32 t_ctr;
 +	u32 t_dlen;
-+	u32 src_addr;
-+	u32 src_len;
-+	u32 dst_addr;
-+	u32 dst_len;
++	struct ce_sg t_src[CE_MAX_SG];
++	struct ce_sg t_dst[CE_MAX_SG];
 +	u32 next;
 +	u32 reserved[3];
 +} __packed __aligned(64);
@@ -99,6 +108,7 @@ index 00000000000..3d8d0269853
 +	struct clk bus_clk;
 +	struct clk mod_clk;
 +	struct reset_ctl reset;
++	bool needs_word_addresses;
 +	struct ce_task task;
 +};
 +
@@ -111,13 +121,20 @@ index 00000000000..3d8d0269853
 +	while (len > 0) {
 +		size_t chunk = min_t(size_t, len, 32);
 +		ulong start;
++		u32 task_addr = (u32)(uintptr_t)&priv->task;
++		u32 buf_addr = (u32)(uintptr_t)rng_buf;
++
++		if (priv->needs_word_addresses) {
++			task_addr /= 4;
++			buf_addr /= 4;
++		}
 +
 +		memset(&priv->task, 0, sizeof(priv->task));
 +		priv->task.t_id = 3; /* Flow 3 */
 +		priv->task.t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
 +		priv->task.t_dlen = 32; /* 32 bytes */
-+		priv->task.dst_addr = (u32)(uintptr_t)rng_buf;
-+		priv->task.dst_len = 32 / 4; /* word count */
++		priv->task.t_dst[0].addr = buf_addr;
++		priv->task.t_dst[0].len = 32 / 4; /* word count */
 +
 +		/* Flush cache */
 +		flush_dcache_range((uintptr_t)&priv->task,
@@ -129,7 +146,7 @@ index 00000000000..3d8d0269853
 +		writel(BIT(3), priv->base + CE_ISR);
 +
 +		/* Set task descriptor queue address */
-+		writel((u32)(uintptr_t)&priv->task, priv->base + CE_TDQ);
++		writel(task_addr, priv->base + CE_TDQ);
 +
 +		/* Enable task: TLR = 1 | (common_ctl & 0x7f) << 8 */
 +		writel(1 | ((CE_ALG_TRNG_V2 & 0x7f) << 8), priv->base + CE_TLR);
@@ -161,7 +178,11 @@ index 00000000000..3d8d0269853
 +static int sun8i_ce_rng_probe(struct udevice *dev)
 +{
 +	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
++	const struct sun8i_ce_rng_data *data = (void *)dev_get_driver_data(dev);
 +	int ret;
++
++	if (data)
++		priv->needs_word_addresses = data->needs_word_addresses;
 +
 +	priv->base = dev_read_addr_ptr(dev);
 +	if (!priv->base)
@@ -186,10 +207,19 @@ index 00000000000..3d8d0269853
 +	.read = sun8i_ce_rng_read,
 +};
 +
++static const struct sun8i_ce_rng_data sun8i_ce_rng_a733_data = { };
++static const struct sun8i_ce_rng_data sun8i_ce_rng_a523_data = { };
++static const struct sun8i_ce_rng_data sun8i_ce_rng_h616_data = {
++	.needs_word_addresses = true,
++};
++
 +static const struct udevice_id sun8i_ce_rng_ids[] = {
-+	{ .compatible = "allwinner,sun60i-a733-crypto" },
-+	{ .compatible = "allwinner,sun55i-a523-crypto" },
-+	{ .compatible = "allwinner,sun50i-h616-crypto" },
++	{ .compatible = "allwinner,sun60i-a733-crypto",
++	  .data = (ulong)&sun8i_ce_rng_a733_data },
++	{ .compatible = "allwinner,sun55i-a523-crypto",
++	  .data = (ulong)&sun8i_ce_rng_a523_data },
++	{ .compatible = "allwinner,sun50i-h616-crypto",
++	  .data = (ulong)&sun8i_ce_rng_h616_data },
 +	{ }
 +};
 +

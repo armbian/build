@@ -9,8 +9,9 @@ Bring up the DWC3 USB 2.0 host path (FE1.1S hub and AIC8800) at
      assigned-clock-parents configures both PIPE (bit 20) and UTMI
      (bit 21) without raw MMIO writes in dwc3-of-simple.c.
   2. Add the snps,phy-soft-reset-after-csftrst boolean quirk in DWC3 to
-     pulse GUSB2PHYCFG.PHYSOFTRST (1-2 ms) after CSFTRST in host mode
-     and phase-align the 60 MHz UTMI clock.
+     pulse GUSB2PHYCFG.PHYSOFTRST (1-2 ms) after CSFTRST during initial
+     core init and phase-align the 60 MHz UTMI clock. The pulse is not
+     repeated on full host resume, where the host role is already set.
   3. Parameterize skip_u2p0_passby in struct sun4i_usb_phy_cfg so A733
      clears U2P0_ISCR (0x06b00000) instead of calling
      sun4i_usb_phy_passby(), leaving all other SoCs unchanged.
@@ -202,14 +203,13 @@ index 2bb25c19ef12..2f8f5739285a 100644
  	ret = clk_prepare_enable(phy->clk);
  	if (ret)
  		return ret;
-@@ -369,6 +469,31 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
+@@ -369,6 +469,35 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
  {
  	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
  	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
-+	int err, ret;
++	int ret;
 +	u32 val;
 +
-+	err = 0;
 +	if (phy->index == 2 && data->cfg->has_u2p0_calibration &&
 +	    data->syscon) {
 +		val = readl(phy->pmu + REG_HCI_PHY_CTL);
@@ -217,24 +217,29 @@ index 2bb25c19ef12..2f8f5739285a 100644
 +		val |= PHY_CTL_SIDDQ;
 +		writel(val, phy->pmu + REG_HCI_PHY_CTL);
 +
-+		err = reset_control_assert(phy->reset);
++		ret = reset_control_assert(phy->reset);
++		if (ret)
++			dev_err(&_phy->dev, "Failed to assert USB2 reset: %d\n", ret);
++
 +		ret = regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
 +					 U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
-+		if (ret && !err)
-+			err = ret;
++		if (ret)
++			dev_err(&_phy->dev, "Failed to restore USB2 rescal: %d\n", ret);
++
 +		ret = regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
 +					 U2P0_RES1_TRIM_MASK, data->u2p0_res1);
-+		if (ret && !err)
-+			err = ret;
++		if (ret)
++			dev_err(&_phy->dev, "Failed to restore USB2 trim: %d\n", ret);
++
 +		sun4i_usb_phy_passby(phy, 0);
 +		clk_disable_unprepare(phy->clk2);
 +		clk_disable_unprepare(phy->clk);
-+		return err;
++		return 0;
 +	}
  
  	if (phy->index == 0) {
  		if (data->cfg->siddq_in_base) {
-@@ -739,6 +864,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -739,6 +868,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  	if (IS_ERR(data->base))
  		return PTR_ERR(data->base);
  
@@ -249,7 +254,7 @@ index 2bb25c19ef12..2f8f5739285a 100644
  	data->id_det_gpio = devm_gpiod_get_optional(dev, "usb0_id_det",
  						    GPIOD_IN);
  	if (IS_ERR(data->id_det_gpio)) {
-@@ -787,7 +920,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+@@ -787,7 +924,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
  			continue;
  
  		snprintf(name, sizeof(name), "usb%d_reset", i);
@@ -267,7 +272,7 @@ index 2bb25c19ef12..2f8f5739285a 100644
  		if (IS_ERR(phy->reset)) {
  			if (PTR_ERR(phy->reset) == -ENOENT)
  				break;
-@@ -987,6 +1129,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
+@@ -987,6 +1133,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
  	.siddq_in_base = true,
  };
  
@@ -284,7 +289,7 @@ index 2bb25c19ef12..2f8f5739285a 100644
  static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
  	.disc_thresh = 3,
  	.phyctl_offset = REG_PHYCTL_A33,
-@@ -1024,6 +1176,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
+@@ -1024,6 +1180,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
  	{ .compatible = "allwinner,sun8i-h3-usb-phy", .data = &sun8i_h3_cfg },
  	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = &sun8i_r40_cfg },
  	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = &sun8i_v3s_cfg },
@@ -330,6 +335,14 @@ index 5a21e04d78cb..8efa9b87a02c 100644
  
  	return false;
  }
+@@ -407,6 +413,6 @@ static const struct regmap_config sunxi_sram_regmap_config = {
+ 	.reg_stride     = 4,
+ 	/* last defined register */
+-	.max_register   = SUNXI_SYS_RES0_CTRL_REG,
++	.max_register   = SUNXI_SYS_RES1_CTRL_REG,
+ 	/* other devices have no business accessing other registers */
+ 	.readable_reg	= sunxi_sram_regmap_accessible_reg,
+ 	.writeable_reg	= sunxi_sram_regmap_accessible_reg,
 diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
 index fd5c2cd36c59..c5660ae1cffb 100644
 --- a/drivers/usb/dwc3/core.c
