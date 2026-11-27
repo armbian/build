@@ -61,13 +61,11 @@ function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 	[[ "$BRANCH" != vendor* ]] && return 0
 	display_alert "$BOARD" "Installing ap6611s-bluetooth.service" "info"
 
-	# Vendor kernels require the user-space patchram loader.
-	install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-	cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/ap6611s-bluetooth.service
-
-	# Adapt the shared service to the AP6611S on UART7.
-	sed -i 's/ttyS0/ttyS7/g' $destination/lib/systemd/system/ap6611s-bluetooth.service
-	sed -i 's/BCM4345C5.hcd/SYN43711A0.hcd/g' $destination/lib/systemd/system/ap6611s-bluetooth.service
+	# The vendor device tree binds hci_bcm to UART7 through serdev, so there is
+	# no /dev/ttyS7 for the patchram loader. The service powers the chip up
+	# through rfkill and probes hci_bcm again, which loads the firmware.
+	install -D -m 755 "$SRC/packages/bsp/orangepi5-max/orangepi5max-bluetooth-init" "$destination/usr/libexec/orangepi5max-bluetooth-init"
+	install -D -m 644 "$SRC/packages/bsp/orangepi5-max/ap6611s-bluetooth.service" "$destination/lib/systemd/system/ap6611s-bluetooth.service"
 	return 0
 }
 
