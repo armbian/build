@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# @description Converts the Armbian image into a QDL-flashable `.tar` archive for the Arduino UNO Q (Qualcomm QRB2210). Splits the boot and root partitions with `dd` and extracts the U-Boot `boot.img` from the rootfs. Bundles Qualcomm firehose flash binaries fetched from the `armbian/qcombin` repo during image creation.
+# @description Converts the Armbian image into a QDL-flashable `.tar` archive for the Arduino UNO Q (Qualcomm QRB2210). Splits the boot and root partitions with `dd` and takes the U-Boot `boot.img` from the rootfs before unmount. Bundles Qualcomm firehose flash binaries fetched from the `armbian/qcombin` repo during image creation.
 
-declare -g ARDUINO_ROOTFS_LOOP=""
-declare -g ARDUINO_ROOTFS_MOUNT=""
+declare -g ARDUINO_BOOT_IMG=""
+
+# Copy boot.img while the rootfs is still mounted: a LUKS root cannot be mounted later.
+function pre_umount_final_image__900_save_arduino_boot_img() {
+	ARDUINO_BOOT_IMG="${SDCARD}.arduino-boot.img"
+	run_host_command_logged cp "${MOUNT}/usr/lib/linux-u-boot-${BRANCH}-${BOARD}/boot.img" "${ARDUINO_BOOT_IMG}"
+}
 
 # Convert standard Armbian image into a QDL-flashable archive for Arduino UNO Q
 function post_build_image__900_convert_to_arduino_img() {
@@ -22,7 +27,6 @@ function post_build_image__900_convert_to_arduino_img() {
 	local bootfs_img="${DESTIMG}/${version}.bootfs.img"
 	local rootfs_img="${DESTIMG}/${version}.rootfs.img"
 	local outdir="${DESTIMG}/arduino-images"
-	ARDUINO_ROOTFS_MOUNT="${DESTIMG}/rootfs_mount"
 
 	# Extract partition offsets using sfdisk JSON output
 	local p1_start p1_size p2_start p2_size
@@ -43,15 +47,7 @@ function post_build_image__900_convert_to_arduino_img() {
 	run_host_command_logged cp -r "${QCOMBIN_DIR}/Agatti/arduino-uno-q/"* "${outdir}/flash/"
 	run_host_command_logged cp "${QCOMBIN_DIR}/Agatti/prog_firehose_ddr.elf" "${outdir}/flash/"
 
-	# Extract boot.img (U-Boot) from rootfs
-	mkdir -p "${ARDUINO_ROOTFS_MOUNT}"
-	ARDUINO_ROOTFS_LOOP=$(losetup -f --show "${rootfs_img}")
-	add_cleanup_handler "image_output_arduino_cleanup"
-	mount "${ARDUINO_ROOTFS_LOOP}" "${ARDUINO_ROOTFS_MOUNT}"
-	run_host_command_logged cp "${ARDUINO_ROOTFS_MOUNT}/usr/lib/linux-u-boot-${BRANCH}-${BOARD}/boot.img" "${outdir}/flash/"
-	umount "${ARDUINO_ROOTFS_MOUNT}"
-	losetup -d "${ARDUINO_ROOTFS_LOOP}"
-	ARDUINO_ROOTFS_LOOP=""
+	run_host_command_logged mv "${ARDUINO_BOOT_IMG}" "${outdir}/flash/boot.img"
 
 	# Replace raw image with flash archive
 	rm "${img}"
@@ -63,11 +59,4 @@ function post_build_image__900_convert_to_arduino_img() {
 	rm -rf "${outdir}"
 
 	return 0
-}
-
-function image_output_arduino_cleanup() {
-	if [[ -n "${ARDUINO_ROOTFS_LOOP}" ]]; then
-		umount "${ARDUINO_ROOTFS_MOUNT}" 2> /dev/null
-		losetup -d "${ARDUINO_ROOTFS_LOOP}" 2> /dev/null
-	fi
 }
