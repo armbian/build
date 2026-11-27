@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 2 Nov 2026 21:04:03 +0100
+Subject: [PATCH] drm/tegra: sor: reject DP modes above the link bandwidth
+
+The SOR accepts every DP mode. A monitor with a 2560x1440@165 Hz
+preferred mode then fails with "failed to choose link: -34", and the
+screen shows garbage.
+
+Reject modes that need more than the sink's lanes at HBR2 can carry.
+Choose the link with the bpc that the SOR sends (6 or 8), not with
+the sink's bpc.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/tegra/dp.c  |  6 +++---
+ drivers/gpu/drm/tegra/dp.h  |  2 +-
+ drivers/gpu/drm/tegra/sor.c | 33 +++++++++++++++++++++++++++++----
+ 3 files changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/tegra/dp.c b/drivers/gpu/drm/tegra/dp.c
+index 990e744..53928c5 100644
+--- a/drivers/gpu/drm/tegra/dp.c
++++ b/drivers/gpu/drm/tegra/dp.c
+@@ -308,7 +308,7 @@ int drm_dp_link_configure(struct drm_dp_aux *aux, struct drm_dp_link *link)
+  * drm_dp_link_choose() - choose the lowest possible configuration for a mode
+  * @link: DRM DP link object
+  * @mode: DRM display mode
+- * @info: DRM display information
++ * @bpc: bits per color that the source sends
+  *
+  * According to the eDP specification, a source should select a configuration
+  * with the lowest number of lanes and the lowest possible link rate that can
+@@ -319,7 +319,7 @@ int drm_dp_link_configure(struct drm_dp_aux *aux, struct drm_dp_link *link)
+  */
+ int drm_dp_link_choose(struct drm_dp_link *link,
+ 		       const struct drm_display_mode *mode,
+-		       const struct drm_display_info *info)
++		       unsigned int bpc)
+ {
+ 	/* available link symbol clock rates */
+ 	static const unsigned int rates[3] = { 162000, 270000, 540000 };
+@@ -330,7 +330,7 @@ int drm_dp_link_choose(struct drm_dp_link *link,
+ 	unsigned int i, j;
+ 
+ 	/* bandwidth requirement */
+-	requirement = mode->clock * info->bpc * 3;
++	requirement = mode->clock * bpc * 3;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(lanes) && lanes[i] <= link->max_lanes; i++) {
+ 		for (j = 0; j < ARRAY_SIZE(rates) && rates[j] <= rate; j++) {
+diff --git a/drivers/gpu/drm/tegra/dp.h b/drivers/gpu/drm/tegra/dp.h
+index 695060c..dc80631 100644
+--- a/drivers/gpu/drm/tegra/dp.h
++++ b/drivers/gpu/drm/tegra/dp.h
+@@ -167,7 +167,7 @@ int drm_dp_link_probe(struct drm_dp_aux *aux, struct drm_dp_link *link);
+ int drm_dp_link_configure(struct drm_dp_aux *aux, struct drm_dp_link *link);
+ int drm_dp_link_choose(struct drm_dp_link *link,
+ 		       const struct drm_display_mode *mode,
+-		       const struct drm_display_info *info);
++		       unsigned int bpc);
+ 
+ void drm_dp_link_train_init(struct drm_dp_link_train *train);
+ int drm_dp_link_train(struct drm_dp_link *link);
+diff --git a/drivers/gpu/drm/tegra/sor.c b/drivers/gpu/drm/tegra/sor.c
+index bc7dd56..bb294c0 100644
+--- a/drivers/gpu/drm/tegra/sor.c
++++ b/drivers/gpu/drm/tegra/sor.c
+@@ -425,6 +425,9 @@ struct tegra_sor {
+ 
+ 	struct drm_dp_link link;
+ 	struct drm_dp_aux *aux;
++	/* sink limits for mode_valid(), from the last get_modes() */
++	unsigned int dp_max_rate;
++	unsigned int dp_max_lanes;
+ 
+ 	struct drm_info_list *debugfs_files;
+ 
+@@ -1776,9 +1779,19 @@ static int tegra_sor_connector_get_modes(struct drm_connector *connector)
+ 	struct tegra_sor *sor = to_sor(output);
+ 	int err;
+ 
+-	if (sor->aux)
++	if (sor->aux) {
++		struct drm_dp_link link = {};
++
+ 		drm_dp_aux_enable(sor->aux);
+ 
++		/* probe a copy: sor->link holds the active configuration */
++		if (drm_dp_link_probe(sor->aux, &link) < 0)
++			link.max_lanes = 0;
++
++		sor->dp_max_rate = link.max_rate;
++		sor->dp_max_lanes = link.max_lanes;
++	}
++
+ 	err = tegra_output_connector_get_modes(connector);
+ 
+ 	if (sor->aux)
+@@ -1791,6 +1804,20 @@ static enum drm_mode_status
+ tegra_sor_connector_mode_valid(struct drm_connector *connector,
+ 			       const struct drm_display_mode *mode)
+ {
++	struct tegra_output *output = connector_to_output(connector);
++	struct tegra_sor *sor = to_sor(output);
++	unsigned int bpc = connector->display_info.bpc == 6 ? 6 : 8;
++	unsigned long capacity;
++
++	if (!sor->aux || !sor->dp_max_lanes || !sor->dp_max_rate)
++		return MODE_OK;
++
++	/* HBR2 at most; 8B/10B coding, as in drm_dp_link_choose() */
++	capacity = sor->dp_max_lanes * min(sor->dp_max_rate, 540000U) * 8UL;
++
++	if ((unsigned long)mode->clock * bpc * 3 > capacity)
++		return MODE_CLOCK_HIGH;
++
+ 	return MODE_OK;
+ }
+ 
+@@ -2722,14 +2749,12 @@ static void tegra_sor_dp_enable(struct drm_encoder *encoder)
+ 	struct tegra_sor_config config;
+ 	struct tegra_sor_state *state;
+ 	struct drm_display_mode *mode;
+-	struct drm_display_info *info;
+ 	unsigned int i;
+ 	u32 value;
+ 	int err;
+ 
+ 	state = to_sor_state(output->connector.state);
+ 	mode = &encoder->crtc->state->adjusted_mode;
+-	info = &output->connector.display_info;
+ 
+ 	err = host1x_client_resume(&sor->client);
+ 	if (err < 0) {
+@@ -2758,7 +2783,7 @@ static void tegra_sor_dp_enable(struct drm_encoder *encoder)
+ 
+ 	tegra_sor_filter_rates(sor);
+ 
+-	err = drm_dp_link_choose(&sor->link, mode, info);
++	err = drm_dp_link_choose(&sor->link, mode, state->bpc);
+ 	if (err < 0)
+ 		dev_err(sor->dev, "failed to choose link: %d\n", err);
+ 
