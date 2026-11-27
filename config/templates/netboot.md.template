@@ -1,0 +1,155 @@
+# Network Booting (PXE) Instructions for ${BOARD_CAPITALIZED}
+
+This document describes how to deploy the generated network boot files for your board.
+
+## Deployment Overview
+
+You can deploy using one of two options:
+
+### Option A: Standard Netboot (Using SD Card Bootloader)
+This option uses a minimal SD card image to load U-Boot and run a PXE boot loader script.
+1. **Bootloader:** Flash `${version}-bootloader.img` to an SD card.
+2. **TFTP Boot Files:** Copy everything from `${version}-netboot/` (including the `pxelinux.cfg` directory and `uInitrd`) to your TFTP server's root directory.
+3. **NFS RootFS:** Extract `${version}-rootfs.${ext}` to your NFS export directory.
+
+### Option B: Pure PXE Boot (Zero SD Card / Diskless)
+If your board has U-Boot pre-installed in SPI flash, or you are chainloading U-Boot:
+1. **TFTP Boot Files:** Copy everything from `${version}-netboot/` (including the `pxelinux.cfg` directory and `uInitrd`) to your TFTP server's root directory.
+2. **NFS RootFS:** Extract `${version}-rootfs.${ext}` to your NFS export directory.
+No SD card or USB drive is required.
+
+---
+
+## 1. NFS Server Configuration (`${NETBOOT_NFS_SERVER}`)
+
+### Install NFS Kernel Server
+On your NFS server (${NETBOOT_NFS_SERVER}):
+```bash
+sudo apt update && sudo apt install -y nfs-kernel-server
+```
+
+### Prepare Export Directory
+Create the directory and extract the rootfs and boot tarballs:
+```bash
+sudo mkdir -p ${NETBOOT_NFS_PATH}
+sudo ${extract_cmd} ${version}-rootfs.${ext} -C ${NETBOOT_NFS_PATH}
+sudo ${extract_cmd} ${version}-boot.${ext} -C ${NETBOOT_NFS_PATH}/boot
+```
+
+### Read-Only Root with tmpfs Overlay (OverlayFS)
+To run the board with a read-only root and lay an overlayfs (tmpfs/RAM upper) over it (allowing multiple same-model units to share a single NFS root path safely):
+1. Export the NFS root as read-only in `/etc/exports`:
+   `${NETBOOT_NFS_PATH} ${NETBOOT_SUBNET}/${NETBOOT_NETMASK}(ro,sync,no_subtree_check,no_root_squash)`
+2. Edit `pxelinux.cfg/default` on the TFTP server, changing `rw` to `ro` and appending `overlayroot=tmpfs` to the cmdline:
+   `append root=/dev/nfs nfsroot=${NETBOOT_NFS_SERVER}:${NETBOOT_NFS_PATH},v3,ro ip=dhcp overlayroot=tmpfs console=ttyS0,115200 ...`
+
+### Export the Directory
+Add the following line to `/etc/exports` to export the share to the configured network:
+```text
+${NETBOOT_NFS_PATH} ${NETBOOT_SUBNET}/${NETBOOT_NETMASK}(rw,sync,no_subtree_check,no_root_squash)
+```
+Reload the NFS exports:
+```bash
+sudo exportfs -arv
+```
+
+---
+
+## 2. TFTP Server Configuration (`${NETBOOT_TFTP_SERVER}`)
+
+Copy all netboot files to the TFTP root (e.g., `/srv/tftp/${BOARD}`):
+```bash
+# Create TFTP directory for the board
+sudo mkdir -p /srv/tftp/${BOARD}
+sudo cp -r ${version}-netboot/* /srv/tftp/${BOARD}/
+```
+
+### Enforced Bind-Mount for Seamless Upgrades
+To ensure kernel upgrades are seamless:
+```text
+${NETBOOT_NFS_PATH}/boot /srv/tftp/${BOARD} none defaults,bind 0 0
+```
+Add the line above to your NFS/TFTP server's `/etc/fstab` so that target-side kernel upgrades directly propagate to the TFTP root.
+
+---
+
+## 3. Router DHCP Server Configuration (OpenWrt / Dnsmasq)
+
+If your network router handles DHCP (the most common home setup), you must configure it to send the boot filename and TFTP server IP to target devices.
+
+### Option A: OpenWrt UCI Configuration (`/etc/config/dhcp`)
+Add the following configuration block to your router's `/etc/config/dhcp`:
+```text
+config boot
+    option filename '${BOARD}/boot.scr'
+    option serveraddress '${NETBOOT_TFTP_SERVER}'
+    option servername '${NETBOOT_TFTP_SERVER}'
+```
+Then restart Dnsmasq:
+```bash
+/etc/init.d/dnsmasq restart
+```
+
+### Option B: Raw Dnsmasq config
+Add the following to your router's dnsmasq configuration:
+```text
+dhcp-option=67,${BOARD}/boot.scr
+```
+
+---
+
+## 4. Linux DHCP Server Configuration (ISC DHCP)
+
+If you run a dedicated ISC DHCP server (e.g. on your NFS/TFTP server rather than your router), add the following subnet block to your `/etc/dhcp/dhcpd.conf`:
+```text
+subnet ${NETBOOT_SUBNET} netmask ${NETBOOT_NETMASK} {
+    option routers ${NETBOOT_ROUTER_IP};
+    option subnet-mask ${NETBOOT_NETMASK};
+    next-server ${NETBOOT_TFTP_SERVER};       # TFTP server IP
+    filename "${BOARD}/boot.scr";        # Boot file name
+    option root-path "${NETBOOT_NFS_SERVER}:${NETBOOT_NFS_PATH}";
+}
+```
+
+---
+
+## 5. Booting the Board
+
+1. If using the SD card bootloader, insert the SD card flashed with `${version}-bootloader.img`.
+2. Connect the serial console and power on the board.
+3. U-Boot will load, obtain IP parameters via DHCP, perform PXE boot to fetch `pxelinux.cfg/default` from the TFTP server, and mount the NFS share.
+
+---
+
+## 6. Pre-configuring and Customizing the Image
+
+When running in diskless/netboot mode, it is highly recommended to pre-configure root passwords, SSH keys, timezone, and non-root users during the build phase to avoid needing manual interaction or serial console setup on first boot.
+
+### Option A: Using Build Config Parameters
+You can set these variables in `userpatches/config-default.conf` or pass them directly to your `./compile.sh` command line:
+
+* **Default Root Password:** `ROOTPWD="yourpassword"`
+* **Default Non-Root User:** `USER_NAME="username"` and `USER_PASSWORD="userpassword"`
+* **Locale and Timezone:** `LOCALE="en_US.UTF-8"` and `TZDATA="Europe/London"`
+
+### Option B: Using the Customization Hook Script
+For advanced customizations (such as injecting SSH public keys or installing custom packages), you can use the user customization script:
+
+1. Copy the customization template script to `userpatches/customize-image.sh` if it does not already exist.
+2. Place your SSH public key in the `userpatches/overlay/` directory (e.g., as `id_rsa.pub`). This directory is automatically bind-mounted to `/tmp/overlay` inside the target chroot.
+3. Edit `userpatches/customize-image.sh` to copy the key and optionally disable the interactive first-login setup wizard:
+
+```bash
+# Append SSH keys
+mkdir -p /root/.ssh
+if [ -f /tmp/overlay/id_rsa.pub ]; then
+    cat /tmp/overlay/id_rsa.pub >> /root/.ssh/authorized_keys
+    chmod 700 /root/.ssh
+    chmod 600 /root/.ssh/authorized_keys
+fi
+
+# Disable interactive first-login wizard
+rm -f /root/.not_logged_in_yet
+```
+
+For more details on customization scripting, refer to the official [Armbian User Configurations Documentation](https://docs.armbian.com/Developer-Guide_User-Configurations/).
