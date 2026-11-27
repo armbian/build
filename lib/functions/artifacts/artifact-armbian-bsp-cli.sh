@@ -65,6 +65,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"KERNEL_TARGET: ${KERNEL_TARGET}"                             # /etc/armbian-release
 		"KERNEL_TEST_TARGET: ${KERNEL_TEST_TARGET}"                   # /etc/armbian-release
 		"BOOT_SOC: ${BOOT_SOC}"                                       # /etc/armbian-release # See https://github.com/armbian/build/pull/6411
+		"EXTRA_BSPDEPS: ${EXTRA_BSPDEPS}"                             # DEBIAN/control Depends
 		"hash_vars_no_normalize: ${hash_vars_no_normalize}"           # The non-normalized part, above
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
