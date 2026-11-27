@@ -22,10 +22,12 @@ setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "on"
 
-echo "Boot script loaded from ${devtype} ${devnum}"
+test -n "${distro_bootpart}" || setenv distro_bootpart "1"
 
-if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
-	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt || exit 1
+echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
+
+if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
+	load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt || exit 1
 	env import -t ${load_addr} ${filesize}
 fi
 
@@ -52,20 +54,20 @@ setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
 
-load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd || exit 1
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image || exit 1
+load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd || exit 1
+load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image || exit 1
 
-load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile} || exit 1
+load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile} || exit 1
 fdt addr ${fdt_addr_r} || exit 1
 fdt resize 65536 || exit 1
 for overlay_file in ${overlays}; do
-	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
+	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
 for overlay_file in ${user_overlays}; do
-	if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
