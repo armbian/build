@@ -1103,18 +1103,10 @@ index 00000000000..fd5d024744def45ef6d39dfc182d537975936733
 +	.priv_auto	= sizeof(struct sunxi_pcie),
 +};
 diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
-index 3acffb40b0b..8b1ff6cb225 100644
+index 3acffb40b0b..3b32416654e2f0d060f2950b3c868b71c3ddb08d 100644
 --- a/drivers/phy/allwinner/phy-sun4i-usb.c
 +++ b/drivers/phy/allwinner/phy-sun4i-usb.c
-@@ -79,6 +79,7 @@ struct sun4i_usb_phy_cfg {
- 	u8 phyctl_offset;
- 	bool dedicated_clocks;
- 	bool phy0_dual_route;
- 	bool siddq_in_base;
-+	bool a33_byte_strobe;
- 	bool needs_phy2_siddq;
- 	int missing_phys;
-@@ -113,9 +114,44 @@ static void sun4i_usb_phy_write(struct phy *phy, u32 addr, u32 data, int len)
+@@ -113,9 +114,14 @@ static void sun4i_usb_phy_write(struct phy *phy, u32 addr, u32 data, int len)
  	void __iomem *phyctl = phy_data->base + phy_data->cfg->phyctl_offset;
  	int i;
  
@@ -1124,44 +1116,12 @@ index 3acffb40b0b..8b1ff6cb225 100644
 +	}
 +
  	if (phy_data->cfg->phyctl_offset == REG_PHYCTL_A33) {
--		/* SoCs newer than A33 need us to set phyctl to 0 explicitly */
--		writel(0, phyctl);
-+		if (!phy_data->cfg->a33_byte_strobe) {
-+			/* SoCs newer than A33 need us to set phyctl to 0 explicitly */
-+			writel(0, phyctl);
-+			return;
-+		}
-+		/* A733 needs 16-bit strobed writes to program the PHY. */
-+		for (i = 0; i < len; i++) {
-+			u8 temp8;
-+
-+			temp8 = readb(phyctl + 1);
-+			temp8 &= ~0x0f;
-+			temp8 |= (addr >> 4) & 0x0f;
-+			writeb(temp8, phyctl + 1);
-+
-+			temp8 = readb(phyctl);
-+			temp8 &= ~0x1f;
-+			temp8 |= (addr & 0x0f) << 1;
-+			temp8 |= (data & 0x01) ? 0x01 : 0x00;
-+			writeb(temp8, phyctl);
-+
-+			temp8 = readb(phyctl);
-+			temp8 |= 0x10;
-+			writeb(temp8, phyctl);
-+
-+			temp8 = readb(phyctl);
-+			temp8 &= ~0x10;
-+			writeb(temp8, phyctl);
-+
-+			addr++;
-+			data >>= 1;
-+		}
-+		return;
+ 		/* SoCs newer than A33 need us to set phyctl to 0 explicitly */
+ 		writel(0, phyctl);
  	}
  
  	for (i = 0; i < len; i++) {
-@@ -160,7 +196,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
+@@ -160,7 +166,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
  		return;
  
  	bits = SUNXI_AHB_ICHR8_EN | SUNXI_AHB_INCR4_BURST_EN |
@@ -1170,7 +1130,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  
  	/* A83T USB2 is HSIC */
  	if (data->cfg->hsic_index && usb_phy->id == data->cfg->hsic_index)
-@@ -170,7 +206,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
+@@ -170,7 +176,7 @@ static void sun4i_usb_phy_passby(struct phy *phy, bool enable)
  	reg_value = readl(usb_phy->pmu);
  
  	if (enable)
@@ -1179,7 +1139,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	else
  		reg_value &= ~bits;
  
-@@ -292,12 +328,11 @@ static int sun4i_usb_phy_init(struct phy *phy)
+@@ -292,12 +298,11 @@ static int sun4i_usb_phy_init(struct phy *phy)
  	}
  
  	if (data->cfg->siddq_in_base) {
@@ -1197,7 +1157,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	} else {
  		if (usb_phy->id == 0)
  			sun4i_usb_phy_write(phy, PHY_RES45_CAL_EN,
-@@ -339,13 +374,9 @@ static int sun4i_usb_phy_exit(struct phy *phy)
+@@ -339,13 +344,9 @@ static int sun4i_usb_phy_exit(struct phy *phy)
  	struct sun4i_usb_phy_plat *usb_phy = &data->usb_phy[phy->id];
  	int ret;
  
@@ -1214,7 +1174,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  	}
  
  	sun4i_usb_phy_passby(phy, false);
-@@ -394,7 +425,7 @@ int sun4i_usb_phy_vbus_detect(struct phy *phy)
+@@ -394,7 +395,7 @@ int sun4i_usb_phy_vbus_detect(struct phy *phy)
  {
  	struct sun4i_usb_phy_data *data = dev_get_priv(phy->dev);
  	struct sun4i_usb_phy_plat *usb_phy = &data->usb_phy[phy->id];
@@ -1223,7 +1183,7 @@ index 3acffb40b0b..8b1ff6cb225 100644
  
  	if (dm_gpio_is_valid(&usb_phy->gpio_vbus_det)) {
  		err = dm_gpio_get_value(&usb_phy->gpio_vbus_det);
-@@ -657,6 +688,27 @@ static const struct sun4i_usb_phy_cfg suniv_f1c100s_cfg = {
+@@ -657,6 +658,26 @@ static const struct sun4i_usb_phy_cfg suniv_f1c100s_cfg = {
  	.dedicated_clocks = true,
  };
  
@@ -1245,13 +1205,12 @@ index 3acffb40b0b..8b1ff6cb225 100644
 +	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
 +	.phy0_dual_route = true,
 +	.siddq_in_base = true,
-+	.a33_byte_strobe = true,
 +};
 +
  static const struct udevice_id sun4i_usb_phy_ids[] = {
  	{ .compatible = "allwinner,sun4i-a10-usb-phy", .data = (ulong)&sun4i_a10_cfg },
  	{ .compatible = "allwinner,sun5i-a13-usb-phy", .data = (ulong)&sun5i_a13_cfg },
-@@ -669,6 +721,8 @@ static const struct udevice_id sun4i_usb_phy_ids[] = {
+@@ -669,6 +690,8 @@ static const struct udevice_id sun4i_usb_phy_ids[] = {
  	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = (ulong)&sun8i_r40_cfg },
  	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = (ulong)&sun8i_v3s_cfg },
  	{ .compatible = "allwinner,sun20i-d1-usb-phy", .data = (ulong)&sun20i_d1_cfg },
