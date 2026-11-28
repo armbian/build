@@ -1,0 +1,452 @@
+From: Juan Sanchez <juanesf91@gmail.com>
+Subject: [PATCH] usb: a733: bring up the DWC3 USB2 hub path
+
+Bring up the DWC3 USB 2.0 host path (FE1.1S hub and AIC8800) at
+480 Mbps from cold boot using clean kernel abstractions:
+
+  1. Expose bit 21 of SERDES_USB3_BGR (USB3P1_USB2P0_UTMI_CLK_SEL) as
+     the usb3-utmi mux clock in ccu-sun60i-a733-serdes.c so DT
+     assigned-clock-parents configures both PIPE (bit 20) and UTMI
+     (bit 21) without raw MMIO writes in dwc3-of-simple.c.
+  2. Add the snps,phy-soft-reset-after-csftrst boolean quirk in DWC3 to
+     pulse GUSB2PHYCFG.PHYSOFTRST (1-2 ms) after CSFTRST during initial
+     core init and phase-align the 60 MHz UTMI clock. The pulse is not
+     repeated on full host resume, where the host role is already set.
+  3. Parameterize skip_u2p0_passby in struct sun4i_usb_phy_cfg so A733
+     clears U2P0_ISCR (0x06b00000) instead of calling
+     sun4i_usb_phy_passby(), leaving all other SoCs unchanged.
+  4. Expose SRAM 0x168 in sunxi_sram.c, enable VBUS in dwc3-of-simple.c,
+     and support snps,keep-roothub-ports-powered in dwc3 host init.
+
+Signed-off-by: Juan Sanchez <juanesf91@gmail.com>
+Assisted-by: OpenCode (Big Pickle) <noreply@opencode.ai>
+---
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+index dd516c0badc2..d5b5c8eb13ac 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+@@ -52,11 +52,20 @@ static const struct clk_parent_data usb3_pipe_parents[] = {
+ static SUNXI_CCU_MUX_DATA(usb3_pipe_clk, "usb3-pipe", usb3_pipe_parents,
+ 			  SERDES_USB3_BGR_REG, 20, 1, CLK_SET_RATE_NO_REPARENT);
+ 
++static const struct clk_parent_data usb3_utmi_parents[] = {
++	{ .fw_name = "u2-utmi" },
++	{ .fw_name = "utmi" },
++};
++
++static SUNXI_CCU_MUX_DATA(usb3_utmi_clk, "usb3-utmi", usb3_utmi_parents,
++			  SERDES_USB3_BGR_REG, 21, 1, CLK_SET_RATE_NO_REPARENT);
++
+ static struct ccu_common *sun60i_a733_serdes_ccu_clks[] = {
+ 	&usb3_hclk_clk.common,
+ 	&usb3_aclk_clk.common,
+ 	&usb3_pipe_clk.common,
+ 	&pcie_clk.common,
++	&usb3_utmi_clk.common,
+ };
+ 
+ static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
+@@ -65,8 +74,9 @@ static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
+ 		[CLK_SERDES_USB3_ACLK]	= &usb3_aclk_clk.common.hw,
+ 		[CLK_SERDES_USB3_PIPE]	= &usb3_pipe_clk.common.hw,
+ 		[CLK_SERDES_PCIE]	= &pcie_clk.common.hw,
++		[CLK_SERDES_USB3_UTMI]	= &usb3_utmi_clk.common.hw,
+ 	},
+-	.num = CLK_SERDES_PCIE + 1,
++	.num = CLK_SERDES_USB3_UTMI + 1,
+ };
+ 
+ static struct ccu_reset_map sun60i_a733_serdes_ccu_resets[] = {
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 2bb25c19ef12..2f8f5739285a 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -20,6 +20,7 @@
+ #include <linux/io.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+@@ -28,6 +29,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/spinlock.h>
+ #include <linux/usb/of.h>
+@@ -81,6 +83,16 @@
+ #define PHY_CTL_SIDDQ			BIT(3)
+ #define PHY_CTL_H3_SIDDQ		BIT(1)
+ 
++/* A733 USB2 PHY of the DWC3 (U2P0 at 0x06b00000) */
++#define U2P0_TUNE_REG			0x18
++#define U2P0_TUNE_VALUE			0x143338d6
++#define U2P0_PHYCTL_OTG_DISABLE		BIT(10)
++#define U2P0_RESCAL_CTRL_REG		0x160
++#define U2P0_RESCAL_CTRL_MASK		(BIT(0) | BIT(10))
++#define U2P0_RESCAL_CTRL_TRIM_SEL	BIT(10)
++#define U2P0_RES1_CTRL_REG		0x168
++#define U2P0_RES1_TRIM_MASK		GENMASK(15, 8)
++
+ /* A83T specific control bits for PHY2 HSIC */
+ #define SUNXI_EHCI_HS_FORCE		BIT(20)
+ #define SUNXI_HSIC_CONNECT_DET		BIT(17)
+@@ -106,6 +118,8 @@ struct sun4i_usb_phy_cfg {
+ 	bool needs_phy2_siddq;
+ 	bool siddq_in_base;
+ 	bool poll_vbusen;
++	bool has_u2p0_calibration;
++	bool skip_u2p0_passby;
+ 	int missing_phys;
+ };
+ 
+@@ -115,6 +129,9 @@ struct sun4i_usb_phy_data {
+ 	enum usb_dr_mode dr_mode;
+ 	spinlock_t reg_lock; /* guard access to phyctl reg */
+ 	int num_phys;
++	struct regmap *syscon;
++	u32 u2p0_rescal;
++	u32 u2p0_res1;
+ 	struct sun4i_usb_phy {
+ 		struct phy *phy;
+ 		void __iomem *pmu;
+@@ -260,6 +277,89 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+ 	int ret;
+ 	u32 val;
+ 
++	/*
++	 * The DWC3 USB2 PHY needs its 200 ohm reference calibrated before
++	 * the core reset is released, and it must leave IDDQ while still
++	 * held in reset. The generic path below does neither in the right
++	 * order, so handle this PHY separately.
++	 */
++	if (phy->index == 2 && data->cfg->has_u2p0_calibration &&
++	    data->syscon) {
++		ret = clk_prepare_enable(phy->clk);
++		if (ret)
++			return ret;
++		ret = clk_prepare_enable(phy->clk2);
++		if (ret)
++			goto err_clk;
++
++		/* Keep the PHY in reset while configuring it. */
++		ret = reset_control_assert(phy->reset);
++		if (ret)
++			goto err_clk2;
++
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val |= PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++
++		/* Select the trimmed 200 ohm reference resistor. */
++		ret = regmap_read(data->syscon, U2P0_RESCAL_CTRL_REG,
++				  &data->u2p0_rescal);
++		if (ret)
++			goto err_siddq;
++		ret = regmap_read(data->syscon, U2P0_RES1_CTRL_REG,
++				  &data->u2p0_res1);
++		if (ret)
++			goto err_siddq;
++
++		ret = regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
++					 U2P0_RESCAL_CTRL_MASK,
++					 U2P0_RESCAL_CTRL_TRIM_SEL);
++		if (ret)
++			goto err_siddq;
++		ret = regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++					 U2P0_RES1_TRIM_MASK, 0);
++		if (ret)
++			goto err_rescal;
++
++		/* IDDQ off while still in reset (documented HW requirement). */
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val |= U2P0_PHYCTL_OTG_DISABLE | PHY_CTL_VBUSVLDEXT;
++		val &= ~PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++
++		ret = reset_control_deassert(phy->reset);
++		if (ret)
++			goto err_reset;
++
++		if (data->cfg->skip_u2p0_passby)
++			writel(0, phy->pmu);
++		else
++			sun4i_usb_phy_passby(phy, 1);
++		writel(U2P0_TUNE_VALUE, phy->pmu + U2P0_TUNE_REG);
++
++		return 0;
++
++err_reset:
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val &= ~(U2P0_PHYCTL_OTG_DISABLE | PHY_CTL_VBUSVLDEXT);
++		val |= PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++err_rescal:
++		regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
++				   U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
++		regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++				   U2P0_RES1_TRIM_MASK, data->u2p0_res1);
++err_siddq:
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val &= ~PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++err_clk2:
++		clk_disable_unprepare(phy->clk2);
++err_clk:
++		clk_disable_unprepare(phy->clk);
++		return ret;
++	}
++
+ 	ret = clk_prepare_enable(phy->clk);
+ 	if (ret)
+ 		return ret;
+@@ -369,6 +469,35 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
+ {
+ 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
+ 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++	int ret;
++	u32 val;
++
++	if (phy->index == 2 && data->cfg->has_u2p0_calibration &&
++	    data->syscon) {
++		val = readl(phy->pmu + REG_HCI_PHY_CTL);
++		val &= ~(U2P0_PHYCTL_OTG_DISABLE | PHY_CTL_VBUSVLDEXT);
++		val |= PHY_CTL_SIDDQ;
++		writel(val, phy->pmu + REG_HCI_PHY_CTL);
++
++		ret = reset_control_assert(phy->reset);
++		if (ret)
++			dev_err(&_phy->dev, "Failed to assert USB2 reset: %d\n", ret);
++
++		ret = regmap_update_bits(data->syscon, U2P0_RESCAL_CTRL_REG,
++					 U2P0_RESCAL_CTRL_MASK, data->u2p0_rescal);
++		if (ret)
++			dev_err(&_phy->dev, "Failed to restore USB2 rescal: %d\n", ret);
++
++		ret = regmap_update_bits(data->syscon, U2P0_RES1_CTRL_REG,
++					 U2P0_RES1_TRIM_MASK, data->u2p0_res1);
++		if (ret)
++			dev_err(&_phy->dev, "Failed to restore USB2 trim: %d\n", ret);
++
++		sun4i_usb_phy_passby(phy, 0);
++		clk_disable_unprepare(phy->clk2);
++		clk_disable_unprepare(phy->clk);
++		return 0;
++	}
+ 
+ 	if (phy->index == 0) {
+ 		if (data->cfg->siddq_in_base) {
+@@ -739,6 +868,14 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 	if (IS_ERR(data->base))
+ 		return PTR_ERR(data->base);
+ 
++	if (data->cfg->has_u2p0_calibration) {
++		data->syscon = syscon_regmap_lookup_by_phandle(np,
++							       "allwinner,sram");
++		if (IS_ERR(data->syscon))
++			return dev_err_probe(dev, PTR_ERR(data->syscon),
++					     "failed to get system control regmap\n");
++	}
++
+ 	data->id_det_gpio = devm_gpiod_get_optional(dev, "usb0_id_det",
+ 						    GPIOD_IN);
+ 	if (IS_ERR(data->id_det_gpio)) {
+@@ -787,7 +924,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 			continue;
+ 
+ 		snprintf(name, sizeof(name), "usb%d_reset", i);
+-		phy->reset = devm_reset_control_get_shared(dev, name);
++		/*
++		 * The A733 U2P0 reset is the SERDES USB3_USB2_PHY reset, which
++		 * this driver must actively assert while calibrating the PHY.
++		 * assert() on a shared reset is a no-op (and warns), so request
++		 * this one exclusively. No other consumer claims it.
++		 */
++		if (i == 2 && data->cfg->has_u2p0_calibration)
++			phy->reset = devm_reset_control_get_exclusive(dev, name);
++		else
++			phy->reset = devm_reset_control_get_shared(dev, name);
+ 		if (IS_ERR(phy->reset)) {
+ 			if (PTR_ERR(phy->reset) == -ENOENT)
+ 				break;
+@@ -987,6 +1133,16 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
+ 	.siddq_in_base = true,
+ };
+ 
++static const struct sun4i_usb_phy_cfg sun60i_a733_cfg = {
++	.phyctl_offset = REG_PHYCTL_A33,
++	.dedicated_clocks = true,
++	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
++	.phy0_dual_route = true,
++	.siddq_in_base = true,
++	.has_u2p0_calibration = true,
++	.skip_u2p0_passby = true,
++};
++
+ static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
+ 	.disc_thresh = 3,
+ 	.phyctl_offset = REG_PHYCTL_A33,
+@@ -1024,6 +1180,7 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
+ 	{ .compatible = "allwinner,sun8i-h3-usb-phy", .data = &sun8i_h3_cfg },
+ 	{ .compatible = "allwinner,sun8i-r40-usb-phy", .data = &sun8i_r40_cfg },
+ 	{ .compatible = "allwinner,sun8i-v3s-usb-phy", .data = &sun8i_v3s_cfg },
++	{ .compatible = "allwinner,sun60i-a733-usb-phy", .data = &sun60i_a733_cfg },
+ 	{ .compatible = "allwinner,sun20i-d1-usb-phy", .data = &sun20i_d1_cfg },
+ 	{ .compatible = "allwinner,sun50i-a64-usb-phy",
+ 	  .data = &sun50i_a64_cfg},
+diff --git a/drivers/soc/sunxi/sunxi_sram.c b/drivers/soc/sunxi/sunxi_sram.c
+index 5a21e04d78cb..8efa9b87a02c 100644
+--- a/drivers/soc/sunxi/sunxi_sram.c
++++ b/drivers/soc/sunxi/sunxi_sram.c
+@@ -330,6 +330,7 @@ struct sunxi_sramc_variant {
+ 	bool has_ldo_ctrl;
+ 	bool has_ths_offset;
+ 	bool has_hdmi_rescal;
++	bool has_usb_rescal;
+ };
+ 
+ static const struct sunxi_sramc_variant sun4i_a10_sramc_variant = {
+@@ -361,6 +362,8 @@ static const struct sunxi_sramc_variant sun55i_a523_sramc_variant = {
+ static const struct sunxi_sramc_variant sun60i_a733_sramc_variant = {
+ 	/* The EMAC clocks live in the CCU on this generation. */
+ 	.has_hdmi_rescal = true,
++	/* The USB2 PHY of the DWC3 takes its 200 ohm trim from 0x168. */
++	.has_usb_rescal = true,
+ };
+ 
+ #define SUNXI_SRAM_THS_OFFSET_REG	0x0
+@@ -368,6 +371,7 @@ static const struct sunxi_sramc_variant sun60i_a733_sramc_variant = {
+ #define SUNXI_SYS_LDO_CTRL_REG		0x150
+ #define SUNXI_SYS_RESCAL_CTRL_REG	0x160
+ #define SUNXI_SYS_RES0_CTRL_REG		0x164
++#define SUNXI_SYS_RES1_CTRL_REG		0x168
+ 
+ static bool sunxi_sram_regmap_accessible_reg(struct device *dev,
+ 					     unsigned int reg)
+@@ -384,6 +388,8 @@ static bool sunxi_sram_regmap_accessible_reg(struct device *dev,
+ 	if ((reg == SUNXI_SYS_RESCAL_CTRL_REG ||
+ 	     reg == SUNXI_SYS_RES0_CTRL_REG) && variant->has_hdmi_rescal)
+ 		return true;
++	if (reg == SUNXI_SYS_RES1_CTRL_REG && variant->has_usb_rescal)
++		return true;
+ 
+ 	return false;
+ }
+@@ -407,6 +413,6 @@ static const struct regmap_config sunxi_sram_regmap_config = {
+ 	.reg_stride     = 4,
+ 	/* last defined register */
+-	.max_register   = SUNXI_SYS_RES0_CTRL_REG,
++	.max_register   = SUNXI_SYS_RES1_CTRL_REG,
+ 	/* other devices have no business accessing other registers */
+ 	.readable_reg	= sunxi_sram_regmap_accessible_reg,
+ 	.writeable_reg	= sunxi_sram_regmap_accessible_reg,
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index fd5c2cd36c59..c5660ae1cffb 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -369,6 +369,17 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 	if (DWC3_VER_IS_WITHIN(DWC31, ANY, 180A))
+ 		msleep(50);
+ 
++	if (dwc->dr_mode == USB_DR_MODE_HOST &&
++	    dwc->phy_soft_reset_after_csftrst) {
++		reg = dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0));
++		reg |= DWC3_GUSB2PHYCFG_PHYSOFTRST;
++		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
++		usleep_range(1000, 2000);
++		reg &= ~DWC3_GUSB2PHYCFG_PHYSOFTRST;
++		dwc3_writel(dwc, DWC3_GUSB2PHYCFG(0), reg);
++		usleep_range(1000, 2000);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1873,6 +1884,10 @@ static void dwc3_get_properties(struct dwc3 *dwc)
+ 
+ 	dwc->dis_split_quirk = device_property_read_bool(dev,
+ 				"snps,dis-split-quirk");
++	dwc->keep_roothub_ports_powered = device_property_read_bool(dev,
++				"snps,keep-roothub-ports-powered");
++	dwc->phy_soft_reset_after_csftrst = device_property_read_bool(dev,
++				"snps,phy-soft-reset-after-csftrst");
+ 
+ 	dwc->lpm_nyet_threshold = lpm_nyet_threshold;
+ 	dwc->tx_de_emphasis = tx_de_emphasis;
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index 608daeb7ef10..69e8f2ad5fde 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -1407,6 +1407,8 @@ struct dwc3 {
+ 	unsigned		parkmode_disable_ss_quirk:1;
+ 	unsigned		parkmode_disable_hs_quirk:1;
+ 	unsigned		gfladj_refclk_lpm_sel:1;
++	unsigned		keep_roothub_ports_powered:1;
++	unsigned		phy_soft_reset_after_csftrst:1;
+ 
+ 	unsigned		tx_de_emphasis_quirk:1;
+ 	unsigned		tx_de_emphasis:2;
+diff --git a/drivers/usb/dwc3/dwc3-of-simple.c b/drivers/usb/dwc3/dwc3-of-simple.c
+index c1a490b99738..7d4219e073eb 100644
+--- a/drivers/usb/dwc3/dwc3-of-simple.c
++++ b/drivers/usb/dwc3/dwc3-of-simple.c
+@@ -21,6 +21,7 @@
+ #include <linux/of_platform.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
++#include <linux/regulator/consumer.h>
+ 
+ struct dwc3_of_simple {
+ 	struct device		*dev;
+@@ -72,6 +73,26 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_clk_put_all;
+ 
++	/*
++	 * The A733 DWC3 glue drives VBUS for the USB2 side (the on-board
++	 * FE1.1S hub) through a load switch. The core needs the regulator
++	 * enabled before the child dwc3 probes and issues its HCRST,
++	 * otherwise PORTSC.PP stays 0 and nothing enumerates. Request it
++	 * here - the glue owns the board-level VBUS, not the generic core.
++	 * Optional: boards without the property keep working (-ENODEV).
++	 */
++	/* The A733 glue is host-only; dr_mode lives on the child dwc3 node,
++	 * so do not gate this on usb_get_dr_mode(dev) (it would be UNKNOWN). */
++	if (of_device_is_compatible(np, "allwinner,sun60i-a733-dwc3")) {
++		ret = devm_regulator_get_enable_optional(dev, "vbus");
++		if (ret && ret != -ENODEV) {
++			dev_err(dev, "failed to enable VBUS: %d\n", ret);
++			goto err_clk_disable;
++		}
++		if (!ret)
++			dev_info(dev, "A733 DWC3: VBUS regulator enabled\n");
++	}
++
+ 	ret = of_platform_populate(np, NULL, NULL, dev);
+ 	if (ret)
+ 		goto err_clk_disable;
+diff --git a/drivers/usb/dwc3/host.c b/drivers/usb/dwc3/host.c
+index c5674161b2b0..9ae1087f04c8 100644
+--- a/drivers/usb/dwc3/host.c
++++ b/drivers/usb/dwc3/host.c
+@@ -136,10 +136,14 @@ int dwc3_host_init(struct dwc3 *dwc)
+ 	int			prop_idx = 0;
+ 
+ 	/*
+-	 * Some platforms need to power off all Root hub ports immediately after DWC3 set to host
+-	 * mode to avoid VBUS glitch happen when xhci get reset later.
++	 * Some platforms need to power off all Root hub ports immediately after
++	 * DWC3 set to host mode to avoid a VBUS glitch when xhci gets reset.
++	 * On the A733 the VBUS is supplied by an always-on external switch and
++	 * clearing PP here is never undone by the xHCI: the on-board hub keeps
++	 * its D+ pull-up (CCS=1) but the port is never powered (PP=0/PED=0).
+ 	 */
+-	dwc3_power_off_all_roothub_ports(dwc);
++	if (!dwc->keep_roothub_ports_powered)
++		dwc3_power_off_all_roothub_ports(dwc);
+ 
+ 	irq = dwc3_host_get_irq(dwc);
+ 	if (irq < 0)
