@@ -1,64 +1,87 @@
 From git@z Thu Jan  1 00:00:00 1970
-Subject: [PATCH 1/3] ata: dwc_ahci: fall back to the PHY in the sata-port
- subnode
+Subject: [PATCH v2 1/4] ata: dwc_ahci: use the first PHY, ignoring
+ phy-names
 From: Ricardo Pardini <ricardo@pardini.net>
-Date: Mon, 09 Nov 2026 03:57:58 +0100
-Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-1-e54ca8e68f18@pardini.net>
+Date: Fri, 27 Nov 2026 14:12:58 +0100
+Message-Id: <20261127-rk3588-sata-fixes-v2027-01-v2-1-dbdf7770972a@pardini.net>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
 
-dwc_ahci_probe() only looks for a "sata-phy" PHY on the controller node.
-The RK3588 device tree, as synced from Linux, describes the PHY in the
-sata-port@0 subnode instead (the binding allows per-port PHYs, which is
-how Linux's libahci_platform consumes them), so probing every RK3588
-on-board SATA controller fails:
+Take the first PHY of the controller node instead of looking it up
+by the "sata-phy" name, like Linux's libahci_platform does. The
+binding allows a single PHY and phy-names is optional.
 
-  => scsi scan
-  scanning bus for devices...
-  can't get the phy from DT
+Link: https://patch.msgid.link/20261127-rk3588-sata-fixes-v2027-01-v2-1-dbdf7770972a@pardini.net
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/ata/dwc_ahci.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
-RK3566/RK3568 sata1 and sata2 have been affected the same way since the
-v7.1 DT sync (d0a838bdc62), which brought in the Linux change "arm64:
-dts: rockchip: Add port subnodes to RK356x SATA controllers" (linked
-below). Only RK3568 sata0 still has the PHY on the controller node.
+diff --git a/drivers/ata/dwc_ahci.c b/drivers/ata/dwc_ahci.c
+index 0431d370716..138a025cb02 100644
+--- a/drivers/ata/dwc_ahci.c
++++ b/drivers/ata/dwc_ahci.c
+@@ -56,7 +56,7 @@ static int dwc_ahci_probe(struct udevice *dev)
+ 	int ret;
+ 	struct phy phy;
+ 
+-	ret = generic_phy_get_by_name(dev, "sata-phy", &phy);
++	ret = generic_phy_get_by_index(dev, 0, &phy);
+ 	if (ret) {
+ 		pr_err("can't get the phy from DT\n");
+ 		return ret;
 
-If the controller node has no "sata-phy" in phy-names, use the first PHY
-of the first enabled subnode. A "sata-phy" that is declared but cannot
-be resolved still fails the probe. Only one PHY is brought up, as
-before; the RK3588 and RK356x controllers have a single port
-(ports-implemented = <0x1>).
+-- 
+2.47.3
 
-Only tested on RK3588.
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2 2/4] ata: dwc_ahci: get the PHY from the sata-port
+ subnodes if any
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Fri, 27 Nov 2026 14:12:59 +0100
+Message-Id: <20261127-rk3588-sata-fixes-v2027-01-v2-2-dbdf7770972a@pardini.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+If the controller node has sata-port subnodes, take the PHY of the
+first enabled one instead, like Linux's libahci_platform does.
+
+This fixes probing on RK3588 and on RK356x sata1/sata2, whose DTs
+have the PHY in sata-port@0.
 
 Link: https://patch.msgid.link/20260201191804.41421-2-heiko@sntech.de
 Cc: Jonas Karlman <jonas@kwiboo.se>
-Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-1-e54ca8e68f18@pardini.net
+Link: https://patch.msgid.link/20261127-rk3588-sata-fixes-v2027-01-v2-2-dbdf7770972a@pardini.net
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
- drivers/ata/dwc_ahci.c | 13 +++++++++++++
- 1 file changed, 13 insertions(+)
+ drivers/ata/dwc_ahci.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/ata/dwc_ahci.c b/drivers/ata/dwc_ahci.c
-index 0431d370716..8192d2f5f34 100644
+index 138a025cb02..97315441950 100644
 --- a/drivers/ata/dwc_ahci.c
 +++ b/drivers/ata/dwc_ahci.c
-@@ -57,6 +57,19 @@ static int dwc_ahci_probe(struct udevice *dev)
+@@ -55,8 +55,20 @@ static int dwc_ahci_probe(struct udevice *dev)
+ 	struct dwc_ahci_priv *priv = dev_get_priv(dev);
+ 	int ret;
  	struct phy phy;
- 
- 	ret = generic_phy_get_by_name(dev, "sata-phy", &phy);
-+	if (ret && dev_read_stringlist_search(dev, "phy-names",
-+					      "sata-phy") < 0) {
-+		ofnode node;
+-
+-	ret = generic_phy_get_by_index(dev, 0, &phy);
++	ofnode node;
 +
-+		/* e.g. RK35xx: the phy is in the sata-port@N subnode */
++	/* Like Linux: first enabled sata-port subnode, else the controller */
++	if (dev_get_child_count(dev)) {
++		ret = -ENODEV;
 +		dev_for_each_subnode(node, dev) {
 +			if (!ofnode_is_enabled(node))
 +				continue;
 +			ret = generic_phy_get_by_index_nodev(node, 0, &phy);
-+			if (!ret)
-+				break;
++			break;
 +		}
++	} else {
++		ret = generic_phy_get_by_index(dev, 0, &phy);
 +	}
  	if (ret) {
  		pr_err("can't get the phy from DT\n");
@@ -68,11 +91,11 @@ index 0431d370716..8192d2f5f34 100644
 2.47.3
 
 From git@z Thu Jan  1 00:00:00 1970
-Subject: [PATCH 2/3] ata: ahci: return the last LBA from emulated READ
+Subject: [PATCH v2 3/4] ata: ahci: return the last LBA from emulated READ
  CAPACITY
 From: Ricardo Pardini <ricardo@pardini.net>
-Date: Mon, 09 Nov 2026 03:57:59 +0100
-Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-2-e54ca8e68f18@pardini.net>
+Date: Fri, 27 Nov 2026 14:13:00 +0100
+Message-Id: <20261127-rk3588-sata-fixes-v2027-01-v2-3-dbdf7770972a@pardini.net>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
@@ -92,7 +115,8 @@ clamp.
 
 Fixes: 5f7c06bdc3c6 ("scsi: fix disk capacity too small by one sector")
 Cc: Julius Lehmann <lehmanju@devpi.de>
-Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-2-e54ca8e68f18@pardini.net
+Reviewed-by: Quentin Schulz <quentin.schulz@cherry.de>
+Link: https://patch.msgid.link/20261127-rk3588-sata-fixes-v2027-01-v2-3-dbdf7770972a@pardini.net
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
  drivers/ata/ahci.c | 8 +++++---
@@ -129,11 +153,11 @@ index 38e953ee79c..c806ee55d70 100644
 2.47.3
 
 From git@z Thu Jan  1 00:00:00 1970
-Subject: [PATCH 3/3] phy: rockchip: naneng-combphy: fix RK3588 SATA
+Subject: [PATCH v2 4/4] phy: rockchip: naneng-combphy: fix RK3588 SATA
  pipe_con1 register offset
 From: Ricardo Pardini <ricardo@pardini.net>
-Date: Mon, 09 Nov 2026 03:58:00 +0100
-Message-Id: <20261109-rk3588-sata-fixes-v2027-01-v1-3-e54ca8e68f18@pardini.net>
+Date: Fri, 27 Nov 2026 14:13:01 +0100
+Message-Id: <20261127-rk3588-sata-fixes-v2027-01-v2-4-dbdf7770972a@pardini.net>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
@@ -161,7 +185,8 @@ Fixes: c5b4a012bca8 ("phy: rockchip: naneng-combphy: Support rk3588")
 Link: https://github.com/rockchip-linux/kernel/commit/2f5fe2c0bbd4fa95102aadd60da1100989103aa0
 Link: https://patch.msgid.link/20261109-rk3588-combphy-sata2-6g-v1-1-e9135c91de6a@pardini.net
 Cc: Yifeng Zhao <yifeng.zhao@rock-chips.com>
-Link: https://patch.msgid.link/20261109-rk3588-sata-fixes-v2027-01-v1-3-e54ca8e68f18@pardini.net
+Reviewed-by: Quentin Schulz <quentin.schulz@cherry.de>
+Link: https://patch.msgid.link/20261127-rk3588-sata-fixes-v2027-01-v2-4-dbdf7770972a@pardini.net
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
  drivers/phy/rockchip/phy-rockchip-naneng-combphy.c | 2 +-
